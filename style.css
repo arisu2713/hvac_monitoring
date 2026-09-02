@@ -1,0 +1,431 @@
+﻿/* =========================================================
+   HVAC MONITORING
+   TV / SCADA WALL DISPLAY
+   ========================================================= */
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100%;
+}
+
+body {
+    background: #111;
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    overflow-x: hidden;
+}
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+
+.topbar {
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: #181818;
+    border-bottom: 2px solid #333;
+}
+
+.title {
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.subtitle {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #999;
+}
+
+.connection {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.connection-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.connection-dot.online {
+    background: #00d26a;
+    box-shadow: 0 0 10px rgba(0, 210, 106, .8);
+}
+
+.connection-dot.offline {
+    background: #777;
+}
+
+/* =========================================================
+   NAVIGATION
+   ========================================================= */
+
+.equipment-nav {
+    display: flex;
+    gap: 7px;
+    padding: 10px 20px;
+    background: #151515;
+    border-bottom: 1px solid #292929;
+}
+
+.nav-button {
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 5px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.nav-button:hover {
+    background: #333;
+}
+
+.nav-button.active {
+    background: #444;
+    color: #fff;
+    border-color: #777;
+}
+
+/* =========================================================
+   SECTION HEADER
+   ========================================================= */
+
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px 7px;
+}
+
+#sectionTitle {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+#unitCount {
+    color: #999;
+    font-size: 12px;
+}
+
+/* =========================================================
+   EQUIPMENT GRID
+   ========================================================= */
+
+.equipment-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+    padding: 0 20px 15px;
+}
+
+/* =========================================================
+   UNIT CARD
+   ========================================================= */
+
+.unit-card {
+    min-height: 78px;
+    border-radius: 7px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 8px 5px;
+    transition: transform .15s ease, filter .15s ease;
+}
+
+.unit-card:hover {
+    transform: scale(1.02);
+    filter: brightness(1.08);
+}
+
+.unit-name {
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+.unit-value {
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* =========================================================
+   STATUS COLORS
+   ========================================================= */
+
+.status-run {
+    background: #0b9f50;
+    border: 2px solid #16d873;
+    box-shadow: 0 0 7px rgba(0, 210, 106, .25);
+}
+
+.status-off {
+    background: #b51d1d;
+    border: 2px solid #ed3c3c;
+    box-shadow: 0 0 7px rgba(255, 40, 40, .18);
+}
+
+.status-alarm {
+    background: #d87500;
+    border: 2px solid #ffad32;
+    box-shadow: 0 0 9px rgba(255, 150, 0, .35);
+    animation: alarmPulse 1s infinite alternate;
+}
+
+.status-unknown {
+    background: #555;
+    border: 2px solid #777;
+}
+
+/* Alarm blinking */
+@keyframes alarmPulse {
+    from {
+        filter: brightness(0.85);
+    }
+
+    to {
+        filter: brightness(1.25);
+    }
+}
+
+/* =========================================================
+   FOOTER
+   ========================================================= */
+
+footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 7px 20px;
+    color: #777;
+    font-size: 10px;
+}
+
+/* =========================================================
+   LARGE TV / WALL DISPLAY
+   ========================================================= */
+
+@media (min-width: 1600px) {
+
+    .topbar {
+        height: 82px;
+        padding: 12px 30px;
+    }
+
+    .title {
+        font-size: 34px;
+    }
+
+    .subtitle {
+        font-size: 14px;
+    }
+
+    .equipment-nav {
+        padding: 12px 30px;
+    }
+
+    .nav-button {
+        padding: 10px 24px;
+        font-size: 15px;
+    }
+
+    .section-header {
+        padding: 12px 30px 8px;
+    }
+
+    #sectionTitle {
+        font-size: 24px;
+    }
+
+    .equipment-grid {
+        grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+        gap: 10px;
+        padding: 0 30px 20px;
+    }
+
+    .unit-card {
+        min-height: 90px;
+    }
+
+    .unit-name {
+        font-size: 20px;
+    }
+
+    .unit-value {
+        font-size: 14px;
+    }
+
+    footer {
+        padding-left: 30px;
+        padding-right: 30px;
+    }
+}
+
+/* =========================================================
+   4K TV
+   ========================================================= */
+
+@media (min-width: 2500px) {
+
+    .equipment-grid {
+        grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+        gap: 12px;
+    }
+
+    .unit-card {
+        min-height: 105px;
+    }
+
+    .unit-name {
+        font-size: 24px;
+    }
+
+    .unit-value {
+        font-size: 16px;
+    }
+}
+
+/* =========================================================
+   TABLET
+   ========================================================= */
+
+@media (max-width: 900px) {
+
+    .equipment-grid {
+        grid-template-columns: repeat(5, 1fr);
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .topbar {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .equipment-nav {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .section-header {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .unit-card {
+        min-height: 70px;
+    }
+
+    .unit-name {
+        font-size: 13px;
+    }
+}
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 600px) {
+
+    .topbar {
+        height: 60px;
+    }
+
+    .title {
+        font-size: 19px;
+    }
+
+    .subtitle {
+        display: none;
+    }
+
+    .connection {
+        font-size: 10px;
+    }
+
+    .connection-dot {
+        width: 9px;
+        height: 9px;
+    }
+
+    .equipment-nav {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+
+    .nav-button {
+        flex: 0 0 auto;
+        padding: 7px 13px;
+        font-size: 11px;
+    }
+
+    .section-header {
+        padding: 8px 8px 6px;
+    }
+
+    #sectionTitle {
+        font-size: 17px;
+    }
+
+    .equipment-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px;
+        padding: 0 8px 10px;
+    }
+
+    .unit-card {
+        min-height: 64px;
+        border-radius: 5px;
+        padding: 5px 2px;
+    }
+
+    .unit-name {
+        font-size: 11px;
+    }
+
+    .unit-value {
+        margin-top: 4px;
+        font-size: 9px;
+    }
+
+    footer {
+        padding: 5px 8px;
+        font-size: 8px;
+    }
+}
+
+/* =========================================================
+   SMALL PHONE
+   ========================================================= */
+
+@media (max-width: 380px) {
+
+    .equipment-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .unit-card {
+        min-height: 62px;
+    }
+}
