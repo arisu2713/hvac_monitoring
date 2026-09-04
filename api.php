@@ -1,5 +1,17 @@
 <?php
 
+require_once __DIR__ . '/auth.php';
+
+if (empty($_SESSION['user_id'])) {
+    http_response_code(401);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'success' => false,
+        'error' => 'Authentication required'
+    ]);
+    exit;
+}
+
 header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
