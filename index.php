@@ -129,6 +129,29 @@ function createCard(unit) {
     return card;
 }
 
+function createAhuPlaceholderCard(number) {
+    const card = document.createElement("div");
+    card.className = "unit-card status-unknown";
+    card.dataset.status = "unknown";
+
+    const name = document.createElement("div");
+    name.className = "unit-name";
+    name.textContent = "AHU " + number;
+    card.appendChild(name);
+
+    const temp = document.createElement("div");
+    temp.className = "unit-value";
+    temp.textContent = "-- °C";
+    card.appendChild(temp);
+
+    const rh = document.createElement("div");
+    rh.className = "unit-value";
+    rh.textContent = "-- % RH";
+    card.appendChild(rh);
+
+    return card;
+}
+
 function renderEquipment() {
     grid.innerHTML = "";
 
@@ -139,12 +162,20 @@ function renderEquipment() {
         return;
     }
 
+    const placeholderCount = currentEquipment === "AHU" ? 4 : 0;
     sectionTitle.textContent = currentEquipment;
-    unitCount.textContent = data.length + " units";
+    unitCount.textContent = (data.length + placeholderCount) + " units";
 
     data.forEach(unit => {
         grid.appendChild(createCard(unit));
     });
+
+    if (currentEquipment === "AHU") {
+        const placeholderNumbers = ["94", "95", "96", "97"];
+        placeholderNumbers.forEach(num => {
+            grid.appendChild(createAhuPlaceholderCard(num));
+        });
+    }
 }
 
 async function loadData() {
