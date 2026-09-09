@@ -27,7 +27,7 @@ body {
    ========================================================= */
 
 .topbar {
-    height: 72px;
+    height: 54px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -37,14 +37,14 @@ body {
 }
 
 .title {
-    font-size: 27px;
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: 1px;
 }
 
 .subtitle {
-    margin-top: 3px;
-    font-size: 12px;
+    margin-top: 1px;
+    font-size: 10px;
     color: #999;
 }
 
@@ -78,8 +78,8 @@ body {
 
 .equipment-nav {
     display: flex;
-    gap: 7px;
-    padding: 10px 20px;
+    gap: 4px;
+    padding: 5px 20px;
     background: #151515;
     border-bottom: 1px solid #292929;
 }
@@ -88,9 +88,9 @@ body {
     border: 1px solid #444;
     background: #252525;
     color: #ccc;
-    border-radius: 5px;
-    padding: 8px 18px;
-    font-size: 13px;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
 }
@@ -429,3 +429,81 @@ footer {
         min-height: 62px;
     }
 }
+
+
+/* =========================================================
+   AHU 97 FULLSCREEN - 1920x1080
+   Layout-only override
+   PHP/API AHU 1-93 untouched
+   ========================================================= */
+
+@media (min-width: 1600px) and (max-width: 2499px) {
+
+    html,
+    body {
+        height: 100%;
+        overflow-y: hidden;
+    }
+
+    .topbar {
+        height: 50px;
+        padding: 6px 20px;
+    }
+
+    .title {
+        font-size: 22px;
+    }
+
+    .subtitle {
+        font-size: 10px;
+    }
+
+    .equipment-nav {
+        padding: 4px 20px;
+        gap: 4px;
+    }
+
+    .nav-button {
+        padding: 5px 14px;
+        font-size: 12px;
+    }
+
+    .section-header {
+        padding: 5px 20px 4px;
+    }
+
+    #sectionTitle {
+        font-size: 18px;
+    }
+
+    #unitCount {
+        font-size: 11px;
+    }
+
+    .equipment-grid {
+        grid-template-columns: repeat(10, minmax(0, 1fr));
+        gap: 6px;
+        padding: 0 20px 8px;
+    }
+
+    .unit-card {
+        min-height: 70px;
+        padding: 5px 3px;
+        border-radius: 6px;
+    }
+
+    .unit-name {
+        font-size: 15px;
+    }
+
+    .unit-value {
+        margin-top: 4px;
+        font-size: 10px;
+    }
+
+    footer {
+        padding: 4px 20px;
+        font-size: 9px;
+    }
+}
+
