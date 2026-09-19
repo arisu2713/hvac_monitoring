@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 require_once __DIR__ . '/auth.php';
 
@@ -167,6 +167,33 @@ try {
     }
     unset($units);
 
+    $efSql = "
+        SELECT
+            p.id AS ef_point_id,
+            p.panel_no,
+            p.ef_name AS name,
+            c.status,
+            c.last_update
+        FROM hvac_current.ef_points p
+        INNER JOIN hvac_current.ef_current c
+            ON c.ef_point_id = p.id
+        ORDER BY p.panel_no, p.id
+    ";
+
+    $efStmt = $pdo->query($efSql);
+    $efRows = $efStmt->fetchAll();
+
+    $equipment['EXHAUST_FAN'] = [];
+
+    foreach ($efRows as $row) {
+        $equipment['EXHAUST_FAN'][] = [
+            'id' => (int)$row['ef_point_id'],
+            'panel_no' => (int)$row['panel_no'],
+            'name' => $row['name'],
+            'status' => (int)$row['status'],
+            'last_update' => $row['last_update'],
+        ];
+    }
     echo json_encode([
         'success' => true,
         'server_time' => date('Y-m-d H:i:s'),

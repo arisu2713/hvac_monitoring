@@ -172,6 +172,140 @@ body {
 }
 
 /* =========================================================
+   ROOM TEMP & RH SECTION STYLES
+   ========================================================= */
+
+/* Dedicated responsive grid for Room cards */
+.equipment-grid:has(.room-card) {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+    gap: 12px !important;
+    padding: 0 20px 24px !important;
+}
+
+/* Card Container (Clean SCADA Theme, no ON-OFF status colors) */
+.unit-card.room-card {
+    background: #1c1f24;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 12px 10px;
+    min-height: 88px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.unit-card.room-card:hover {
+    background: #22272e;
+    border-color: #58a6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(88, 166, 255, 0.15);
+}
+
+/* Room / Outdoor Name */
+.room-card .unit-name {
+    color: #58a6ff;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.2;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    letter-spacing: 0.5px;
+    width: 100%;
+}
+
+/* Sensor Values */
+.room-card .unit-value {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    width: 100%;
+}
+
+.room-card .room-temp {
+    color: #f0f6fc;
+    margin-top: 2px;
+}
+
+.room-card .room-rh {
+    color: #79c0ff;
+    margin-top: 3px;
+}
+
+/* Responsive Desktop (min-width: 1024px) */
+@media (min-width: 1024px) {
+    .equipment-grid:has(.room-card) {
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)) !important;
+        gap: 16px !important;
+    }
+
+    .unit-card.room-card {
+        min-height: 96px;
+        padding: 14px 12px;
+    }
+
+    .room-card .unit-name {
+        font-size: 16px;
+    }
+
+    .room-card .unit-value {
+        font-size: 14px;
+    }
+}
+
+/* Large Display / SCADA Wall Display (min-width: 1600px) */
+@media (min-width: 1600px) {
+    .equipment-grid:has(.room-card) {
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)) !important;
+        gap: 18px !important;
+        padding: 0 30px 30px !important;
+    }
+
+    .unit-card.room-card {
+        min-height: 104px;
+        padding: 16px 14px;
+    }
+
+    .room-card .unit-name {
+        font-size: 17px;
+    }
+
+    .room-card .unit-value {
+        font-size: 15px;
+    }
+}
+
+/* Responsive Mobile (max-width: 650px) */
+@media (max-width: 650px) {
+    .equipment-grid:has(.room-card) {
+        grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)) !important;
+        gap: 8px !important;
+        padding: 0 12px 16px !important;
+    }
+
+    .unit-card.room-card {
+        min-height: 80px;
+        padding: 8px 6px;
+        border-radius: 6px;
+    }
+
+    .room-card .unit-name {
+        font-size: 13.5px;
+        margin-bottom: 4px;
+        padding-bottom: 4px;
+    }
+
+    .room-card .unit-value {
+        font-size: 12px;
+    }
+}
+
+/* =========================================================
    STATUS COLORS
    ========================================================= */
 
@@ -486,6 +620,13 @@ footer {
         padding: 0 20px 8px;
     }
 
+    /* HVAC SC must override the 10-column AHU grid rule */
+    .equipment-grid.hvac-view {
+        display: block !important;
+        grid-template-columns: none;
+        padding: 0 20px 30px;
+    }
+
     .unit-card {
         min-height: 70px;
         padding: 5px 3px;
@@ -505,5 +646,279 @@ footer {
         padding: 4px 20px;
         font-size: 9px;
     }
+}
+
+/* =========================================================
+   HVAC SC MATRIX LAYOUT & CARDS (STAGE 2 REDESIGN)
+   ========================================================= */
+
+.equipment-grid.hvac-view {
+    display: block;
+    padding: 0 20px 30px;
+}
+
+.hvac-sc-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 24px;
+    width: 100%;
+}
+
+.hvac-group-card {
+    background: #191919;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 16px 20px 22px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.hvac-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 10px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #2d2d2d;
+}
+
+.hvac-group-title {
+    font-size: 19px;
+    font-weight: 800;
+    color: #58a6ff;
+    letter-spacing: 0.6px;
+}
+
+.hvac-group-count {
+    font-size: 12px;
+    color: #aaa;
+    font-weight: 700;
+    background: #252525;
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid #3a3a3a;
+}
+
+/* 4-Column Horizontal Equipment Matrix */
+.hvac-matrix {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.hvac-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.hvac-col-header {
+    font-size: 13px;
+    font-weight: 800;
+    color: #ccc;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #282828;
+    margin-bottom: 2px;
+}
+
+.hvac-col-header::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 13px;
+    background: #58a6ff;
+    border-radius: 2px;
+}
+
+.hvac-col-items {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Cooling Tower Pairs Row */
+.ct-pair-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+/* Unit Card Overrides for HVAC SC */
+.unit-card.hvac-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 10px 12px;
+    text-align: left;
+    align-items: stretch;
+    border-radius: 7px;
+    transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.hvac-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    padding-bottom: 4px;
+}
+
+.hvac-card-title {
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.1;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+}
+
+.hvac-card-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.45);
+    letter-spacing: 0.4px;
+}
+
+/* Chiller Card (Taller, spacious 6-metric grid) */
+.chiller-card {
+    min-height: 124px;
+}
+
+.chiller-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px 10px;
+    margin-top: 4px;
+    font-size: 11.5px;
+}
+
+/* Compact Card (CCP / CHWP / CT - readable and well-proportioned) */
+.compact-card {
+    min-height: 82px;
+}
+
+.compact-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 3px;
+    font-size: 11.5px;
+}
+
+.metric-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    line-height: 1.25;
+}
+
+.m-lbl {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 700;
+}
+
+.m-val {
+    color: #fff;
+    font-weight: 800;
+}
+
+/* 1920x1080 Large Display Optimizations */
+@media (min-width: 1600px) {
+    .hvac-group-card {
+        padding: 18px 24px 26px;
+    }
+
+    .hvac-group-title {
+        font-size: 21px;
+    }
+
+    .hvac-matrix {
+        gap: 20px;
+    }
+
+    .hvac-col-header {
+        font-size: 14px;
+    }
+
+    .hvac-card-title {
+        font-size: 16px;
+    }
+
+    .chiller-card {
+        min-height: 130px;
+    }
+
+    .chiller-metrics {
+        font-size: 12.5px;
+        gap: 5px 12px;
+    }
+
+    .compact-card {
+        min-height: 88px;
+    }
+
+    .compact-metrics {
+        font-size: 12px;
+        gap: 4px;
+    }
+}
+
+/* Tablet Responsive */
+@media (max-width: 1100px) {
+    .hvac-sc-container {
+        grid-template-columns: 1fr;
+    }
+
+    .hvac-matrix {
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+}
+
+/* Mobile Responsive */
+@media (max-width: 650px) {
+    .hvac-matrix {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .ct-pair-row {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+
+    .hvac-group-card {
+        padding: 12px 14px 16px;
+    }
+
+    .chiller-card {
+        min-height: 115px;
+    }
+
+    .compact-card {
+        min-height: 78px;
+    }
+}
+
+
+.coming-soon {
+    min-height: 240px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #191919;
+    border: 1px solid #333;
+    border-radius: 10px;
+    color: #888;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 1px;
 }
 
