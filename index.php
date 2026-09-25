@@ -746,11 +746,19 @@ async function loadData() {
 
         setConnection(true);
         renderEquipment();
+        const timestamps = Object.values(allData)
+            .flatMap(group =>
+                Array.isArray(group) ? group : Object.values(group || {})
+            )
+            .map(item => item?.last_update)
+            .filter(Boolean);
 
-        const now = new Date();
-        lastUpdate.textContent =
-            "Last update: " +
-            now.toLocaleTimeString();
+        if (timestamps.length) {
+            const latest = timestamps.sort().at(-1);
+            lastUpdate.textContent = "DB update: " + latest;
+        } else {
+            lastUpdate.textContent = "DB update: --";
+        }
 
     } catch (error) {
         console.error("HVAC API error:", error);
