@@ -742,7 +742,7 @@ async function loadData() {
 
         if (timestamps.length) {
             const latest = timestamps.sort().at(-1);
-            lastUpdate.textContent = "DB update: " + String(latest).slice(0, 19);
+            lastUpdate.textContent = "DB update: " + latest;
         } else {
             lastUpdate.textContent = "DB update: --";
         }

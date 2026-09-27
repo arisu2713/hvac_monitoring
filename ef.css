@@ -1,0 +1,156 @@
+/* =========================================================
+   EXHAUST FAN
+   ========================================================= */
+
+.equipment-grid:has(.ef-panel) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+    padding: 0 20px 20px;
+}
+
+.ef-panel {
+    background: linear-gradient(145deg, #202020, #151515);
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 9px;
+    box-shadow:
+        0 3px 10px rgba(0, 0, 0, .35),
+        inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.ef-panel-header {
+    font-size: 14px;
+    font-weight: 800;
+    color: #d8d8d8;
+    padding: 2px 5px 7px;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+}
+
+.ef-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.unit-card.ef-card {
+    min-height: 58px;
+    padding: 7px 4px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.unit-card.ef-card .ef-name {
+    font-size: 17px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: .2px;
+    white-space: nowrap;
+}
+
+/* EF status */
+.unit-card.ef-card.status-run {
+    background: #0b9f50;
+    border: 2px solid #16d873;
+    box-shadow: 0 0 7px rgba(0,210,106,.22);
+}
+
+.unit-card.ef-card.status-off {
+    background: #b51d1d;
+    border: 2px solid #ed3c3c;
+    box-shadow: 0 0 7px rgba(255,40,40,.16);
+}
+
+.unit-card.ef-card.status-unknown {
+    background: #555;
+    border: 2px solid #777;
+}
+
+/* Large industrial display */
+@media (min-width: 1600px) {
+    .equipment-grid:has(.ef-panel) {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        padding: 0 20px 16px;
+    }
+
+    .ef-panel {
+        padding: 10px;
+        border-radius: 10px;
+    }
+
+    .ef-panel-header {
+        font-size: 15px;
+        padding: 2px 6px 8px;
+    }
+
+    .ef-grid {
+        gap: 6px;
+    }
+
+    .unit-card.ef-card {
+        min-height: 62px;
+    }
+
+    .unit-card.ef-card .ef-name {
+        font-size: 19px;
+        font-weight: 900;
+    }
+}
+
+/* Tablet */
+@media (max-width: 1100px) {
+    .equipment-grid:has(.ef-panel) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ef-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+/* Mobile */
+@media (max-width: 650px) {
+    .equipment-grid:has(.ef-panel) {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 0 12px 16px;
+    }
+
+    .ef-panel {
+        padding: 9px;
+    }
+
+    .ef-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+    }
+
+    .unit-card.ef-card {
+        min-height: 54px;
+    }
+
+    .unit-card.ef-card .ef-name {
+        font-size: 16px;
+    }
+}
+
+/* EF OFF alarm blink */
+.ef-card.status-off {
+    animation: ef-off-blink 0.8s ease-in-out infinite;
+}
+
+@keyframes ef-off-blink {
+    0%, 100% {
+        filter: brightness(1);
+    }
+
+    50% {
+        filter: brightness(0.55);
+    }
+}

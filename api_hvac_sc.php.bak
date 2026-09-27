@@ -133,41 +133,8 @@ try {
         'CT'      => [],
     ];
 
-    $g3Shared = [];
-
     foreach ($rows as $row) {
         $pointName = trim($row['point_name'] ?? '');
-
-        // G3 chillers (6-9): outlet temp is per chiller, other temps are shared header sensors
-        $g3Value = $row['value'] !== null ? (float)$row['value'] : null;
-
-        if (preg_match('/^Temp Out Chiller\s+(\d+)$/i', $pointName, $g3m)) {
-            $cn = (string)(int)$g3m[1];
-            if (!isset($equipment['CHILLER'][$cn])) {
-                $equipment['CHILLER'][$cn] = hvac_sc_blank('CHILLER', $cn);
-            }
-            $equipment['CHILLER'][$cn]['evap_leaving_temp'] = $g3Value;
-            if (
-                $row['read_at'] !== null &&
-                ($equipment['CHILLER'][$cn]['last_update'] === null ||
-                 $row['read_at'] > $equipment['CHILLER'][$cn]['last_update'])
-            ) {
-                $equipment['CHILLER'][$cn]['last_update'] = $row['read_at'];
-            }
-            continue;
-        }
-
-        $g3Header = [
-            'temp return header chil g3' => 'evap_entering_temp',
-            'temp return head conden g3' => 'cond_entering_temp',
-            'temp supp head condenso g3' => 'cond_leaving_temp',
-        ];
-        $g3Key = strtolower(preg_replace('/\s+/', ' ', $pointName));
-
-        if (isset($g3Header[$g3Key])) {
-            $g3Shared[$g3Header[$g3Key]] = ['value' => $g3Value, 'read_at' => $row['read_at']];
-            continue;
-        }
 
         if (!preg_match('/^(CHILLER|CCP|CHWP|CT)\s+(\d+[A-Z]?)\s+(.+)$/i', $pointName, $m)) {
             continue;
@@ -246,23 +213,6 @@ try {
         }
 
         unset($equipment['CT'][$key]);
-    }
-
-    // Apply shared G3 header sensors to chillers 6-9
-    foreach (['6', '7', '8', '9'] as $cn) {
-        if (!isset($equipment['CHILLER'][$cn])) {
-            continue;
-        }
-        foreach ($g3Shared as $field => $info) {
-            $equipment['CHILLER'][$cn][$field] = $info['value'];
-            if (
-                $info['read_at'] !== null &&
-                ($equipment['CHILLER'][$cn]['last_update'] === null ||
-                 $info['read_at'] > $equipment['CHILLER'][$cn]['last_update'])
-            ) {
-                $equipment['CHILLER'][$cn]['last_update'] = $info['read_at'];
-            }
-        }
     }
 
     foreach ($equipment as $type => $units) {

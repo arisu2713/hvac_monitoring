@@ -9,30 +9,17 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-session_write_close();
+session_write_close(); // Release session lock early — rest of script is read-only
 
 header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
 
-/*
- * equip_type = 'ROOM TEMP & RH'
- *
- * Point naming convention:
- *   ROOM TEMP 1056 / ROOM RH 1056
- *   ROOM TEMP OVC  / ROOM RH OVC
- *   ROOM TEMP SE 41 / ROOM RH SE 41
- *   Outdoor Temperature G1 / Outdoor Humidity G1
- *
- * Temp and RH points sharing the same label are merged into one card.
- */
-
 try {
     $dsn = sprintf(
-        'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+        'mysql:host=%s;port=%d;dbname=hvac_current;charset=utf8mb4',
         $config['host'],
-        $config['port'],
-        $config['database']
+        $config['port']
     );
 
     $pdo = new PDO($dsn, $config['username'], $config['password'], [
@@ -43,36 +30,32 @@ try {
     $sql = "
         SELECT
             p.point_id,
-            p.point_name,
-            ai.value,
-            ai.read_at
-        FROM points p
-        LEFT JOIN ai_current ai
-            ON ai.point_id = p.point_id
-        WHERE p.equip_type = 'ROOM TEMP & RH'
+            p.equipment_type,
+            p.equipment_name,
+            p.role,
+            ar.value,
+            ar.read_at
+        FROM hvac_current.points p
+        LEFT JOIN hvac_current.ai_current ar
+            ON ar.point_id = p.point_id
+        WHERE p.equipment_type IN ('ROOM', 'OUTDOOR')
           AND p.obj_type = 'AI'
+        ORDER BY
+            p.equipment_type,
+            CAST(p.equipment_name AS UNSIGNED),
+            p.equipment_name,
+            p.role
     ";
 
-    $rows = $pdo->query($sql)->fetchAll();
+    $stmt = $pdo->query($sql);
+    $rows = $stmt->fetchAll();
 
     $units = [];
 
     foreach ($rows as $row) {
-        $pointName = trim($row['point_name'] ?? '');
-
-        if (preg_match('/^ROOM\s+(TEMP|RH)\s+(.+)$/i', $pointName, $m)) {
-            $type   = 'ROOM';
-            $metric = strtoupper($m[1]) === 'TEMP' ? 'temp' : 'rh';
-            $name   = 'ROOM ' . strtoupper(trim($m[2]));
-        } elseif (preg_match('/^OUTDOOR\s+(TEMPERATURE|HUMIDITY)\s+(.+)$/i', $pointName, $m)) {
-            $type   = 'OUTDOOR';
-            $metric = strtoupper($m[1]) === 'TEMPERATURE' ? 'temp' : 'rh';
-            $name   = 'OUTDOOR ' . strtoupper(trim($m[2]));
-        } else {
-            continue;
-        }
-
-        $key = $type . '|' . $name;
+        $type = $row['equipment_type'];
+        $name = $row['equipment_name'];
+        $key  = $type . '_' . $name;
 
         if (!isset($units[$key])) {
             $units[$key] = [
@@ -86,7 +69,14 @@ try {
             ];
         }
 
-        $units[$key][$metric] = $row['value'] !== null ? (float)$row['value'] : null;
+        $role  = strtolower(trim($row['role'] ?? ''));
+        $value = $row['value'];
+
+        if ($role === 'temp' || $role === 'temperature') {
+            $units[$key]['temp'] = $value !== null ? (float) $value : null;
+        } elseif ($role === 'humidity' || $role === 'rh') {
+            $units[$key]['rh'] = $value !== null ? (float) $value : null;
+        }
 
         if ($row['read_at'] !== null) {
             if (
@@ -100,21 +90,13 @@ try {
 
     $roomList = array_values($units);
 
-    // Rooms first, outdoor last; natural order inside each group
-    usort($roomList, function ($a, $b) {
-        $rank = ['ROOM' => 0, 'OUTDOOR' => 1];
-        if ($a['type'] !== $b['type']) {
-            return $rank[$a['type']] <=> $rank[$b['type']];
-        }
-        return strnatcasecmp($a['name'], $b['name']);
-    });
-
     $payload = json_encode([
         'success'     => true,
         'server_time' => date('Y-m-d H:i:s'),
         'equipment'   => [
             'ROOM_TEMP_RH' => $roomList,
         ],
+        'data'        => $roomList,
     ], JSON_UNESCAPED_UNICODE);
 
     header('Content-Length: ' . strlen($payload));

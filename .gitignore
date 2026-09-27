@@ -1,2 +1,7 @@
 config.php
 *.backup*
+
+# Local-only UI test harness. Lives inside the deploy tree, and this repo is
+# deployed to hosting via GitHub — ignoring it here stops `git add -A` from
+# publishing the harness, its fixtures, and its config.
+_ui_test/
