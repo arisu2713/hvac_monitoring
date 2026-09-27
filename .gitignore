@@ -5,3 +5,4 @@ config.php
 # deployed to hosting via GitHub — ignoring it here stops `git add -A` from
 # publishing the harness, its fixtures, and its config.
 _ui_test/
+*.bak
