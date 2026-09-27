@@ -12,6 +12,8 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
+session_write_close();
+
 header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
@@ -73,11 +75,12 @@ try {
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {
+    error_log('[' . basename(__FILE__) . '] ' . $e->getMessage());
 
     http_response_code(500);
 
     echo json_encode([
         'success' => false,
-        'error' => $e->getMessage(),
+        'error' => 'Internal server error',
     ], JSON_UNESCAPED_UNICODE);
 }

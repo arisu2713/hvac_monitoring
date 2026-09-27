@@ -218,13 +218,14 @@ try {
     echo $payload;
 
 } catch (Throwable $e) {
+    error_log('[' . basename(__FILE__) . '] ' . $e->getMessage());
 
     http_response_code(500);
 
     echo json_encode(
         [
             'success' => false,
-            'error'   => $e->getMessage()
+            'error' => 'Internal server error'
         ],
         JSON_UNESCAPED_UNICODE
     );
