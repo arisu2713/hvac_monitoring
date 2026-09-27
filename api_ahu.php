@@ -21,9 +21,10 @@ $config = require __DIR__ . '/config.php';
 try {
 
     $dsn = sprintf(
-        'mysql:host=%s;port=%d;dbname=hvac_current;charset=utf8mb4',
+        'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
         $config['host'],
-        $config['port']
+        $config['port'],
+        $config['database']
     );
 
     $pdo = new PDO(
