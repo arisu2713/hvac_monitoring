@@ -1,0 +1,29 @@
+# HVAC Monitoring - Hostinger deployment hardening
+# Place this file in the same folder as index.php on the hosting server.
+
+# Block direct access to files that should never be downloaded,
+# even if PHP execution is ever misconfigured.
+<FilesMatch "\.(bak|sql|md|ini|log|gitignore)$">
+    Require all denied
+</FilesMatch>
+
+<Files "config.php">
+    Require all denied
+</Files>
+
+<Files "config.example.php">
+    Require all denied
+</Files>
+
+# Block access to the .git folder if it ever ends up inside the webroot
+RedirectMatch 404 /\.git
+
+# Disable directory listing
+Options -Indexes
+
+# Basic security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "same-origin"
+</IfModule>
