@@ -39,6 +39,9 @@ const HVAC_SC_FIELDS = [
     'current'          => 'current',
     'frequency'        => 'frequency',
     'return temp'      => 'return_temp',
+    // VSD/Drive temperature — CCP, CHWP and CT only. The point is named
+    // "Drive Temp" in the DB; it is NOT the CT cell "Return Temp".
+    'drive temp'       => 'drive_temperature',
     // Chiller water temperatures
     // Evap: Supply = leaving (cold), Return = entering.
     // Cond: naming is from the tower's view, so Supply = leaving chiller (hot), Return = entering chiller (cool).
@@ -48,43 +51,88 @@ const HVAC_SC_FIELDS = [
     'cond return temp' => 'cond_entering_temp',
 ];
 
-function hvac_sc_blank(string $type, string $name): array
+/*
+ * Blank card for a unit. $limits carries the alarm bounds resolved from the
+ * reference tables (threshold_direct / threshold_by_kw) and is merged over
+ * the null defaults, so an unresolved limit simply stays null.
+ */
+function hvac_sc_blank(string $type, string $name, array $limits = []): array
 {
     if ($type === 'CHILLER') {
-        return [
+        return array_merge([
             'name'               => $name,
             'run'                => null,
             'alarm'              => null,
-            'setpoint'           => null,   // not in DB yet
-            'rla'                => null,   // not in DB yet
+            'setpoint'           => null,   // filled from CHILLER <n> MODBUS below
+            'rla'                => null,   // filled from CHILLER <n> MODBUS below
             'evap_leaving_temp'  => null,
             'evap_entering_temp' => null,
             'cond_entering_temp' => null,
             'cond_leaving_temp'  => null,
+            'evap_leaving_temp_max'  => null,
+            'cond_entering_temp_max' => null,
             'last_update'        => null,
-        ];
+        ], $limits);
     }
 
     if ($type === 'CT') {
-        return [
+        return array_merge([
             'name'        => $name,
             'run'         => null,
             'alarm'       => null,
             'frequency'   => null,
             'current'     => null,
+            'current_min' => null,
+            'current_max' => null,
             'return_temp' => null,
+            'drive_temperature' => null,
             'last_update' => null,
-        ];
+        ], $limits);
     }
 
     // CCP, CHWP
-    return [
+    return array_merge([
         'name'        => $name,
         'run'         => null,
         'alarm'       => null,
         'frequency'   => null,
         'current'     => null,
+        'current_min' => null,
+        'current_max' => null,
+        'drive_temperature' => null,
         'last_update' => null,
+    ], $limits);
+}
+
+/*
+ * Current alarm bounds for a CCP / CHWP / CT unit.
+ *
+ *   1. exact (equip_type, unit_name) match in unit_motor_kw
+ *   2. if missing and the name ends in a letter ("5A"), retry without it
+ *      ("5") — cooling tower cells share one motor/VSD per tower
+ *   3. look the motor_kw up in threshold_by_kw
+ *   4. anything unresolved yields null bounds — never an error, and the
+ *      unit is still returned to the frontend.
+ */
+function hvac_sc_current_limits(
+    string $type,
+    string $name,
+    array $unitMotorKw,
+    array $thresholdByKw
+): array {
+    $motorKw = $unitMotorKw[$type . '|' . $name] ?? null;
+
+    if ($motorKw === null && preg_match('/^(.+?)[A-Z]$/', $name, $m)) {
+        $motorKw = $unitMotorKw[$type . '|' . $m[1]] ?? null;
+    }
+
+    $threshold = $motorKw !== null
+        ? ($thresholdByKw[(string)$motorKw] ?? null)
+        : null;
+
+    return [
+        'current_min' => $threshold['min'] ?? null,
+        'current_max' => $threshold['max'] ?? null,
     ];
 }
 
@@ -100,6 +148,55 @@ try {
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
+
+    /*
+     * Alarm reference tables, loaded once here instead of querying per unit.
+     *
+     * threshold_direct / threshold_by_kw / unit_motor_kw are maintained
+     * outside this app; they are only read here.
+     *
+     *   thresholdByKw : "30" => ['min' => null, 'max' => 56]
+     *   unitMotorKw   : "CT|5A" => 7.5
+     */
+    $thresholdByKw = [];
+
+    foreach (
+        $pdo->query("SELECT motor_kw, min_value, max_value FROM threshold_by_kw")->fetchAll()
+        as $threshold
+    ) {
+        $thresholdByKw[(string)(float)$threshold['motor_kw']] = [
+            'min' => $threshold['min_value'] !== null ? (float)$threshold['min_value'] : null,
+            'max' => $threshold['max_value'] !== null ? (float)$threshold['max_value'] : null,
+        ];
+    }
+
+    $unitMotorKw = [];
+
+    foreach (
+        $pdo->query("SELECT equip_type, unit_name, motor_kw FROM unit_motor_kw")->fetchAll()
+        as $motor
+    ) {
+        $unitMotorKw[
+            strtoupper(trim($motor['equip_type'])) . '|' . strtoupper(trim($motor['unit_name']))
+        ] = (float)$motor['motor_kw'];
+    }
+
+    $chillerThresholds = [];
+
+    foreach (
+        $pdo->query("SELECT metric, max_value FROM threshold_direct WHERE equip_type = 'CHILLER'")->fetchAll()
+        as $threshold
+    ) {
+        $metric = $threshold['metric'];
+
+        if ($metric !== 'evap_leaving_temp' && $metric !== 'cond_entering_temp') {
+            continue;
+        }
+
+        $chillerThresholds[$metric . '_max'] = $threshold['max_value'] !== null
+            ? (float)$threshold['max_value']
+            : null;
+    }
 
     $sql = "
         SELECT
@@ -126,6 +223,44 @@ try {
 
     $rows = $pdo->query($sql)->fetchAll();
 
+    /*
+     * Separate Modbus query for chiller Setpoint (SP) and RLA.
+     *
+     * These points deliberately live under their own equip_type values
+     * ("CHILLER 1 MODBUS" .. "CHILLER 9 MODBUS"), NOT under 'CHILLER', so
+     * they are intentionally excluded from the main HVAC_SC query above.
+     * Do not merge them into that query — the two sources stay separate
+     * and are only combined by unit number further down.
+     *
+     * "Active Setpoint RLA-<n>" is deliberately NOT read here.
+     */
+    $modbusSql = "
+        SELECT
+            p.point_name,
+            c.value
+        FROM points p
+        LEFT JOIN ai_current c
+            ON c.point_id = p.point_id
+        WHERE p.equip_type LIKE 'CHILLER % MODBUS'
+          AND (
+                p.point_name REGEXP '^SETPOINT[[:space:]]+CHILLER-[0-9]+$'
+             OR p.point_name REGEXP '^RLA-[0-9]+$'
+          )
+    ";
+
+    $modbusSpRla = [];
+
+    foreach ($pdo->query($modbusSql)->fetchAll() as $mrow) {
+        $mName = trim($mrow['point_name'] ?? '');
+        $mVal  = $mrow['value'] !== null ? (float)$mrow['value'] : null;
+
+        if (preg_match('/^SETPOINT\s+CHILLER-(\d+)$/i', $mName, $mm)) {
+            $modbusSpRla[(string)(int)$mm[1]]['setpoint'] = $mVal;
+        } elseif (preg_match('/^RLA-(\d+)$/i', $mName, $mm)) {
+            $modbusSpRla[(string)(int)$mm[1]]['rla'] = $mVal;
+        }
+    }
+
     $equipment = [
         'CHILLER' => [],
         'CCP'     => [],
@@ -144,7 +279,7 @@ try {
         if (preg_match('/^Temp Out Chiller\s+(\d+)$/i', $pointName, $g3m)) {
             $cn = (string)(int)$g3m[1];
             if (!isset($equipment['CHILLER'][$cn])) {
-                $equipment['CHILLER'][$cn] = hvac_sc_blank('CHILLER', $cn);
+                $equipment['CHILLER'][$cn] = hvac_sc_blank('CHILLER', $cn, $chillerThresholds);
             }
             $equipment['CHILLER'][$cn]['evap_leaving_temp'] = $g3Value;
             if (
@@ -184,7 +319,11 @@ try {
         $field = HVAC_SC_FIELDS[$function];
 
         if (!isset($equipment[$type][$name])) {
-            $equipment[$type][$name] = hvac_sc_blank($type, $name);
+            $limits = $type === 'CHILLER'
+                ? $chillerThresholds
+                : hvac_sc_current_limits($type, $name, $unitMotorKw, $thresholdByKw);
+
+            $equipment[$type][$name] = hvac_sc_blank($type, $name, $limits);
         }
 
         if (!array_key_exists($field, $equipment[$type][$name])) {
@@ -230,7 +369,7 @@ try {
         $parent = $equipment['CT'][$key];
 
         foreach ($cells as $cellKey) {
-            foreach (['run', 'alarm', 'frequency', 'current'] as $f) {
+            foreach (['run', 'alarm', 'frequency', 'current', 'drive_temperature'] as $f) {
                 if ($equipment['CT'][$cellKey][$f] === null && $parent[$f] !== null) {
                     $equipment['CT'][$cellKey][$f] = $parent[$f];
                 }
@@ -263,6 +402,21 @@ try {
                 $equipment['CHILLER'][$cn]['last_update'] = $info['read_at'];
             }
         }
+    }
+
+    /*
+     * Merge the Modbus SP/RLA results into the chiller entries by unit
+     * number. A NULL in ai_current stays null in the JSON — no dummy
+     * values, no scaling. Chillers with no Modbus connection (1 and 3)
+     * simply keep the null defaults from hvac_sc_blank().
+     */
+    foreach ($modbusSpRla as $chillerNo => $spRla) {
+        if (!isset($equipment['CHILLER'][$chillerNo])) {
+            continue;
+        }
+
+        $equipment['CHILLER'][$chillerNo]['setpoint'] = $spRla['setpoint'] ?? null;
+        $equipment['CHILLER'][$chillerNo]['rla']      = $spRla['rla'] ?? null;
     }
 
     foreach ($equipment as $type => $units) {

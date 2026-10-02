@@ -55,6 +55,30 @@ try {
 
     $rows = $pdo->query($sql)->fetchAll();
 
+    /*
+     * Alarm thresholds for ROOM temp / RH.
+     *
+     * Read once here (not per unit) — the same limits apply to every room.
+     * OUTDOOR cards deliberately get no limits, so these fields are only
+     * added to ROOM entries below.
+     * threshold_direct is a reference table maintained outside this app;
+     * it is only read here.
+     */
+    $roomThresholds = [];
+
+    $thresholdSql = "
+        SELECT metric, min_value, max_value
+        FROM threshold_direct
+        WHERE equip_type = 'ROOM'
+          AND metric IN ('temp', 'rh')
+    ";
+
+    foreach ($pdo->query($thresholdSql)->fetchAll() as $threshold) {
+        $roomThresholds[$threshold['metric']] = $threshold['max_value'] !== null
+            ? (float)$threshold['max_value']
+            : null;
+    }
+
     $units = [];
 
     foreach ($rows as $row) {
@@ -84,6 +108,12 @@ try {
                 'rh_unit'     => '% RH',
                 'last_update' => null,
             ];
+
+            // OUTDOOR entries deliberately carry no alarm limits.
+            if ($type === 'ROOM') {
+                $units[$key]['temp_max'] = $roomThresholds['temp'] ?? null;
+                $units[$key]['rh_max']   = $roomThresholds['rh'] ?? null;
+            }
         }
 
         $units[$key][$metric] = $row['value'] !== null ? (float)$row['value'] : null;

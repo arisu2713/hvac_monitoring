@@ -89,6 +89,28 @@ try {
     $stmt = $pdo->query($sql);
     $rows = $stmt->fetchAll();
 
+    /*
+     * Alarm threshold for AHU duct temperature.
+     *
+     * Read once here (not per unit) — the same limit applies to every AHU.
+     * threshold_direct(equip_type, metric, min_value, max_value) is a
+     * reference table maintained outside this app; it is only read here.
+     */
+    $tempMax = null;
+
+    $thresholdSql = "
+        SELECT min_value, max_value
+        FROM threshold_direct
+        WHERE equip_type = 'AHU'
+          AND metric = 'temp'
+    ";
+
+    foreach ($pdo->query($thresholdSql)->fetchAll() as $threshold) {
+        $tempMax = $threshold['max_value'] !== null
+            ? (float)$threshold['max_value']
+            : null;
+    }
+
     $units = [];
 
     foreach ($rows as $row) {
@@ -114,6 +136,7 @@ try {
                 'run'         => null,
                 'alarm'       => null,
                 'temp'        => null,
+                'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
 

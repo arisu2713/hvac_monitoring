@@ -992,3 +992,92 @@ footer {
 .room-card.room-outdoor .room-rh {
     color: #c7d2fe;
 }
+
+/* =========================================================
+   ALARM VALUES
+   Out-of-range readings (threshold_direct / threshold_by_kw)
+   blink red. Applied to the value element itself.
+   ========================================================= */
+
+@keyframes blink-alarm {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+.value-alarm {
+    color: #ef4444 !important;
+    animation: blink-alarm 1.2s step-start infinite;
+}
+
+/*
+ * OFF cards are themselves red (#b51d1d), so red-on-red is unreadable.
+ * On those cards the alarm value switches to black but keeps the same
+ * blink-alarm animation. Only the text colour changes — the card's own
+ * background/border/status styling is untouched.
+ */
+.status-off .value-alarm {
+    color: #000000 !important;
+}
+
+/* Respect users who ask the OS to reduce motion: keep the colour, drop the blink */
+@media (prefers-reduced-motion: reduce) {
+    .value-alarm {
+        animation: none;
+    }
+}
+
+/* =========================================================
+   AHU CARD TYPOGRAPHY
+   Internal text only — card size/position/grid are untouched.
+   Scope: .unit-card:not(.room-card) is exactly the AHU cards
+   (room cards always carry .room-card; HVAC SC / EF cards use
+   their own .hvac-card / .ef-card classes and .m-val / .ef-name).
+   Values are font-size + internal spacing only; no card box
+   property is declared here, so min-height/padding/border-radius
+   keep coming from the rules above.
+   ========================================================= */
+
+/* Duct temperature enlarged ~25-33%, and the unit name lifted slightly.
+ * transform is visual-only: it cannot affect layout, so card height
+ * and grid are guaranteed unchanged. The freed space is claimed by
+ * the value's margin so the larger temperature still fits the card.
+ *
+ * The base rule needs the explicit @media blocks below: it is more
+ * specific than the original .unit-value rules, so without them it
+ * would win at every width instead of scaling per breakpoint.
+ *
+ * Base is 15px, the largest size that still fits the tightest card
+ * (the 94-97 placeholders hold 3 lines of text); 16px grew those
+ * cards from 78px to 78.7px and shifted the grid. */
+.unit-card:not(.room-card) .unit-name {
+    transform: translateY(-2px);
+}
+
+.unit-card:not(.room-card) .unit-value {
+    font-size: 15px;   /* 12px -> +25% */
+    margin-top: 2px;
+}
+
+@media (min-width: 1600px) {
+    .unit-card:not(.room-card) .unit-value {
+        font-size: 13px;   /* 10px -> +30% */
+    }
+}
+
+@media (min-width: 2500px) {
+    .unit-card:not(.room-card) .unit-value {
+        font-size: 21px;   /* 16px -> +31% */
+    }
+}
+
+@media (max-width: 900px) {
+    .unit-card:not(.room-card) .unit-value {
+        font-size: 12px;   /* 9px -> +33% */
+    }
+}
+
+@media (max-width: 600px) {
+    .unit-card:not(.room-card) .unit-value {
+        font-size: 12px;   /* 9px -> +33% */
+    }
+}

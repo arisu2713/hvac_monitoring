@@ -90,6 +90,40 @@ function getStatus(unit) {
     return "unknown";
 }
 
+/*
+ * Alarm bounds come from the API as *_max / *_min fields (null when the
+ * unit has no threshold configured). Only flag a value that is actually
+ * present and numerically outside its bounds — a missing reading is not
+ * an alarm.
+ */
+function isOutOfRange(value, min, max) {
+    if (value === null || value === undefined || value === "") {
+        return false;
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return false;
+    }
+
+    const hasMin = min !== null && min !== undefined && Number.isFinite(Number(min));
+    const hasMax = max !== null && max !== undefined && Number.isFinite(Number(max));
+
+    return (hasMin && n < Number(min)) || (hasMax && n > Number(max));
+}
+
+/*
+ * Appends the blinking alarm class to a value element when the reading is
+ * outside its bounds. Safe to call with missing limits (null) — then it
+ * never alarms.
+ */
+function applyAlarmClass(element, value, min, max) {
+    if (isOutOfRange(value, min, max)) {
+        element.classList.add("value-alarm");
+    }
+}
+
 function getEfStatus(unit) {
     const status = unit.status === null || unit.status === undefined
         ? null
@@ -141,6 +175,8 @@ function createCard(unit) {
     } else {
         temp.textContent = "-- °C";
     }
+
+    applyAlarmClass(temp, unit.temp, null, unit.temp_max);
 
     card.appendChild(temp);
 
@@ -204,9 +240,9 @@ function createChillerCard(unit) {
     const fields = [
         { label: "SP:", val: unit.setpoint,            suffix: " °C" },
         { label: "RLA:", val: unit.rla,                suffix: " %" },
-        { label: "EL:", val: unit.evap_leaving_temp,  suffix: " °C" },
+        { label: "EL:", val: unit.evap_leaving_temp,  suffix: " °C", max: unit.evap_leaving_temp_max },
         { label: "EE:", val: unit.evap_entering_temp, suffix: " °C" },
-        { label: "CE:", val: unit.cond_entering_temp, suffix: " °C" },
+        { label: "CE:", val: unit.cond_entering_temp, suffix: " °C", max: unit.cond_entering_temp_max },
         { label: "CL:", val: unit.cond_leaving_temp,  suffix: " °C" }
     ];
 
@@ -217,6 +253,8 @@ function createChillerCard(unit) {
         item.innerHTML =
             `<span class="m-lbl">${f.label}</span>` +
             `<span class="m-val">${formatValue(f.val, f.suffix)}</span>`;
+
+        applyAlarmClass(item.querySelector(".m-val"), f.val, f.min, f.max);
 
         metrics.appendChild(item);
     });
@@ -259,8 +297,8 @@ function createCompactHvacCard(prefix, unit) {
 
     const fields = [
         { label: "Freq:", val: unit.frequency, suffix: " Hz" },
-        { label: "Curr:", val: unit.current,   suffix: " A" },
-        { label: "Drive:", val: unit.run,       suffix: "" }
+        { label: "Curr:", val: unit.current,   suffix: " A", min: unit.current_min, max: unit.current_max },
+        { label: "Drv Tmp:", val: unit.drive_temperature, suffix: " °C" }
     ];
 
     fields.forEach(f => {
@@ -270,6 +308,8 @@ function createCompactHvacCard(prefix, unit) {
         item.innerHTML =
             `<span class="m-lbl">${f.label}</span>` +
             `<span class="m-val">${formatValue(f.val, f.suffix)}</span>`;
+
+        applyAlarmClass(item.querySelector(".m-val"), f.val, f.min, f.max);
 
         metrics.appendChild(item);
     });
@@ -619,6 +659,7 @@ function createRoomCard(unit, index) {
     tempVal.textContent = (unit.temp !== null && unit.temp !== undefined)
         ? Number(unit.temp).toFixed(1) + " °C"
         : "-- °C";
+    applyAlarmClass(tempVal, unit.temp, null, unit.temp_max);
     card.appendChild(tempVal);
 
     const rhVal = document.createElement("div");
@@ -626,6 +667,7 @@ function createRoomCard(unit, index) {
     rhVal.textContent = (unit.rh !== null && unit.rh !== undefined)
         ? Number(unit.rh).toFixed(1) + " % RH"
         : "-- % RH";
+    applyAlarmClass(rhVal, unit.rh, null, unit.rh_max);
     card.appendChild(rhVal);
 
     return card;
