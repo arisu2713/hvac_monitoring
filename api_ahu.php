@@ -204,6 +204,85 @@ try {
     }
 
     /*
+     * Daikin AHU 96-97 (G8 building).
+     *
+     * These units are NOT in hvac_current.points. They are collected by the
+     * separate Daikin / Niagara poller into hvac_current.daikin_current, which
+     * is already denormalised (equipment_type + equipment_no + point_name +
+     * value), so no join to a point master is needed.
+     *
+     * Additive only: the points query above, the AHU 1-93 loop and their
+     * fields are untouched. These rows are merged into the same $units array,
+     * so they sort and render exactly like any other AHU.
+     *
+     * These are STATUS-ONLY cards: only the run status is surfaced here.
+     * RoomTemp1 and SensorHumidityROOM deliberately are NOT — they are shown
+     * on the ROOM TEMP & RH page instead (see api_room.php). status_only tells
+     * the frontend to render the card without a value line.
+     *
+     * There is no alarm point for these units. BFM*-RUN-ST is a RUN status,
+     * so it feeds `run` (not `alarm`): the card shows green / red / gray via
+     * the existing getStatus() rules.
+     */
+    $daikinSql = "
+        SELECT
+            equipment_no,
+            point_name,
+            value_bool,
+            last_update
+        FROM daikin_current
+        WHERE equipment_type = 'AHU'
+          AND equipment_no IN ('96', '97')
+    ";
+
+    foreach ($pdo->query($daikinSql)->fetchAll() as $row) {
+
+        $unitName = 'AHU ' . (int)$row['equipment_no'];
+
+        if (!isset($units[$unitName])) {
+            $units[$unitName] = [
+                'name'        => $unitName,
+                'run'         => null,
+                'alarm'       => null,
+                'temp'        => null,
+                'temp_max'    => $tempMax,
+                'frequency'   => null,
+                'last_update' => null,
+                'status_only' => true,
+
+                'points' => [
+                    'run'   => null,
+                    'alarm' => null,
+                    'temp'  => null
+                ]
+            ];
+        }
+
+        $pointName = trim($row['point_name'] ?? '');
+
+        if ($pointName !== 'BFM1-RUN-ST' && $pointName !== 'BFM2-RUN-ST') {
+
+            // Every other Daikin point (RoomTemp1, SensorHumidityROOM,
+            // Feed_MV1, SetPoint, FEED_*, Diff, Pre, Med, SpDP01/02) is not
+            // part of this card, and must not influence its timestamp.
+            continue;
+        }
+
+        $units[$unitName]['run'] =
+            $row['value_bool'] !== null ? (int)$row['value_bool'] : null;
+
+        if ($row['last_update'] !== null) {
+
+            if (
+                $units[$unitName]['last_update'] === null ||
+                $row['last_update'] > $units[$unitName]['last_update']
+            ) {
+                $units[$unitName]['last_update'] = $row['last_update'];
+            }
+        }
+    }
+
+    /*
      * Natural numeric ordering:
      *
      * AHU 1

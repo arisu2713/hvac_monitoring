@@ -130,6 +130,89 @@ try {
 
     $roomList = array_values($units);
 
+    /*
+     * Daikin AHU 96-97 as additional ROOM sources (G8 building).
+     *
+     * RoomTemp1 / SensorHumidityROOM for these two units live in
+     * hvac_current.daikin_current, NOT in points/ai_current, so they cannot be
+     * reached by the query above. daikin_current is already denormalised
+     * (equipment_type + equipment_no + point_name + value), so no join to a
+     * point master is needed — deliberately NOT joining
+     * hvac_monitoring.daikin_points, which this account cannot read.
+     *
+     * Identity is explicit and comes straight from the row:
+     * equipment_type = 'AHU', equipment_no = '96' / '97'. No point_id is
+     * invented.
+     *
+     * Additive only: the 10 existing ROOM / OUTDOOR entries above are
+     * untouched and keep their own ordering. These two are appended after
+     * them, so the existing cards never move.
+     *
+     * They are plain ROOM entries, so they reuse the ROOM alarm limits that
+     * were read once above (temp 30 / rh 65) — no threshold is changed here.
+     */
+    $daikinRoomSql = "
+        SELECT
+            equipment_no,
+            point_name,
+            value_double,
+            last_update
+        FROM daikin_current
+        WHERE equipment_type = 'AHU'
+          AND equipment_no IN ('96', '97')
+          AND point_name IN ('RoomTemp1', 'SensorHumidityROOM')
+    ";
+
+    $daikinRooms = [];
+
+    foreach ($pdo->query($daikinRoomSql)->fetchAll() as $row) {
+
+        $name = 'AHU ' . (int)$row['equipment_no'];
+
+        if (!isset($daikinRooms[$name])) {
+            $daikinRooms[$name] = [
+                'type'        => 'ROOM',
+                'name'        => $name,
+                'temp'        => null,
+                'rh'          => null,
+                'temp_unit'   => '°C',
+                'rh_unit'     => '% RH',
+                'temp_max'    => $roomThresholds['temp'] ?? null,
+                'rh_max'      => $roomThresholds['rh'] ?? null,
+                'last_update' => null,
+            ];
+        }
+
+        $pointName = trim($row['point_name'] ?? '');
+
+        $metric = $pointName === 'RoomTemp1'
+            ? 'temp'
+            : ($pointName === 'SensorHumidityROOM' ? 'rh' : null);
+
+        if ($metric === null) {
+            continue;
+        }
+
+        $daikinRooms[$name][$metric] =
+            $row['value_double'] !== null ? (float)$row['value_double'] : null;
+
+        if ($row['last_update'] !== null) {
+            if (
+                $daikinRooms[$name]['last_update'] === null ||
+                $row['last_update'] > $daikinRooms[$name]['last_update']
+            ) {
+                $daikinRooms[$name]['last_update'] = $row['last_update'];
+            }
+        }
+    }
+
+    // Stable order regardless of the order the rows came back in.
+    ksort($daikinRooms);
+
+    foreach ($daikinRooms as $entry) {
+        $roomList[] = $entry;
+    }
+
     // Rooms first, outdoor last; natural order inside each group
     usort($roomList, function ($a, $b) {
         $rank = ['ROOM' => 0, 'OUTDOOR' => 1];

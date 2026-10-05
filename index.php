@@ -167,6 +167,16 @@ function createCard(unit) {
     name.textContent = unit.name ?? "";
     card.appendChild(name);
 
+    /*
+     * Status-only units (Daikin AHU 96-97) carry a run status but no value on
+     * this page: their RoomTemp1 / SensorHumidityROOM are shown on the
+     * ROOM TEMP & RH page instead. The card is therefore just name + colour,
+     * with no value line at all.
+     */
+    if (unit.status_only === true) {
+        return card;
+    }
+
     const temp = document.createElement("div");
     temp.className = "unit-value";
 
@@ -601,8 +611,11 @@ function renderExhaustFan() {
         return;
     }
 
-    unitCount.textContent = data.length + " units";
+    const g8Count = Array.isArray(allData.EXHAUST_FAN_G8)
+        ? allData.EXHAUST_FAN_G8.length
+        : 0;
 
+    unitCount.textContent = (data.length + g8Count) + " units";
     const panels = {};
 
     data.forEach(unit => {
@@ -636,6 +649,198 @@ function renderExhaustFan() {
             panel.appendChild(panelGrid);
             grid.appendChild(panel);
         });
+
+    /*
+     * Exhaust Fan G8 — EF 58-61.
+     *
+     * A separate groupbox AFTER Panel 1-9. These fans come from a different
+     * source (the Daikin poller, via the EXHAUST_FAN_G8 key) and must never be
+     * merged into the panel grouping above.
+     *
+     * The header is intentionally not "Panel N" — there is no panel number for
+     * these fans. Cards reuse createEfCard(), so the visual design (and the
+     * ON = green / OFF = red / unknown = gray rules, with no ON/OFF text) is
+     * exactly the same as Panel 1-9.
+     */
+    const g8Data = allData.EXHAUST_FAN_G8;
+
+    if (Array.isArray(g8Data) && g8Data.length > 0) {
+        const g8Panel = document.createElement("section");
+        g8Panel.className = "ef-panel ef-panel-g8";
+
+        const g8Header = document.createElement("div");
+        g8Header.className = "ef-panel-header";
+        g8Header.textContent = "Exhaust Fan G8";
+        g8Panel.appendChild(g8Header);
+
+        const g8Grid = document.createElement("div");
+        g8Grid.className = "ef-grid";
+
+        g8Data.forEach(unit => {
+            g8Grid.appendChild(createEfCard(unit));
+        });
+
+        g8Panel.appendChild(g8Grid);
+        grid.appendChild(g8Panel);
+    }
+
+    fitExhaustFanToViewport();
+}
+
+/*
+ * Keeps the G8 cards exactly as wide as a Panel 1-9 card.
+ *
+ * The G8 band spans the full width of the grid, so with `1fr` columns its 4
+ * cards would stretch to ~460px — 2.5x the panel cards and visibly oversized.
+ * The panel card width is measured from the DOM instead of assumed, because
+ * it depends on the viewport, the grid's column count and the gap. --ef-card-w
+ * then sizes the G8 tracks (see ef.css).
+ *
+ * Falls back to leaving the CSS default in place when no panel card exists yet.
+ */
+function syncG8CardWidth() {
+    const panelCard = grid.querySelector(".ef-panel:not(.ef-panel-g8) .unit-card.ef-card");
+
+    if (!panelCard) {
+        grid.style.removeProperty("--ef-card-w");
+        return;
+    }
+
+    const w = panelCard.getBoundingClientRect().width;
+
+    if (w > 0) {
+        grid.style.setProperty("--ef-card-w", Math.round(w) + "px");
+    }
+}
+
+/*
+ * Fits the whole EXHAUST FAN page into the real viewport, with no scrolling.
+ *
+ * Requirement: 9 panels + the G8 band (59 fans) must all be visible on a
+ * 1920x1080 desktop page, without shrinking the cards further than necessary.
+ * A hard-coded card height cannot guarantee either half of that: the actual
+ * CSS viewport is shorter than the physical 1080px once browser chrome is
+ * subtracted, and it varies per machine.
+ *
+ * Rather than model the layout in arithmetic (panel padding + header + gaps +
+ * rows per panel), this sets --ef-card-h and MEASURES the resulting grid
+ * height, then binary-searches for the largest height that still fits. It
+ * therefore cannot be wrong about the layout: whatever the panel padding,
+ * gaps, wrapped rows or font metrics turn out to be, the measured height is
+ * the real one.
+ *
+ * The search shrinks the cards only as far as the viewport actually requires,
+ * and stops at a readable floor. If even the floor does not fit, the floor
+ * wins and the page is allowed to overflow rather than become unreadable.
+ *
+ * Desktop keeps its overflow-y:hidden from style.css; mobile and tablet are
+ * allowed to scroll and are left on the CSS defaults.
+ */
+function fitExhaustFanToViewport() {
+    const MIN_CARD_H = 40;   // readable floor; never go below this
+    const MAX_CARD_H = 90;   // never grow past the design's own card size
+    const MIN_FIT_W = 1101;  // below this the grid drops to 2 columns
+
+    /*
+     * Only fit where the EF grid is still multi-column (laptop and up). Below
+     * 1101px the responsive rules switch it to 2 columns and the panels stack
+     * far too tall for a fit to be sensible, so the page is allowed to scroll
+     * there — that covers tablet portrait and phones.
+     */
+    if (window.innerWidth < MIN_FIT_W) {
+        grid.style.removeProperty("--ef-card-h");
+        grid.style.removeProperty("gap");
+        grid.style.removeProperty("padding-bottom");
+        return;
+    }
+
+    if (!grid.querySelector(".ef-panel")) {
+        grid.style.removeProperty("--ef-card-h");
+        grid.style.removeProperty("gap");
+        grid.style.removeProperty("padding-bottom");
+        return;
+    }
+
+    // Start from the stylesheet's own spacing so a previous fit — possibly for
+    // a much shorter viewport — cannot leave its tightened values behind.
+    grid.style.removeProperty("gap");
+    grid.style.removeProperty("padding-bottom");
+
+    const footer = document.querySelector("footer");
+    const footerH = footer ? footer.getBoundingClientRect().height : 0;
+
+    // Space the grid may occupy inside the viewport, in document coordinates.
+    const limit = window.innerHeight - footerH;
+
+    const apply = h => {
+        grid.style.setProperty("--ef-card-h", h + "px");
+        syncG8CardWidth();
+        // Read the real height back after the browser has laid it out. The
+        // bounding rect is the border box, so the grid's own padding is
+        // already included in what has to fit.
+        return grid.getBoundingClientRect().bottom;
+    };
+
+    // Does the grid fit within the viewport at this card height?
+    const fits = h => apply(h) <= limit;
+
+    /*
+     * Spend the gaps before the cards.
+     *
+     * The space BETWEEN panels costs nothing in readability, so on a short
+     * viewport it is tightened first. Only when the tightest gap still leaves
+     * the cards above the readable floor are the cards themselves shrunk.
+     * This is what lets a 768px-tall laptop fit without unreadable cards.
+     */
+    for (const gap of [12, 6, 3]) {
+        grid.style.gap = gap + "px";
+
+        if (!fits(MIN_CARD_H)) {
+            continue;   // still too tall even at the readable floor
+        }
+
+        if (fits(MAX_CARD_H)) {
+            // Everything fits at full size — do not shrink at all.
+            apply(MAX_CARD_H);
+            return;
+        }
+
+        // Largest height in [MIN_CARD_H, MAX_CARD_H] whose grid still fits.
+        let lo = MIN_CARD_H;
+        let hi = MAX_CARD_H;
+
+        while (hi - lo > 1) {
+            const mid = Math.floor((lo + hi) / 2);
+            if (fits(mid)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        apply(lo);
+        return;
+    }
+
+    /*
+     * The floor plus the tightest gap still overflows — the remaining slack is
+     * the grid's own bottom padding. Reclaim it before touching the cards
+     * again, since trailing whitespace costs nothing either.
+     */
+    grid.style.gap = "3px";
+    grid.style.paddingBottom = "6px";
+
+    if (fits(MIN_CARD_H)) {
+        apply(MIN_CARD_H);
+        return;
+    }
+
+    /*
+     * Genuinely out of room. Keep the readable floor rather than shrink the
+     * cards further: the requirement is explicit that they must not be made
+     * too small just to fit. The viewport is simply too short for 59 fans.
+     */
+    apply(MIN_CARD_H);
 }
 function createRoomCard(unit, index) {
     const card = document.createElement("div");
@@ -647,9 +852,19 @@ function createRoomCard(unit, index) {
 
     const prefix = unit.type === "OUTDOOR" ? "OUTDOOR " : "ROOM ";
     const rawName = unit.name ?? "";
-    const displayName = (rawName.toUpperCase().startsWith("ROOM") || rawName.toUpperCase().startsWith("OUTDOOR"))
-        ? rawName
-        : prefix + rawName;
+
+    /*
+     * Daikin AHU 96-97 arrive already named "AHU 96" / "AHU 97". That is the
+     * identity the API sent, so it is displayed verbatim — prefixing it with
+     * "ROOM " would mislabel them. Existing ROOM / OUTDOOR names are
+     * unchanged.
+     */
+    const upperName = rawName.toUpperCase();
+    const isPrefixed = upperName.startsWith("ROOM")
+        || upperName.startsWith("OUTDOOR")
+        || upperName.startsWith("AHU");
+
+    const displayName = isPrefixed ? rawName : prefix + rawName;
 
     name.textContent = displayName;
     card.appendChild(name);
@@ -732,20 +947,24 @@ function renderEquipment() {
         return;
     }
 
-    const placeholderCount = currentEquipment === "AHU" ? 4 : 0;
+    /*
+     * AHU 94-95 are still placeholders: they have no data source yet.
+     * AHU 96-97 are NOT placeholders — they now arrive as real units from
+     * api_ahu.php (Daikin / G8), so they are rendered by the createCard()
+     * loop above and must not be drawn twice.
+     */
+    const placeholderNumbers = currentEquipment === "AHU" ? ["94", "95"] : [];
+
     sectionTitle.textContent = currentEquipment;
-    unitCount.textContent = (data.length + placeholderCount) + " units";
+    unitCount.textContent = (data.length + placeholderNumbers.length) + " units";
 
     data.forEach(unit => {
         grid.appendChild(createCard(unit));
     });
 
-    if (currentEquipment === "AHU") {
-        const placeholderNumbers = ["94", "95", "96", "97"];
-        placeholderNumbers.forEach(num => {
-            grid.appendChild(createAhuPlaceholderCard(num));
-        });
-    }
+    placeholderNumbers.forEach(num => {
+        grid.appendChild(createAhuPlaceholderCard(num));
+    });
 }
 
 async function loadData() {
@@ -819,6 +1038,20 @@ async function safeLoadData() {
         loadingData = false;
     }
 }
+
+/*
+ * The wall display can change resolution, and the viewport can change when a
+ * browser's UI appears or disappears. Re-fit rather than waiting for the next
+ * poll, but only while the EF view is the one on screen.
+ */
+let efFitTimer = null;
+
+window.addEventListener("resize", () => {
+    if (currentEquipment !== "EXHAUST_FAN") return;
+
+    clearTimeout(efFitTimer);
+    efFitTimer = setTimeout(fitExhaustFanToViewport, 120);
+});
 
 safeLoadData();
 setInterval(safeLoadData, 10000);

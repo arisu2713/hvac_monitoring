@@ -35,6 +35,79 @@
     gap: 5px;
 }
 
+/* =========================================================
+   EXHAUST FAN G8 — EF 58-61
+   ========================================================= */
+
+/*
+ * G8 is a single groupbox holding 4 fans, not a 9-panel grid like Panel 1-9.
+ * It spans the full width of the equipment grid and lays its 4 cards out in
+ * ONE row, flush left.
+ *
+ * Why the full-width band: at the 1920x1080 wall-display resolution
+ * style.css sets `html, body { height: 100%; overflow-y: hidden }`, so
+ * anything past the viewport cannot be scrolled to. Laid out as a normal
+ * 3-column panel (2 rows), G8 pushed the grid to 1113px and its bottom 17px
+ * were unreachable. As a full-width band it is a single row, which brings the
+ * grid back inside the viewport without changing Panel 1-9 at all.
+ *
+ * Why the fixed 4 columns: with `1fr` columns the 4 cards stretch to fill the
+ * whole band, making them ~460px wide — 2.5x the Panel 1-9 cards (~183px) and
+ * visibly oversized next to them. A fixed track of the SAME width as a
+ * Panel 1-9 card keeps all 59 fans at one consistent size, and the row is
+ * left-aligned so it lines up with the groupbox header.
+ *
+ * Why the box shrinks to its content: a grid item spanning 1 / -1 defaults to
+ * `justify-self: stretch`, so the groupbox was filling the whole row while its
+ * 4 fixed tracks stayed at the left — a ~1880px box around ~800px of cards.
+ * `justify-self: start` sizes the item to its own content instead, so the box
+ * hugs the 4 cards and the leftover row width stays empty on the right. The
+ * span itself is kept: it is what puts G8 on a row of its own, below Panel 1-9.
+ *
+ * Applied only where the 4-across fixed tracks apply (see below); at narrower
+ * widths G8 wraps to 2x2 and keeps its full-row width.
+ *
+ * Scoped strictly to .ef-panel-g8 — Panel 1-9 keep the 3-column rule above.
+ */
+.equipment-grid:has(.ef-panel) .ef-panel-g8 {
+    grid-column: 1 / -1;
+}
+
+@media (min-width: 1101px) {
+    .equipment-grid:has(.ef-panel) .ef-panel-g8 {
+        justify-self: start;
+    }
+}
+
+/*
+ * One track per card, each exactly as wide as a Panel 1-9 card, and no wider:
+ * the leftover width is left empty on the right rather than distributed.
+ *
+ * --ef-card-w is the measured width of a real Panel 1-9 card, which already
+ * accounts for that card's own panel padding — the G8 cards sit inside an
+ * equally padded panel, so the two line up without any further adjustment.
+ * index.php measures it from the DOM rather than assuming a pixel value.
+ */
+.ef-panel-g8 .ef-grid {
+    grid-template-columns: repeat(4, var(--ef-card-w, 183px));
+    justify-content: start;
+}
+
+/* Narrower screens: 4 across is too tight, so wrap to 2x2. */
+@media (max-width: 1100px) {
+    .ef-panel-g8 .ef-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        justify-content: stretch;
+    }
+}
+
+@media (max-width: 650px) {
+    .ef-panel-g8 .ef-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        justify-content: stretch;
+    }
+}
+
 .unit-card.ef-card {
     min-height: 58px;
     padding: 7px 4px;
@@ -152,5 +225,79 @@
 
     50% {
         filter: brightness(0.55);
+    }
+}
+
+/* =========================================================
+   EXHAUST FAN — FIT ALL 59 FANS TO THE ACTUAL VIEWPORT
+   ========================================================= */
+
+/*
+ * Requirement: on desktop the whole EXHAUST FAN page — 9 panels + the G8
+ * band, 59 fans — must be visible with NO scrolling of any kind. Mobile is
+ * allowed to scroll.
+ *
+ * A fixed card height cannot guarantee that: the real CSS viewport is shorter
+ * than the physical 1080px once browser chrome is subtracted, and it differs
+ * per machine. So the sizes below are driven by --ef-card-h, which
+ * index.php measures and sets from the ACTUAL viewport height. The values
+ * here are only the fallbacks used before JS has run.
+ *
+ * Appended last on purpose so these win over the fixed sizes earlier in this
+ * file and in style.css. Scoped to the EF view only — the AHU, HVAC SC and
+ * ROOM views are not touched.
+ *
+ * Card size may shrink (the requirement allows it), but index.php clamps it
+ * with a readable floor so it can never become too small to read.
+ */
+.equipment-grid:has(.ef-panel) {
+    --ef-card-h: 62px;
+    --ef-gap: 5px;
+    --ef-panel-pad: 9px;
+}
+
+.ef-panel {
+    padding: var(--ef-panel-pad);
+}
+
+.ef-grid {
+    gap: var(--ef-gap);
+}
+
+/*
+ * Fixed header size (deliberately NOT derived from --ef-card-h): the fit
+ * calculation reads this height back from the DOM, so it must not depend on
+ * the value being calculated.
+ */
+.ef-panel-header {
+    font-size: 13px;
+    padding: 0 4px 6px;
+    line-height: 1.15;
+}
+
+.unit-card.ef-card {
+    min-height: var(--ef-card-h);
+    padding: 4px 3px;
+}
+
+/* The name scales with the card so it stays readable at any fitted height. */
+.unit-card.ef-card .ef-name {
+    font-size: clamp(11px, calc(var(--ef-card-h) * 0.26), 19px);
+    line-height: 1;
+}
+
+/*
+ * Below the wall-display breakpoint the page is allowed to scroll, so the
+ * fitted height is ignored and the original comfortable sizes come back.
+ */
+@media (max-width: 1599px) {
+    .equipment-grid:has(.ef-panel) {
+        --ef-card-h: 62px;
+    }
+}
+
+@media (max-width: 650px) {
+    .equipment-grid:has(.ef-panel) {
+        --ef-card-h: 54px;
     }
 }
