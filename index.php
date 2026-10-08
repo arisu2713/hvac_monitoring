@@ -35,6 +35,8 @@ require_login();
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">ROOM TEMP & RH</button>
     <button class="nav-button" data-equipment="EXHAUST_FAN">EXHAUST FAN</button>
     <button class="nav-button" data-equipment="AHU_G8">AHU G8</button>
+    <button class="nav-button" data-equipment="ALARM">ALARM</button>
+    <button class="nav-button" data-equipment="ENERGY">ENERGY</button>
 </nav>
 
 <main>
@@ -42,6 +44,10 @@ require_login();
         <div id="sectionTitle">AHU</div>
         <div id="unitCount">0 units</div>
     </div>
+
+    <div id="pageSwitch" class="page-switch"></div>
+
+    <div id="pageFilters" class="page-filters"></div>
 
     <div id="equipmentGrid" class="equipment-grid"></div>
 </main>
@@ -63,6 +69,8 @@ const unitCount = document.getElementById("unitCount");
 const connectionText = document.getElementById("connectionText");
 const connectionDot = document.getElementById("connectionDot");
 const lastUpdate = document.getElementById("lastUpdate");
+const pageFilters = document.getElementById("pageFilters");
+const pageSwitch = document.getElementById("pageSwitch");
 
 function setConnection(online) {
     connectionText.textContent = online ? "ONLINE" : "OFFLINE";
@@ -888,11 +896,32 @@ function createRoomCard(unit, index) {
     return card;
 }
 
+/*
+ * ROOM TEMP & RH hosts two views under one nav tab: the live room cards and
+ * the hourly history table. The switch is rendered first and the grid is
+ * cleared here (rather than only in renderEquipment) because switching views
+ * re-renders this page directly, without going through renderEquipment.
+ */
 function renderRoomTempRh() {
-    const data = allData.ROOM_TEMP_RH;
-
     sectionTitle.textContent = "ROOM TEMP & RH";
     grid.classList.remove("hvac-view");
+
+    buildPageSwitch([
+        { value: ROOM_VIEW_CURRENT, label: "CURRENT" },
+        { value: ROOM_VIEW_HOURLY, label: "HOURLY HISTORY" }
+    ], roomView, selectRoomView);
+
+    grid.innerHTML = "";
+
+    if (roomView === ROOM_VIEW_HOURLY) {
+        renderRoomHourly();
+        return;
+    }
+
+    /* Current view has no filters — the switch is the only control. */
+    clearPageFilters();
+
+    const data = allData.ROOM_TEMP_RH;
 
     if (!Array.isArray(data)) {
         unitCount.textContent = "0 units";
@@ -906,8 +935,1072 @@ function renderRoomTempRh() {
     });
 }
 
+/*
+ * Switching views is an in-place re-render, not a navigation: the nav tab and
+ * the section title stay put. The hourly view needs its own fetch, the current
+ * view reuses the live data already in allData, so both go through
+ * safeLoadData() — loadData() picks the right API from the current mode.
+ */
+function selectRoomView(view) {
+    if (view === roomView) {
+        return;
+    }
+
+    roomView = view;
+
+    renderRoomTempRh();
+    safeLoadData();
+
+    /*
+     * Mirrors the nav handler: the alarm poll is skipped while the hourly
+     * (history) view is on screen, and returning to the live view restarts it.
+     */
+    if (!isHistoryPage()) {
+        safeLoadAlarmData();
+    }
+}
+
+/* =========================================================
+   GLOBAL ALARM PAGE
+   =========================================================
+
+   This is a separate mechanism from the per-card alarm colouring above.
+   getStatus()/applyAlarmClass() read the instantaneous `alarm` flag and
+   threshold bounds that each API returns for a card; this page reads the
+   alarm_events table the pollers write, where an event has a stable id, a
+   lifecycle (ACTIVE -> CLEARED) and its own ALARM/WARNING category.
+
+   Mute is browser-side only. It never hides, clears or acknowledges an
+   alarm, and it never writes to the database.
+   ========================================================= */
+
+const ALARM_API_URL = "api_alarm.php";
+const ALARM_POLL_MS = 10000;
+const ALARM_MUTE_KEY = "hvac_alarm_muted";
+
+/* Active rows shown before the list is folded behind a "show all" toggle. */
+const ALARM_ACTIVE_PREVIEW = 50;
+
+let alarmMuted = false;
+let alarmSoundBlocked = false;
+let alarmShowAll = false;
+
+/*
+ * New-alarm detection uses the primary key of alarm_events, which is stable
+ * across polls and independent of row order. The first response only records
+ * ids so that alarms already active on page load stay silent.
+ */
+let knownAlarmIds = null;
+let alarmAudioContext = null;
+
+function readAlarmMuted() {
+    try {
+        return window.localStorage.getItem(ALARM_MUTE_KEY) === "1";
+    } catch (error) {
+        /* Private mode or blocked storage: fall back to unmuted. */
+        return false;
+    }
+}
+
+function writeAlarmMuted(muted) {
+    try {
+        window.localStorage.setItem(ALARM_MUTE_KEY, muted ? "1" : "0");
+    } catch (error) {
+        /* Mute still applies for this session even if it cannot persist. */
+    }
+}
+
+function getAlarmAudioContext() {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+
+    if (!Ctor) {
+        return null;
+    }
+
+    if (!alarmAudioContext) {
+        alarmAudioContext = new Ctor();
+    }
+
+    return alarmAudioContext;
+}
+
+/*
+ * Two short beeps from an oscillator. No audio file, no CDN. The context is
+ * resumed first because browsers suspend it until the user has interacted.
+ */
+function playAlarmTone() {
+    const ctx = getAlarmAudioContext();
+
+    if (!ctx) {
+        return;
+    }
+
+    const beep = (startAt, frequency) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = "square";
+        osc.frequency.value = frequency;
+
+        /* Short ramps instead of hard edges: a raw square wave clicks. */
+        gain.gain.setValueAtTime(0.0001, startAt);
+        gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.32);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + 0.34);
+    };
+
+    const now = ctx.currentTime;
+    beep(now, 880);
+    beep(now + 0.42, 880);
+}
+
+function soundAlarm() {
+    if (alarmMuted) {
+        return;
+    }
+
+    const ctx = getAlarmAudioContext();
+
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx.state === "suspended") {
+        ctx.resume().then(() => {
+            alarmSoundBlocked = false;
+            updateAudioNotice();
+            playAlarmTone();
+        }).catch(() => {
+            alarmSoundBlocked = true;
+            updateAudioNotice();
+        });
+        return;
+    }
+
+    alarmSoundBlocked = false;
+    updateAudioNotice();
+    playAlarmTone();
+}
+
+function updateAudioNotice() {
+    const notice = document.getElementById("alarmAudioNotice");
+
+    if (!notice) {
+        return;
+    }
+
+    if (alarmMuted) {
+        notice.textContent = "Sound muted.";
+    } else if (alarmSoundBlocked) {
+        notice.textContent = "Sound blocked by the browser — press MUTE then UNMUTE to enable it.";
+    } else {
+        notice.textContent = "";
+    }
+}
+
+function renderMuteButton() {
+    const button = document.getElementById("alarmMuteButton");
+
+    if (!button) {
+        return;
+    }
+
+    button.textContent = alarmMuted ? "UNMUTE" : "MUTE";
+    button.classList.toggle("muted", alarmMuted);
+    button.setAttribute("aria-pressed", alarmMuted ? "true" : "false");
+    button.title = alarmMuted
+        ? "Alarm sound is off. Alarms are still listed."
+        : "Silence the alarm sound. Alarms stay listed.";
+
+    updateAudioNotice();
+}
+
+function toggleAlarmMute() {
+    alarmMuted = !alarmMuted;
+    writeAlarmMuted(alarmMuted);
+
+    /*
+     * Clicking the button is a user gesture, so it is the natural moment to
+     * unlock a suspended audio context. This resumes the context without
+     * bypassing anything: the browser still decides.
+     */
+    if (!alarmMuted) {
+        const ctx = getAlarmAudioContext();
+
+        if (ctx && ctx.state === "suspended") {
+            ctx.resume().then(() => {
+                alarmSoundBlocked = false;
+                updateAudioNotice();
+            }).catch(() => {});
+        }
+    }
+
+    renderMuteButton();
+}
+
+function formatAlarmTime(value) {
+    if (!value) {
+        return "--";
+    }
+
+    /* SQL datetime(6) arrives as "YYYY-MM-DD HH:MM:SS.ffffff". */
+    return String(value).replace("T", " ").slice(0, 19);
+}
+
+function alarmSourceLabel(alarm) {
+    const parts = [];
+
+    if (alarm.point_id) {
+        parts.push(alarm.point_id);
+    }
+
+    if (alarm.ef_point_id !== null && alarm.ef_point_id !== undefined) {
+        parts.push("EF #" + alarm.ef_point_id);
+    }
+
+    if (alarm.panel_no !== null && alarm.panel_no !== undefined) {
+        parts.push("Panel " + alarm.panel_no);
+    }
+
+    if (!parts.length && alarm.metric) {
+        parts.push(alarm.metric);
+    }
+
+    if (!parts.length) {
+        parts.push(alarm.source || "--");
+    }
+
+    return parts.join(" · ");
+}
+
+function alarmLimitsLabel(alarm) {
+    const hasMin = alarm.limit_min !== null && alarm.limit_min !== undefined;
+    const hasMax = alarm.limit_max !== null && alarm.limit_max !== undefined;
+
+    if (!hasMin && !hasMax) {
+        return "--";
+    }
+
+    const min = hasMin ? alarm.limit_min : "-inf";
+    const max = hasMax ? alarm.limit_max : "+inf";
+
+    return min + " … " + max;
+}
+
+function createAlarmCell(label, value, extraClass) {
+    const cell = document.createElement("div");
+
+    cell.className = "alarm-cell" + (extraClass ? " " + extraClass : "");
+    cell.dataset.label = label;
+    cell.textContent = value;
+
+    return cell;
+}
+
+function createAlarmRow(alarm) {
+    const row = document.createElement("div");
+    const isActive = alarm.status === "ACTIVE";
+
+    row.className = "alarm-row "
+        + (isActive ? "alarm-row-active" : "alarm-row-cleared")
+        + " alarm-row-class-" + String(alarm.event_class).toLowerCase();
+
+    const category = document.createElement("div");
+    category.className = "alarm-cell";
+    category.dataset.label = "Category";
+
+    const badge = document.createElement("span");
+    badge.className = "alarm-badge "
+        + (alarm.event_class === "ALARM" ? "alarm-badge-alarm" : "alarm-badge-warning");
+    badge.textContent = alarm.event_class;
+    category.appendChild(badge);
+
+    const status = document.createElement("div");
+    status.className = "alarm-cell";
+    status.dataset.label = "Status";
+
+    const statusText = document.createElement("span");
+    statusText.className = "alarm-status "
+        + (isActive ? "alarm-status-active" : "alarm-status-cleared");
+    statusText.textContent = alarm.status;
+    status.appendChild(statusText);
+
+    row.appendChild(category);
+    row.appendChild(status);
+    row.appendChild(createAlarmCell("Equipment", alarm.equipment || "--", "alarm-cell-equip"));
+    row.appendChild(createAlarmCell("Source", alarmSourceLabel(alarm), "alarm-cell-source"));
+    row.appendChild(createAlarmCell("Message", alarm.description || "--", "alarm-cell-desc"));
+    row.appendChild(createAlarmCell("Limits", alarmLimitsLabel(alarm), "alarm-cell-limits"));
+    row.appendChild(createAlarmCell("Raised", formatAlarmTime(alarm.raised_at), "alarm-cell-time"));
+
+    const cleared = document.createElement("div");
+    cleared.className = "alarm-cell alarm-cell-time";
+    cleared.dataset.label = "Cleared";
+    cleared.textContent = isActive ? "--" : formatAlarmTime(alarm.cleared_at);
+    row.appendChild(cleared);
+
+    /* The stable event identifier, shown so an alarm can be referenced. */
+    row.appendChild(createAlarmCell("Event ID", alarm.id, "alarm-cell-id"));
+
+    return row;
+}
+
+function createAlarmHeaderRow() {
+    const row = document.createElement("div");
+
+    row.className = "alarm-row alarm-thead";
+    ["Category", "Status", "Equipment", "Source / point", "Message",
+        "Limits", "Raised at", "Cleared at", "Event ID"].forEach(label => {
+        const cell = document.createElement("div");
+        cell.textContent = label;
+        row.appendChild(cell);
+    });
+
+    return row;
+}
+
+function createAlarmGroup(title, alarms, isActive) {
+    const group = document.createElement("div");
+
+    group.className = "alarm-group" + (isActive ? " alarm-group-active" : "");
+
+    const header = document.createElement("div");
+    header.className = "alarm-group-header";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "alarm-group-title";
+    titleEl.textContent = title;
+
+    const countEl = document.createElement("div");
+    countEl.className = "alarm-group-count";
+    countEl.textContent = alarms.length + (alarms.length === 1 ? " event" : " events");
+
+    header.appendChild(titleEl);
+    header.appendChild(countEl);
+    group.appendChild(header);
+
+    if (!alarms.length) {
+        const empty = document.createElement("div");
+        empty.className = "alarm-empty";
+        empty.textContent = isActive ? "No active alarms" : "No cleared alarms in the window";
+        group.appendChild(empty);
+        return group;
+    }
+
+    group.appendChild(createAlarmHeaderRow());
+    alarms.forEach(alarm => group.appendChild(createAlarmRow(alarm)));
+
+    return group;
+}
+
+function renderAlarm() {
+    const data = allData.ALARM;
+
+    /*
+     * Cleared here, not only in renderEquipment(): the background poll
+     * re-renders this page directly, and without this the list would stack
+     * a fresh copy on every cycle.
+     */
+    grid.innerHTML = "";
+
+    sectionTitle.textContent = "GLOBAL ALARM";
+    grid.classList.remove("hvac-view");
+
+    if (!data || !Array.isArray(data.alarms)) {
+        unitCount.textContent = "0 active";
+        return;
+    }
+
+    const counts = data.counts || {};
+    const activeTotal = Number(counts.active_total || 0);
+    const activeAlarms = data.alarms.filter(a => a.status === "ACTIVE");
+    const clearedAlarms = data.alarms.filter(a => a.status !== "ACTIVE");
+
+    unitCount.textContent = activeTotal + " active";
+
+    const page = document.createElement("div");
+    page.className = "alarm-page";
+
+    /* ---- Active summary, straight from the table-wide counts ---- */
+    const summary = document.createElement("div");
+    summary.className = "alarm-summary";
+
+    [
+        { label: "ACTIVE ALARM", value: counts.active_alarm || 0, cls: "alarm-stat-alarm" },
+        { label: "ACTIVE WARNING", value: counts.active_warning || 0, cls: "alarm-stat-warning" },
+        { label: "TOTAL ACTIVE", value: activeTotal, cls: "alarm-stat-total" }
+    ].forEach(stat => {
+        const box = document.createElement("div");
+        box.className = "alarm-stat " + stat.cls;
+
+        const value = document.createElement("div");
+        value.className = "alarm-stat-value";
+        value.textContent = stat.value;
+
+        const label = document.createElement("div");
+        label.className = "alarm-stat-label";
+        label.textContent = stat.label;
+
+        box.appendChild(value);
+        box.appendChild(label);
+        summary.appendChild(box);
+    });
+
+    /* ---- Mute control. Mute affects sound only, never the list. ---- */
+    const toolbar = document.createElement("div");
+    toolbar.className = "alarm-toolbar";
+
+    const muteButton = document.createElement("button");
+    muteButton.type = "button";
+    muteButton.id = "alarmMuteButton";
+    muteButton.className = "mute-button";
+    muteButton.addEventListener("click", toggleAlarmMute);
+    toolbar.appendChild(muteButton);
+
+    const notice = document.createElement("div");
+    notice.id = "alarmAudioNotice";
+    notice.className = "audio-notice";
+    toolbar.appendChild(notice);
+
+    summary.appendChild(toolbar);
+    page.appendChild(summary);
+
+    /* ---- ACTIVE is the prominent group ---- */
+    const shownActive = alarmShowAll
+        ? activeAlarms
+        : activeAlarms.slice(0, ALARM_ACTIVE_PREVIEW);
+
+    page.appendChild(createAlarmGroup("ACTIVE ALARMS / WARNINGS", shownActive, true));
+
+    if (shownActive.length < activeAlarms.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "mute-button";
+        more.textContent = "SHOW ALL " + activeAlarms.length + " ACTIVE";
+        more.addEventListener("click", () => {
+            alarmShowAll = true;
+            renderAlarm();
+        });
+        page.appendChild(more);
+    }
+
+    /* ---- Cleared history, compact and receded ---- */
+    page.appendChild(createAlarmGroup(
+        "CLEARED (last " + (data.window_hours || 24) + "h)",
+        clearedAlarms,
+        false
+    ));
+
+    grid.appendChild(page);
+    renderMuteButton();
+}
+
+/*
+ * A poll that finds a newly ACTIVE alarm id sounds once. Ids are compared
+ * against the previous poll, never against row position, so a reordered or
+ * truncated list cannot fake a new alarm.
+ */function applyAlarmData(data) {
+    const alarms = Array.isArray(data.alarms) ? data.alarms : [];
+    const currentIds = new Set(
+        alarms.filter(a => a.status === "ACTIVE").map(a => String(a.id))
+    );
+
+    if (knownAlarmIds === null) {
+        /* First response: record the baseline and stay silent. */
+        knownAlarmIds = currentIds;
+    } else {
+        let hasNew = false;
+
+        currentIds.forEach(id => {
+            if (!knownAlarmIds.has(id)) {
+                hasNew = true;
+            }
+        });
+
+        knownAlarmIds = currentIds;
+
+        if (hasNew) {
+            soundAlarm();
+        }
+    }
+
+    allData.ALARM = data;
+
+    if (currentEquipment === "ALARM") {
+        renderAlarm();
+    }
+}
+
+/*
+ * The alarm poll always targets api_alarm.php, so it keeps running while
+ * another equipment page is on screen and can still sound for a new alarm.
+ */
+async function loadAlarmData() {
+    const response = await fetch(ALARM_API_URL + "?t=" + Date.now(), {
+        cache: "no-store"
+    });
+
+    if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+        throw new Error("Alarm API returned success=false");
+    }
+
+    applyAlarmData(data);
+}
+
+async function safeLoadAlarmData() {
+    try {
+        await loadAlarmData();
+    } catch (error) {
+        console.error("HVAC alarm API error:", error);
+
+        if (currentEquipment === "ALARM") {
+            setConnection(false);
+        }
+    }
+}
+
+/* =========================================================
+   HISTORY VIEWS (ENERGY + the ROOM TEMP & RH hourly view)
+   =========================================================
+
+   These are historical tables rather than live cards, and they take filters,
+   so they do not use the 10s auto-refresh the equipment pages use. They load
+   once when opened and again when the user applies a filter — history does
+   not change between two polls, and re-fetching it every 10s would be pure
+   waste.
+
+   The filter controls live in #pageFilters, outside #equipmentGrid, so a
+   re-render does not destroy the inputs the user is typing into.
+   ========================================================= */
+
+const ENERGY_API_URL = "api_energy.php";
+const TEMP_RH_HOURLY_API_URL = "api_temp_rh_hourly.php";
+
+/*
+ * ROOM TEMP & RH holds two views under one nav tab: the live room cards
+ * ("current") and the hourly history table ("hourly"). The hourly view is NOT
+ * a page of its own — it is a mode of this page, switched in place without
+ * navigating. Only this page has the switch, so the mode is ignored elsewhere.
+ */
+const ROOM_VIEW_CURRENT = "current";
+const ROOM_VIEW_HOURLY = "hourly";
+
+let roomView = ROOM_VIEW_CURRENT;
+
+/* Active filter values, kept out of the DOM so a re-render can restore them. */
+const historyFilters = {
+    ENERGY: { category: "CT", from: "", to: "" },
+    TEMP_RH_HOURLY: { metric: "temp", from: "", to: "" }
+};
+
+function clearPageFilters() {
+    if (pageFilters) {
+        pageFilters.innerHTML = "";
+    }
+}
+
+function clearPageSwitch() {
+    if (pageSwitch) {
+        pageSwitch.innerHTML = "";
+    }
+}
+
+/*
+ * The Current / Hourly History switch. Built with the same markup and classes
+ * as the filter controls so it matches the existing bar styling, and rendered
+ * into its own container so switching views never disturbs the filters.
+ */
+function buildPageSwitch(options, current, onSelect) {
+    clearPageSwitch();
+
+    if (!pageSwitch) {
+        return;
+    }
+
+    options.forEach(opt => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "switch-button" + (opt.value === current ? " is-active" : "");
+        button.textContent = opt.label;
+        button.addEventListener("click", () => onSelect(opt.value));
+        pageSwitch.appendChild(button);
+    });
+}
+
+function buildFilterBar(defs, values, onApply) {
+    clearPageFilters();
+
+    if (!pageFilters) {
+        return;
+    }
+
+    const inputs = {};
+
+    const addSelect = (name, label, options, current) => {
+        const wrap = document.createElement("label");
+        wrap.className = "filter-field";
+
+        const text = document.createElement("span");
+        text.className = "filter-label";
+        text.textContent = label;
+        wrap.appendChild(text);
+
+        const select = document.createElement("select");
+        select.className = "filter-input";
+        select.name = name;
+
+        options.forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt.value;
+            o.textContent = opt.text;
+            if (String(opt.value) === String(current)) {
+                o.selected = true;
+            }
+            select.appendChild(o);
+        });
+
+        inputs[name] = select;
+        wrap.appendChild(select);
+        pageFilters.appendChild(wrap);
+    };
+
+    const addDate = (name, label, value) => {
+        const wrap = document.createElement("label");
+        wrap.className = "filter-field";
+
+        const text = document.createElement("span");
+        text.className = "filter-label";
+        text.textContent = label;
+        wrap.appendChild(text);
+
+        const input = document.createElement("input");
+        input.type = "date";
+        input.className = "filter-input";
+        input.name = name;
+        input.value = value || "";
+        inputs[name] = input;
+        wrap.appendChild(input);
+        pageFilters.appendChild(wrap);
+    };
+
+    defs.forEach(def => {
+        if (def.type === "select") {
+            addSelect(def.name, def.label, def.options, values[def.name]);
+        } else {
+            addDate(def.name, def.label, values[def.name]);
+        }
+    });
+
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "filter-button";
+    apply.textContent = "APPLY";
+    apply.addEventListener("click", () => onApply(inputs));
+    pageFilters.appendChild(apply);
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "filter-button filter-button-reset";
+    reset.textContent = "RESET";
+    reset.addEventListener("click", () => {
+        Object.keys(inputs).forEach(k => {
+            if (inputs[k].type === "date") {
+                inputs[k].value = "";
+            }
+        });
+        onApply(inputs, true);
+    });
+    pageFilters.appendChild(reset);
+}
+
+function filterNotice(available) {
+    if (!available || !available.min || !available.max) {
+        return "No history recorded yet.";
+    }
+
+    const min = String(available.min).slice(0, 10);
+    const max = String(available.max).slice(0, 10);
+
+    return min === max
+        ? "History available for " + min + " only."
+        : "History available " + min + " to " + max + ".";
+}
+
+/*
+ * Values are written into textContent, never into markup, so a description
+ * or room name coming from the database can never inject HTML.
+ */
+function createTable(columns, rows, options) {
+    const wrap = document.createElement("div");
+    wrap.className = "history-table-wrap";
+
+    const table = document.createElement("div");
+    table.className = "history-table" + (options && options.compact ? " is-compact" : "");
+
+    table.style.setProperty("--history-cols", columns.length);
+
+    const head = document.createElement("div");
+    head.className = "history-row history-head";
+
+    columns.forEach(col => {
+        const cell = document.createElement("div");
+        cell.className = "history-cell";
+        cell.textContent = col.label;
+        head.appendChild(cell);
+    });
+
+    table.appendChild(head);
+
+    if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = (options && options.emptyText) || "No data for this filter.";
+        table.appendChild(empty);
+    } else {
+        rows.forEach(row => {
+            const line = document.createElement("div");
+            line.className = "history-row" + (row.className ? " " + row.className : "");
+
+            row.cells.forEach(cell => {
+                const el = document.createElement("div");
+                el.className = "history-cell" + (cell.className ? " " + cell.className : "");
+                el.dataset.label = cell.label || "";
+                el.textContent = cell.value;
+                line.appendChild(el);
+            });
+
+            table.appendChild(line);
+        });
+    }
+
+    wrap.appendChild(table);
+
+    return wrap;
+}
+
+function formatNumber(value, digits) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return "--";
+    }
+
+    return Number(value).toLocaleString("en-US", {
+        minimumFractionDigits: digits === undefined ? 0 : digits,
+        maximumFractionDigits: digits === undefined ? 0 : digits
+    });
+}
+
+function formatHour(value) {
+    if (!value) {
+        return "--";
+    }
+
+    /* "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DD HH:00" */
+    return String(value).replace("T", " ").slice(0, 16);
+}
+
+/* =========================================================
+   ENERGY
+   ========================================================= */
+
+function renderEnergy() {
+    const data = allData.ENERGY;
+
+    grid.innerHTML = "";
+    sectionTitle.textContent = "ENERGY";
+    grid.classList.remove("hvac-view");
+
+    if (!data || !Array.isArray(data.days)) {
+        unitCount.textContent = "0 days";
+        buildFilterBar([
+            { type: "select", name: "category", label: "Category", options: [{ value: "CT", text: "CT" }] },
+            { type: "date", name: "from", label: "From" },
+            { type: "date", name: "to", label: "To" }
+        ], historyFilters.ENERGY, applyEnergyFilter);
+        return;
+    }
+
+    const units = data.units || [];
+    const days = data.days || [];
+
+    unitCount.textContent = days.length + (days.length === 1 ? " day" : " days");
+
+    buildFilterBar([
+        {
+            type: "select",
+            name: "category",
+            label: "Category",
+            options: (data.categories || ["CT"]).map(c => ({ value: c, text: c }))
+        },
+        { type: "date", name: "from", label: "From" },
+        { type: "date", name: "to", label: "To" }
+    ], historyFilters.ENERGY, applyEnergyFilter);
+
+    const page = document.createElement("div");
+    page.className = "history-page";
+
+    const notice = document.createElement("div");
+    notice.className = "history-notice";
+    notice.textContent = filterNotice(data.available)
+        + " Showing " + (data.from || "--") + " to " + (data.to || "--")
+        + " — daily usage in kWh.";
+    page.appendChild(notice);
+
+    if (!units.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "No snapshots recorded for " + (data.category || "this category") + " yet.";
+        page.appendChild(empty);
+        grid.appendChild(page);
+        return;
+    }
+
+    /*
+     * One row per day, one column per unit, newest day first. ONLY the daily
+     * usage is displayed — the cumulative TOTAL meter readings are backend
+     * calculation data (they exist so kwh_daily_snapshot.php can diff one day
+     * against the previous one) and are deliberately not shown here. The API
+     * still returns them; the UI just never reads them.
+     *
+     * Headers are prefixed with the equipment category ("CT 1", "CCP 1",
+     * "CHWP 1") rather than a generic "Unit 1", so a screenshot of the table
+     * says which equipment it is about.
+     */
+    const category = data.category || "CT";
+
+    const columns = [{ label: "Date" }];
+
+    units.forEach(u => {
+        columns.push({ label: category + " " + u.unit });
+    });
+
+    columns.push({ label: "Usage Sum" });
+
+    const rows = days.map(day => {
+        const cells = [{ label: "Date", value: day.date, className: "history-cell-key" }];
+
+        units.forEach(u => {
+            const v = (day.values || {})[String(u.unit)] || {};
+
+            cells.push({
+                label: category + " " + u.unit,
+                value: formatNumber(v.usage, 1),
+                className: v.usage === null || v.usage === undefined ? "history-cell-null" : "history-cell-num"
+            });
+        });
+
+        cells.push({
+            label: "Usage Sum",
+            value: formatNumber(day.sum_usage, 1),
+            className: "history-cell-num history-cell-sum"
+        });
+
+        return { cells: cells };
+    });
+
+    page.appendChild(createTable(columns, rows, {
+        compact: true,
+        emptyText: "No readings for this date range."
+    }));
+
+    grid.appendChild(page);
+}
+
+function applyEnergyFilter(inputs, isReset) {
+    historyFilters.ENERGY.category = inputs.category.value;
+    historyFilters.ENERGY.from = isReset ? "" : inputs.from.value;
+    historyFilters.ENERGY.to = isReset ? "" : inputs.to.value;
+    safeLoadData();
+}
+
+function buildEnergyUrl() {
+    const f = historyFilters.ENERGY;
+    let url = ENERGY_API_URL + "?category=" + encodeURIComponent(f.category);
+
+    if (f.from) {
+        url += "&from=" + encodeURIComponent(f.from);
+    }
+
+    if (f.to) {
+        url += "&to=" + encodeURIComponent(f.to);
+    }
+
+    return url + "&t=" + Date.now();
+}
+
+/* =========================================================
+   ROOM TEMP & RH — HOURLY HISTORY VIEW
+   =========================================================
+
+   Rendered INSIDE the ROOM TEMP & RH page, below the Current / Hourly
+   History switch. There is no separate nav tab or page for this view.
+
+   The caller (renderRoomTempRh) has already set the section title, built the
+   switch and cleared the grid, so this only builds the filter bar and the
+   table. Both views share the one page, so switching never navigates.
+   ========================================================= */
+
+function renderRoomHourly() {
+    const data = allData.TEMP_RH_HOURLY;
+
+    if (!data || !Array.isArray(data.hours)) {
+        unitCount.textContent = "0 hours";
+        buildFilterBar([
+            { type: "select", name: "metric", label: "Metric", options: [{ value: "temp", text: "TEMPERATURE" }] },
+            { type: "date", name: "from", label: "From" },
+            { type: "date", name: "to", label: "To" }
+        ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
+        return;
+    }
+
+    const rooms = data.rooms || [];
+    const hours = data.hours || [];
+
+    unitCount.textContent = hours.length + (hours.length === 1 ? " hour" : " hours");
+
+    buildFilterBar([
+        {
+            type: "select",
+            name: "metric",
+            label: "Metric",
+            options: (data.metrics || ["temp"]).map(m => ({
+                value: m,
+                text: m === "rh" ? "HUMIDITY (%RH)" : "TEMPERATURE (C)"
+            }))
+        },
+        { type: "date", name: "from", label: "From" },
+        { type: "date", name: "to", label: "To" }
+    ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
+
+    const page = document.createElement("div");
+    page.className = "history-page";
+
+    const notice = document.createElement("div");
+    notice.className = "history-notice";
+    notice.textContent = filterNotice(data.available)
+        + " Showing " + (data.from || "--") + " to " + (data.to || "--")
+        + " — hourly " + (data.metric === "rh" ? "humidity" : "temperature")
+        + " in " + (data.unit || "") + ".";
+    page.appendChild(notice);
+
+    if (!rooms.length || !hours.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "No hourly snapshots recorded for this date range.";
+        page.appendChild(empty);
+        grid.appendChild(page);
+        return;
+    }
+
+    const columns = [{ label: "Hour" }];
+    rooms.forEach(r => columns.push({ label: r.label }));
+    columns.push({ label: "Reading at" });
+
+    const rows = hours.map(hour => {
+        const cells = [{
+            label: "Hour",
+            value: formatHour(hour.recorded_at),
+            className: "history-cell-key"
+        }];
+
+        rooms.forEach(room => {
+            const value = (hour.values || {})[room.key];
+
+            cells.push({
+                label: room.label,
+                value: value === null || value === undefined ? "--" : formatNumber(value, 1),
+                className: value === null || value === undefined
+                    ? "history-cell-null"
+                    : "history-cell-num"
+            });
+        });
+
+        /*
+         * read_at is the poller's own timestamp. If it differs across the
+         * hour's points the spread is shown, because a frozen point is a
+         * real condition and hiding it would make stale data look live.
+         */
+        const min = hour.read_at_min;
+        const max = hour.read_at_max;
+        let readAt = "--";
+
+        if (min && max) {
+            readAt = min === max
+                ? formatHour(min)
+                : formatHour(min) + " … " + formatHour(max);
+        }
+
+        cells.push({ label: "Reading at", value: readAt, className: "history-cell-time" });
+
+        return { cells: cells };
+    });
+
+    page.appendChild(createTable(columns, rows, {
+        emptyText: "No readings for this date range."
+    }));
+
+    grid.appendChild(page);
+}
+
+function applyTempRhFilter(inputs, isReset) {
+    historyFilters.TEMP_RH_HOURLY.metric = inputs.metric.value;
+    historyFilters.TEMP_RH_HOURLY.from = isReset ? "" : inputs.from.value;
+    historyFilters.TEMP_RH_HOURLY.to = isReset ? "" : inputs.to.value;
+    safeLoadData();
+}
+
+function buildTempRhHourlyUrl() {
+    const f = historyFilters.TEMP_RH_HOURLY;
+    let url = TEMP_RH_HOURLY_API_URL + "?metric=" + encodeURIComponent(f.metric);
+
+    if (f.from) {
+        url += "&from=" + encodeURIComponent(f.from);
+    }
+
+    if (f.to) {
+        url += "&to=" + encodeURIComponent(f.to);
+    }
+
+    return url + "&t=" + Date.now();
+}
+
+async function loadHistoryPage(apiUrl) {
+    const response = await fetch(apiUrl, { cache: "no-store" });
+
+    if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+        throw new Error("API returned success=false");
+    }
+
+    return data;
+}
+
 function renderEquipment() {
     grid.innerHTML = "";
+
+    /*
+     * Both bars are cleared up front, not at the end: several branches below
+     * return early (EF, ALARM, ENERGY), so a trailing clear never ran for
+     * them and a switch or filter bar left over from another page stayed on
+     * screen. Each page that wants them builds its own.
+     */
+    clearPageFilters();
+    clearPageSwitch();
+
     if (currentEquipment === "EXHAUST_FAN") {
         renderExhaustFan();
         return;
@@ -915,6 +2008,16 @@ function renderEquipment() {
 
     if (currentEquipment === "ROOM_TEMP_RH") {
         renderRoomTempRh();
+        return;
+    }
+
+    if (currentEquipment === "ALARM") {
+        renderAlarm();
+        return;
+    }
+
+    if (currentEquipment === "ENERGY") {
+        renderEnergy();
         return;
     }
 
@@ -969,6 +2072,49 @@ function renderEquipment() {
 
 async function loadData() {
     try {
+        if (currentEquipment === "ALARM") {
+            /*
+             * The dedicated alarm poll owns fetching, so this path only fills
+             * the gap on a first visit. Without this guard the two 10s timers
+             * would request api_alarm.php twice per cycle.
+             */
+            if (!allData.ALARM) {
+                await loadAlarmData();
+            } else {
+                renderAlarm();
+            }
+
+            setConnection(true);
+
+            const serverTime = allData.ALARM && allData.ALARM.server_time;
+            lastUpdate.textContent = "DB update: "
+                + String(serverTime || "--").slice(0, 19);
+            return;
+        }
+
+        if (currentEquipment === "ENERGY") {
+            allData.ENERGY = await loadHistoryPage(buildEnergyUrl());
+            setConnection(true);
+            renderEnergy();
+            lastUpdate.textContent = "Energy history: " + (allData.ENERGY.from || "--")
+                + " to " + (allData.ENERGY.to || "--");
+            return;
+        }
+
+        /*
+         * ROOM TEMP & RH serves two views from one tab, so which API to call
+         * depends on the mode: the hourly history table reads
+         * api_temp_rh_hourly.php, the live cards read api_room.php below.
+         */
+        if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) {
+            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl());
+            setConnection(true);
+            renderRoomTempRh();
+            lastUpdate.textContent = "Hourly history: " + (allData.TEMP_RH_HOURLY.from || "--")
+                + " to " + (allData.TEMP_RH_HOURLY.to || "--");
+            return;
+        }
+
         const apiUrl = currentEquipment === "AHU"
             ? "api_ahu.php"
             : (currentEquipment === "HVAC_SC"
@@ -1024,6 +2170,16 @@ document.querySelectorAll(".nav-button").forEach(button => {
         currentEquipment = button.dataset.equipment;
         renderEquipment();
         safeLoadData();
+
+        /*
+         * The alarm poll does not run on the history pages (see
+         * isHistoryPage). Returning to a live page re-baselines it, so an
+         * alarm that arrived while history was on screen is recorded
+         * silently instead of firing the moment the user navigates back.
+         */
+        if (!isHistoryPage()) {
+            safeLoadAlarmData();
+        }
     });
 });
 
@@ -1036,6 +2192,39 @@ async function safeLoadData() {
         await loadData();
     } finally {
         loadingData = false;
+    }
+}
+
+/*
+ * History views are not auto-refreshed: past days and past hours do not
+ * change, so re-fetching them every 10s would be waste. The alarm poll is
+ * also skipped there, because a sound triggered by a view that is showing
+ * neither alarms nor live equipment is more confusing than useful.
+ *
+ * ROOM TEMP & RH counts as a history view only while its Hourly History mode
+ * is on screen — the Current mode is live equipment and keeps both timers.
+ */
+function isHistoryPage() {
+    if (currentEquipment === "ENERGY") {
+        return true;
+    }
+
+    return currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY;
+}
+
+async function safeLoadAlarmData() {
+    if (isHistoryPage()) {
+        return;
+    }
+
+    try {
+        await loadAlarmData();
+    } catch (error) {
+        console.error("HVAC alarm API error:", error);
+
+        if (currentEquipment === "ALARM") {
+            setConnection(false);
+        }
     }
 }
 
@@ -1053,8 +2242,34 @@ window.addEventListener("resize", () => {
     efFitTimer = setTimeout(fitExhaustFanToViewport, 120);
 });
 
+/*
+ * Restore the persisted mute state before anything can sound, so a refresh
+ * during an active alarm never produces a burst of sound.
+ */
+alarmMuted = readAlarmMuted();
+
 safeLoadData();
-setInterval(safeLoadData, 10000);
+
+/*
+ * The alarm poll is independent of the visible page so a new alarm still
+ * sounds while another equipment view is on screen. The first response only
+ * records the baseline; it never sounds.
+ */
+safeLoadAlarmData();
+
+/*
+ * The 10s refresh re-fetches live equipment only. History views (ENERGY, and
+ * ROOM TEMP & RH while its Hourly History mode is on) are left alone: their
+ * data does not change between two polls, and re-rendering the table every
+ * cycle would also throw away the reader's scroll position.
+ */
+setInterval(() => {
+    if (!isHistoryPage()) {
+        safeLoadData();
+    }
+}, 10000);
+
+setInterval(safeLoadAlarmData, ALARM_POLL_MS);
 </script>
 
 </body>

@@ -29,15 +29,18 @@ Read this file before making changes. Update it whenever a decision changes.
 
 | File | Purpose |
 |---|---|
-| `index.php` | Entire frontend — auth gate, HTML, all JS inline. Tabs: AHU, HVAC SC, ROOM TEMP & RH, EXHAUST FAN, AHU G8 (placeholder, not built yet). Polls the relevant `api_*.php` every 10s. |
+| `index.php` | Entire frontend — auth gate, HTML, all JS inline. Tabs: AHU, HVAC SC, ROOM TEMP & RH, EXHAUST FAN, AHU G8 (placeholder, not built yet), ALARM, ENERGY. Polls the relevant `api_*.php` every 10s, plus `api_alarm.php` on its own 10s timer (Section 12). ENERGY, and ROOM TEMP & RH while its Hourly History view is on screen, are history views — loaded once per filter change, never polled (Section 13). |
 | `login.php` / `logout.php` / `auth.php` | Session-based auth. `auth.php` has `db()` singleton and `require_login()`. |
 | `config.php` | DB credentials. Gitignored. **Not** committed, never was. |
 | `api_ahu.php` | AHU units — parses `points.point_name` like `AHU 12 Status` / `Alarm` / `Duct Temperature`. |
 | `api_hvac_sc.php` | CHILLER / CCP / CHWP / CT. Parses `point_name`. Handles G3 chillers (6-9) specially — see Section 4. |
 | `api_room.php` | ROOM TEMP & RH + OUTDOOR. Parses `point_name`, merges TEMP+RH pairs into one card per room. |
 | `api_ef.php` | Exhaust fans — separate `ef_points` / `ef_current` tables, keyed by `panel_no`. |
+| `api_alarm.php` | **Global alarm feed** — read-only SELECT over `alarm_events`, returns active counts + rows. See Section 12. |
+| `api_energy.php` | **Daily kWh history** for the ENERGY tab — reads `kwh_total_{ct,ccp,chwp}` + `kwh_usage_{ct,ccp,chwp}`, discovers unit columns from `information_schema`. See Section 13. |
+| `api_temp_rh_hourly.php` | **Hourly temp/RH history** for the Hourly History view inside ROOM TEMP & RH — reads `temp_rh_hourly` (long format) and pivots to one column per room in PHP. See Section 13. |
 | `api.php` | **Does not exist.** The file is absent from disk and was never tracked in git (HEAD included). It was legacy/dead code (old `equipment_type`/`role` schema) and is already gone; only the stale `API_URL` reference in `index.php` remains — see Section 8's "Known cosmetic quirk". |
-| `style.css` / `ef.css` | Styling. Room cards use a teal theme; outdoor cards use indigo (`room-outdoor` class). Also holds the alarm-value colours (Section 8) and the AHU card typography (Section 9). |
+| `style.css` / `ef.css` | Styling. Room cards use a teal theme; outdoor cards use indigo (`room-outdoor` class). Also holds the alarm-value colours (Section 8), the AHU card typography (Section 9), the Global Alarm page (Section 12), and the history tables + filter bar (Section 13). |
 
 ## 3. Database schema (current, as deployed)
 
@@ -425,6 +428,302 @@ Task Scheduler entry, no MariaDB `EVENT`, no runner script in the repo). Both
 scripts appear to be run manually today. `ai_current` is overwritten in place,
 so `temp_rh_snapshot.php` can only capture one instantaneous sample per hour —
 per-hour min/max/avg cannot be reconstructed afterwards.
+
+---
+*Keep this file up to date as decisions change — it exists so no session
+(human or AI) has to rediscover this context from scratch.*
+
+## 12. Global Alarm page (added 2026-10-06)
+
+The web app now has an **ALARM** tab — a global, read-only view over
+`hvac_current.alarm_events`, the table the two pollers write
+(`BACNET_POLLER` and `EF_POLLER`). No new table was created and no schema was
+changed.
+
+### ALARM vs WARNING
+
+`alarm_events.event_class` is an enum with exactly two values, and they are
+kept conceptually separate everywhere (badge, row accent, summary counters):
+
+- **ALARM** — a native equipment alarm/status, raised by the poller from a
+  device's own alarm point (`TryBuildNativeAlarm`).
+- **WARNING** — a threshold / value-limit violation, raised when a reading
+  falls outside its configured bounds (`TryBuildWarning`).
+
+### ACTIVE vs CLEARED
+
+`alarm_events.status` is `ACTIVE` or `CLEARED`. The page renders the two as
+separate groups: ACTIVE first, with a red/amber left accent and a red-tinted
+row background; CLEARED below in a receded grey group limited to the recent
+window. Active rows are the visually prominent ones.
+
+The poller clears a row in place (`status='CLEARED'`, `cleared_at` set,
+`active_key=NULL`); a recurrence inserts a **new** row, so a cleared row is
+immutable history and never reactivates.
+
+> **Not the same thing as the per-card alarm colours.** The red/amber
+> blinking on the AHU/EF/room cards comes from each `api_*.php` returning an
+> instantaneous `alarm` flag and `*_min`/`*_max` bounds (Section 8). That is a
+> live snapshot with no identity or history. This page is the event log with
+> stable ids and a lifecycle. They can disagree — a card can be red with no
+> event row yet (the poller has not run), and a CLEARED event row can exist
+> while a card is back to normal.
+
+### Alarm API — `api_alarm.php`
+
+Same auth model and conventions as the other endpoints: `require_once
+auth.php`, 401 JSON when `$_SESSION['user_id']` is empty, `session_write_close()`,
+`Content-Type: application/json`, PDO with `ERRMODE_EXCEPTION` and
+`FETCH_ASSOC`, and a `try/catch` that logs server-side and returns a generic
+`{"success":false,"error":"Internal server error"}`.
+
+It is **read-only** — a single `SELECT`, no writes of any kind.
+
+```json
+{
+  "success": true,
+  "counts": { "active_alarm": 0, "active_warning": 0, "active_total": 0 },
+  "window_hours": 24,
+  "server_time": "2026-10-06 05:55:00.000000",
+  "alarms": [ { "id": 1, "event_class": "WARNING", "status": "ACTIVE", ... } ]
+}
+```
+
+- `id` is `alarm_events.id` (bigint unsigned PK) — the **stable event
+  identifier**, and what the browser keys new-alarm detection on.
+- `active_key` is deliberately **not** returned: it is the pollers' internal
+  de-duplication key, not something the page needs.
+- The three counts are computed over the whole table (`WHERE status='ACTIVE'`),
+  not over the returned rows, so they stay correct when history is truncated.
+- Cleared rows are windowed (`?hours=`, default 24, clamped 1–168) because
+  history grows without bound; ACTIVE rows are always returned whatever their
+  age. `?limit=` (default 500, clamped 1–1000) bounds the payload.
+- Ordering is `(status='ACTIVE') DESC, raised_at DESC`, so active rows lead.
+- `server_time` uses the database clock (`NOW(6)`), the same clock the pollers
+  stamp `raised_at` with.
+
+### Refresh behaviour
+
+Two independent 10s timers in `index.php`:
+
+- `safeLoadData()` — the visible equipment page.
+- `safeLoadAlarmData()` — always `api_alarm.php`, whatever tab is on screen,
+  so a new alarm still sounds while another page is being watched. The alarm
+  response is kept in `allData.ALARM`.
+
+To avoid fetching `api_alarm.php` twice per cycle, `loadData()` only calls
+`loadAlarmData()` on a first visit to the ALARM tab (when `allData.ALARM` is
+empty) and otherwise just re-renders the data the alarm poll already
+refreshed. `renderAlarm()` clears `#equipmentGrid` itself, because the
+background poll re-renders this page directly rather than going through
+`renderEquipment()`.
+
+### New alarm detection
+
+Keyed on the stable `id`, never on row position or array order:
+
+1. The **first** response only records the set of active ids
+   (`knownAlarmIds`) and is silent — alarms already active on page load never
+   sound.
+2. Each later response diffs against that set. A newly appearing **ACTIVE**
+   id sounds once; `knownAlarmIds` is then replaced with the current set.
+3. A CLEARED row is not an active alarm and never sounds.
+4. Ids are tracked even while muted, so unmuting does not replay alarms that
+   arrived during the mute.
+
+### Sound
+
+A Web Audio API tone — no audio file, no CDN, no third-party service. Two
+880 Hz square-wave beeps with short gain ramps (a raw square wave clicks).
+The `AudioContext` is created lazily and reused.
+
+Browsers suspend audio until the user interacts. This is handled by **not**
+fighting it: if the context is suspended when an alarm arrives, `resume()` is
+attempted, and on failure a notice appears in the alarm toolbar telling the
+user to press MUTE then UNMUTE. That click is the user gesture that unlocks
+the context. Nothing bypasses the browser's autoplay policy.
+
+### Mute / UNMUTE
+
+The MUTE button sits in the alarm toolbar. Mute:
+
+- silences the sound only;
+- does **not** hide, filter, or reorder the list;
+- does **not** clear, acknowledge, or touch an alarm;
+- does **not** write to the database — `api_alarm.php` is read-only and the
+  mute state never leaves the browser.
+
+State persists in `localStorage` under `hvac_alarm_muted` (`"1"` / `"0"`) and
+is read back before the first poll, so a refresh during an active alarm never
+produces a burst of sound. Both `localStorage` accesses are wrapped in
+`try/catch` — private mode or blocked storage degrades to "unmuted for this
+session" rather than breaking the page.
+
+### Layout
+
+A compact table-like grid: summary counters (Active Alarm / Active Warning /
+Total Active) plus a MUTE button, then the ACTIVE group and the CLEARED group.
+Columns are Category, Status, Equipment, Source/point, Message, Limits, Raised
+at, Cleared at, Event ID.
+
+At ≤900px the header row is hidden and each row becomes a stacked card whose
+cells carry their own column label via `::before { content: attr(data-label) }`.
+Verified with no horizontal overflow at 1920×1080, 1366×768 and 390×844.
+
+---
+
+## 13. ENERGY page and the ROOM TEMP & RH hourly view (added 2026-10-06)
+
+Two **history** views reading the tables written by the Section 11 snapshot
+scripts. Both are read-only: no schema change, no poller change, no write of
+any kind. Neither table had a frontend before this.
+
+**ENERGY is a nav tab of its own. The hourly temp/RH table is NOT** — it is a
+second view *inside* the existing ROOM TEMP & RH page, reached with a
+Current / Hourly History switch. There is no `TEMP & RH HOURLY` tab.
+
+| View | Reached by | API | Table(s) | Shape in DB | Shape on screen |
+|---|---|---|---|---|---|
+| ENERGY | its own nav tab | `api_energy.php` | `kwh_total_{ct,ccp,chwp}`, `kwh_usage_{ct,ccp,chwp}` | wide, one row per day | wide, one row per day |
+| ROOM TEMP & RH → Hourly History | the in-page switch | `api_temp_rh_hourly.php` | `temp_rh_hourly` | **long**, one row per point per hour | wide, one row per hour |
+
+### ENERGY
+
+One row per day, newest first, **one column per unit showing daily usage
+only**. Category selector: **CT / CCP / CHWP** — three independent table
+pairs, never mixed in one view. Column headers are prefixed with the
+equipment category (`CT 1`, `CCP 1`, `CHWP 1`, …) rather than a generic
+`Unit 1`, so a screenshot of the table says which equipment it is about.
+The last column is the day's `Usage Sum`.
+
+**The cumulative TOTAL kWh is backend-only and is deliberately NOT
+displayed.** It exists so `kwh_daily_snapshot.php` can diff one day against
+the previous one to produce `kwh_usage_*`; it is calculation data, not
+something an operator reads off the wall display. `api_energy.php` still
+returns `values[unit].total` and `sum_total` (they are needed to derive and
+cross-check usage, and other consumers may want them) — the UI simply never
+reads those fields. Do not "restore" a TOTAL column without asking: showing
+it was explicitly rejected.
+
+**Unit columns are discovered, not hardcoded.** `api_energy.php` reads the
+column list from `information_schema.columns`, keeps only names matching
+`/^[a-z]+_(\d+)$/` with the category's own prefix, and sorts by unit number.
+This is deliberate: **CT has units 1–6 and 9–13 — there is no unit 7 or 8**
+(consistent with Section 10, where CT 7/8 have no points at all). A hardcoded
+`1..13` list would render two permanently empty columns and imply data is
+missing when it is not. Add a unit to the kWh table and the column appears on
+its own.
+
+The unit number is re-validated against the pattern *before* it is used in SQL
+text, and the category picks the table/prefix from a fixed PHP map — no column
+or table name is ever built from request data.
+
+**`NULL` usage is not `0`.** `kwh_daily_snapshot.php` stores `NULL` when there
+is no previous day to diff against (or the diff went negative). The earliest
+day in the table is therefore all-`NULL` usage; the page renders those cells as
+a dimmed `--`, and a genuine `0.0` stays visibly different from it. Never
+coerce `NULL` to `0` — "no consumption recorded" and "zero consumption" are
+different facts.
+
+### ROOM TEMP & RH — the Current / Hourly History switch
+
+ROOM TEMP & RH hosts **two views under one nav tab**, switched in place by a
+`Current` / `Hourly History` control (`#pageSwitch`, built by
+`buildPageSwitch()`). Switching is a re-render, **not a navigation**: the nav
+tab stays highlighted, the section title stays `ROOM TEMP & RH`, and the URL
+does not change. `roomView` (`ROOM_VIEW_CURRENT` / `ROOM_VIEW_HOURLY`) holds
+the mode.
+
+- **Current** — the existing live room cards, unchanged, from `api_room.php`.
+  It has no filter bar; the switch is its only control.
+- **Hourly History** — the hourly table below, from `api_temp_rh_hourly.php`.
+  It builds the metric + date filter bar.
+
+`loadData()` picks the API from the mode, so the two views are one page with
+two data sources rather than two pages. `isHistoryPage()` also follows the
+mode: **Current is live** (10s refresh + alarm poll), **Hourly History is
+history** (neither). The 10s interval is guarded by `isHistoryPage()` so a
+history table is never re-fetched or re-rendered under the reader — which
+would also throw away their scroll position.
+
+> **Why this is one page and not a tab.** The hourly table and the room cards
+> are the same rooms at two time scales; an operator reading a hot room wants
+> the history without losing their place. A separate tab also meant the two
+> were unreachable from each other. Do not split them back into two tabs.
+
+### The hourly table
+
+`temp_rh_hourly` is long format (one row per point per hour), so the pivot to
+one column per room happens **in PHP**, not in dynamic SQL — no column name is
+built from data.
+
+One row per hour, newest first, with a **metric selector (TEMPERATURE / HUMIDITY)**.
+Temperature and humidity are deliberately **not** shown side by side: that
+would be ~20 room columns and unreadable. Switching metric changes only the
+values — the room list query is *not* filtered by metric, so the column set
+stays identical and the eye doesn't have to re-find a room after switching.
+
+Room labels are built with the **same rule as `api_room.php`**
+(`room_type + ' ' + room_name`), so a room reads the same here as on the live
+Current view.
+
+Each row also carries a **`READING AT`** column showing the actual `read_at`
+range for that hour. `ai_current` is overwritten in place (Section 11), so a
+snapshot is one instantaneous sample; when the sample times within an hour
+differ, the column shows `min – max` instead of hiding the spread behind a
+single time.
+
+### Filtering
+
+The filter bar (`#pageFilters`, built by `buildFilterBar()`) is shared by the
+ENERGY page and the ROOM TEMP & RH hourly view: a selector (category / metric)
+plus FROM and TO date inputs, APPLY and RESET.
+Dates are validated as real calendar dates server-side (`checkdate`), and a
+reversed range is swapped rather than rejected. Range defaults: ENERGY 30 days,
+hourly 7 days; each API also reports `available{min,max}` and the view prints
+it, so an empty result is distinguishable from "you filtered it away".
+
+The bar lives **outside** `#equipmentGrid` on purpose — a re-render would
+otherwise destroy the inputs mid-typing. `renderEquipment()` clears it up
+front for every page, so it appears only where a view actually builds one
+(ENERGY, and ROOM TEMP & RH in its Hourly History mode).
+
+### Refresh behaviour
+
+**No history view is auto-refreshed, and none polls `api_alarm.php`**
+(`isHistoryPage()` guards both the 10s interval and `safeLoadAlarmData()`).
+Past data does not change, so a 10s poll would re-fetch identical rows forever
+— and re-rendering the table would throw away the reader's scroll position.
+The alarm poll is skipped too: a siren triggered from a view that shows
+neither alarms nor live equipment, with no way to see what caused it, is
+confusing rather than useful.
+
+Leaving a history view re-baselines `knownAlarmIds` silently, so alarms that
+arrived while history was on screen are recorded without firing the moment the
+user switches back.
+
+### Layout
+
+The tables are div-based like the rest of the app (the app has no `<table>`
+markup anywhere). Column count is passed to CSS as `--history-cols`; the first
+column is sticky-left and the header sticky-top, and the whole table scrolls
+horizontally inside `.history-table-wrap` rather than overflowing the page.
+Every DB-derived string is written with `textContent`, never `innerHTML`.
+
+`.equipment-grid:has(.history-page) { display: block }` is **required** — the
+base rule is a `repeat(auto-fill, minmax(120px,1fr))` grid, and grid items do
+not shrink below their content, so without it a 2091px table overflows the
+whole page on a phone instead of scrolling inside its wrapper.
+
+**Both bars are cleared at the top of `renderEquipment()`, not at the end.**
+Several of its branches (EF, ALARM, ENERGY) return early, so a clear placed
+after them never ran and a switch or filter bar from the previous page stayed
+on screen. Each page that wants them builds its own.
+
+Verified with no page overflow at 1920×1080, 1366×768 and 390×844. ENERGY is
+13 columns for CT and 11 for CCP/CHWP (down from 24 before the TOTAL columns
+were removed) and fits at 1920/1366, scrolling only on a phone; the hourly
+table is 12 columns, fitting at 1920 and scrolling below.
 
 ---
 *Keep this file up to date as decisions change — it exists so no session

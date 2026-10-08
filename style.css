@@ -1074,10 +1074,704 @@ footer {
     .unit-card:not(.room-card) .unit-value {
         font-size: 12px;   /* 9px -> +33% */
     }
+
+    /* Same fix as mobile: the generic .unit-name shrinks to 13px at the
+     * tablet breakpoint while .ef-name holds at 17px. Restore it here so
+     * AHU and EF stay visually aligned between 601–900px. */
+    .unit-card:not(.room-card) .unit-name {
+        font-size: 15px;
+        font-weight: 900;
+    }
 }
 
 @media (max-width: 600px) {
     .unit-card:not(.room-card) .unit-value {
         font-size: 12px;   /* 9px -> +33% */
+    }
+
+    /*
+     * AHU name must keep pace with the EF name on the same screen.
+     * The generic .unit-name drops to 11px at this breakpoint (line 538)
+     * while .ef-name stays at 16px (ef.css:212), so a 45% readability gap
+     * opens up. Lift the AHU name back up — weight 900 matches EF so the
+     * two sections feel like peers; 14px leaves the 12px temperature
+     * clearly subordinate without looking diminished.
+     */
+    .unit-card:not(.room-card) .unit-name {
+        font-size: 14px;
+        font-weight: 900;
+    }
+}
+
+/* =========================================================
+   GLOBAL ALARM PAGE
+   Read-only view over hvac_current.alarm_events. The per-card
+   .status-alarm / .value-alarm classes above are a different,
+   local mechanism and are not reused here.
+   ========================================================= */
+
+.equipment-grid:has(.alarm-page) {
+    display: block;
+    padding: 0 20px 24px;
+}
+
+.alarm-page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* ---------- Active summary ---------- */
+
+.alarm-summary {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.alarm-stat {
+    min-width: 132px;
+    padding: 10px 16px;
+    background: linear-gradient(145deg, #202020, #151515);
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.alarm-stat-value {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.05;
+}
+
+.alarm-stat-label {
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #999;
+}
+
+.alarm-stat-alarm {
+    border-color: #ed3c3c;
+}
+
+.alarm-stat-alarm .alarm-stat-value {
+    color: #ff6b6b;
+}
+
+.alarm-stat-warning {
+    border-color: #ffad32;
+}
+
+.alarm-stat-warning .alarm-stat-value {
+    color: #ffc46b;
+}
+
+.alarm-stat-total .alarm-stat-value {
+    color: #fff;
+}
+
+/* ---------- Mute / audio toolbar ---------- */
+
+.alarm-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-wrap: wrap;
+}
+
+.mute-button {
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 9px 18px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+
+.mute-button:hover {
+    background: #333;
+}
+
+.mute-button.muted {
+    background: #4a1f1f;
+    border-color: #ed3c3c;
+    color: #ff9c9c;
+}
+
+.audio-notice {
+    flex-basis: 100%;
+    font-size: 11px;
+    color: #ffad32;
+    text-align: right;
+}
+
+.audio-notice:empty {
+    display: none;
+}
+
+/* ---------- Groups: ACTIVE / CLEARED ---------- */
+
+.alarm-group {
+    background: #161616;
+    border: 1px solid #2c2c2c;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.alarm-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: #1d1d1d;
+    border-bottom: 1px solid #2c2c2c;
+}
+
+.alarm-group-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.alarm-group-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: #999;
+}
+
+.alarm-group-active .alarm-group-title {
+    color: #ff6b6b;
+}
+
+/* ---------- Rows ---------- */
+
+.alarm-row {
+    display: grid;
+    grid-template-columns:
+        86px 80px minmax(100px, .9fr) minmax(100px, .9fr)
+        minmax(180px, 2fr) 100px 150px 150px 64px;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 14px;
+    border-bottom: 1px solid #232323;
+    font-size: 12px;
+    color: #ccc;
+}
+
+.alarm-row:last-child {
+    border-bottom: none;
+}
+
+.alarm-row.alarm-thead {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #888;
+    background: #131313;
+    text-transform: uppercase;
+}
+
+/* An active row is the prominent one; cleared rows recede. */
+.alarm-row-active {
+    background: #1b1414;
+}
+
+.alarm-row-active.alarm-row-class-alarm {
+    border-left: 3px solid #ed3c3c;
+}
+
+.alarm-row-active.alarm-row-class-warning {
+    border-left: 3px solid #ffad32;
+}
+
+.alarm-row-cleared {
+    background: transparent;
+    color: #8a8a8a;
+    border-left: 3px solid transparent;
+}
+
+.alarm-row-cleared .alarm-cell-desc {
+    color: #7d7d7d;
+}
+
+.alarm-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+}
+
+.alarm-badge-alarm {
+    background: #b51d1d;
+    border: 1px solid #ed3c3c;
+    color: #fff;
+}
+
+.alarm-badge-warning {
+    background: #d87500;
+    border: 1px solid #ffad32;
+    color: #1a1a1a;
+}
+
+.alarm-status {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+}
+
+.alarm-status-active {
+    color: #ff6b6b;
+}
+
+.alarm-status-cleared {
+    color: #777;
+}
+
+.alarm-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.alarm-cell-equip {
+    font-weight: 700;
+    color: #fff;
+}
+
+.alarm-row-cleared .alarm-cell-equip {
+    color: #a5a5a5;
+}
+
+.alarm-cell-source {
+    font-size: 11px;
+    color: #9a9a9a;
+}
+
+.alarm-cell-desc {
+    color: #ddd;
+}
+
+.alarm-cell-time {
+    font-size: 11px;
+    color: #9a9a9a;
+    white-space: nowrap;
+}
+
+.alarm-cell-id {
+    font-size: 11px;
+    color: #777;
+    text-align: right;
+}
+
+.alarm-cell-limits {
+    font-size: 11px;
+    color: #9a9a9a;
+}
+
+.alarm-empty {
+    padding: 14px;
+    font-size: 12px;
+    color: #777;
+    text-align: center;
+}
+
+/* ---------- Large wall display ---------- */
+
+@media (min-width: 1600px) {
+
+    .alarm-stat {
+        min-width: 160px;
+        padding: 12px 20px;
+    }
+
+    .alarm-stat-value {
+        font-size: 38px;
+    }
+
+    .alarm-stat-label,
+    .alarm-group-title {
+        font-size: 13px;
+    }
+
+    .alarm-row {
+        font-size: 14px;
+        padding: 10px 16px;
+    }
+
+    .alarm-row.alarm-thead {
+        font-size: 11px;
+    }
+}
+
+/* ---------- Narrow: rows become stacked cards ---------- */
+
+@media (max-width: 900px) {
+
+    .alarm-row.alarm-thead {
+        display: none;
+    }
+
+    .alarm-row {
+        display: block;
+        padding: 10px 12px;
+    }
+
+    .alarm-cell {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 3px;
+    }
+
+    /* Each cell carries its column name; the header row is hidden. */
+    .alarm-cell::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        min-width: 74px;
+        white-space: nowrap;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        color: #777;
+        text-transform: uppercase;
+    }
+
+    .alarm-cell-id {
+        text-align: left;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .equipment-grid:has(.alarm-page) {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .alarm-toolbar {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .audio-notice {
+        text-align: left;
+    }
+
+    .alarm-stat {
+        flex: 1 1 30%;
+        min-width: 0;
+        padding: 8px 10px;
+    }
+
+    .alarm-stat-value {
+        font-size: 24px;
+    }
+}
+
+/* =========================================================
+   HISTORY PAGES — ENERGY / TEMP & RH HOURLY
+   Real <div>-based tables (the app has no <table> markup
+   anywhere). Shared by both pages.
+   ========================================================= */
+
+/* ---------- Filter bar (lives outside #equipmentGrid) ---------- */
+
+/*
+ * Without this the base .equipment-grid rule (auto-fill, minmax(120px,1fr))
+ * still applies, and a grid item will not shrink below its content — so the
+ * wide table would overflow the PAGE instead of scrolling inside its own
+ * wrapper. Same treatment the alarm page gets.
+ */
+.equipment-grid:has(.history-page) {
+    display: block;
+    padding: 0 20px 24px;
+}
+
+.page-filters:empty {
+    display: none;
+}
+
+/* Current / Hourly History switch on ROOM TEMP & RH. */
+.page-switch:empty {
+    display: none;
+}
+
+.page-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 20px 12px;
+}
+
+.switch-button {
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+
+.switch-button:hover {
+    background: #333;
+}
+
+.switch-button.is-active {
+    background: #444;
+    color: #fff;
+    border-color: #777;
+}
+
+.page-filters {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 0 20px 12px;
+}
+
+.filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.filter-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #999;
+    text-transform: uppercase;
+}
+
+.filter-input {
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ddd;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    min-width: 140px;
+}
+
+.filter-input:focus {
+    outline: none;
+    border-color: #777;
+}
+
+/* The date picker's own icon is dark-on-dark by default. */
+.filter-input::-webkit-calendar-picker-indicator {
+    filter: invert(.7);
+    cursor: pointer;
+}
+
+.filter-button {
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 7px 16px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+
+.filter-button:hover {
+    background: #333;
+}
+
+.filter-button-reset {
+    background: #1e1e1e;
+    color: #999;
+}
+
+.history-page {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.history-notice {
+    font-size: 11px;
+    color: #999;
+}
+
+/* ---------- Table ---------- */
+
+.history-table-wrap {
+    overflow-x: auto;
+    border: 1px solid #2c2c2c;
+    border-radius: 8px;
+    background: #161616;
+}
+
+.history-table {
+    min-width: 100%;
+    width: max-content;
+}
+
+.history-row {
+    display: grid;
+    grid-template-columns: repeat(var(--history-cols, 2), minmax(0, 1fr));
+    border-bottom: 1px solid #232323;
+}
+
+.history-row:last-child {
+    border-bottom: none;
+}
+
+.history-head {
+    background: #1d1d1d;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.history-head .history-cell {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    color: #888;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.history-cell {
+    padding: 7px 10px;
+    font-size: 12px;
+    color: #ccc;
+    white-space: nowrap;
+    border-right: 1px solid #1e1e1e;
+}
+
+.history-cell:last-child {
+    border-right: none;
+}
+
+/* The first column is the row's identity (a date or an hour). */
+.history-cell-key {
+    font-weight: 700;
+    color: #fff;
+    background: #191919;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+}
+
+.history-head .history-cell-key {
+    z-index: 3;
+}
+
+.history-cell-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.history-cell-sum {
+    font-weight: 700;
+    color: #6fd3ff;
+    background: #17202a;
+}
+
+.history-cell-null {
+    text-align: right;
+    color: #666;
+}
+
+.history-cell-time {
+    color: #9a9a9a;
+}
+
+.history-empty {
+    padding: 16px;
+    font-size: 12px;
+    color: #777;
+    text-align: center;
+}
+
+/* Compact variant: the ENERGY table has many columns, so trim padding. */
+.history-table.is-compact .history-cell {
+    padding: 6px 8px;
+    font-size: 11px;
+}
+
+/* ---------- Large wall display ---------- */
+
+@media (min-width: 1600px) {
+
+    .history-cell {
+        padding: 9px 12px;
+        font-size: 14px;
+    }
+
+    .history-head .history-cell {
+        font-size: 11px;
+    }
+
+    .history-table.is-compact .history-cell {
+        font-size: 13px;
+    }
+
+    .history-notice {
+        font-size: 13px;
+    }
+
+    .filter-input {
+        font-size: 13px;
+        min-width: 160px;
+    }
+}
+
+/* ---------- Narrow ---------- */
+
+@media (max-width: 600px) {
+
+    .equipment-grid:has(.history-page) {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .page-filters {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .page-switch {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .switch-button {
+        flex: 1 1 44%;
+    }
+
+    .filter-field {
+        flex: 1 1 44%;
+    }
+
+    .filter-input {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .filter-button {
+        flex: 1 1 44%;
+    }
+
+    /* A sticky first column would eat the little width there is. */
+    .history-cell-key {
+        position: static;
     }
 }

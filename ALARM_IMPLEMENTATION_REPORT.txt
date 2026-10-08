@@ -1,0 +1,386 @@
+================================================================================
+ALARM IMPLEMENTATION REPORT
+Global Alarm Page — HVAC Monitoring Web App
+Date: 2026-10-06
+Repo: C:\xampp\htdocs\hvac_monitoring
+Spec: ALARM_IMPLEMENTATION.md
+================================================================================
+
+--------------------------------------------------------------------------------
+1. FILES CHANGED
+--------------------------------------------------------------------------------
+
+  index.php     +551 lines   (0 deletions — purely additive)
+  style.css     +372 lines   (0 deletions — purely additive)
+  PROJECT.md    +146 / -2    (documentation: Section 2 file table + new Section 12)
+
+No line of code was modified or removed in index.php or style.css; every
+change to those two files is an insertion. PROJECT.md's two deletions are
+documentation rows that were rewritten in place (the file table row for
+index.php/style.css and the trailing footer anchor), not code.
+
+`git diff --stat`:
+
+    PROJECT.md | 146 +++++++++++++++-
+    index.php  | 551 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    style.css  | 372 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    3 files changed, 1067 insertions(+), 2 deletions(-)
+
+--------------------------------------------------------------------------------
+2. FILES ADDED
+--------------------------------------------------------------------------------
+
+  api_alarm.php                      new read-only alarm endpoint
+  ALARM_IMPLEMENTATION_REPORT.txt    this file
+
+--------------------------------------------------------------------------------
+3. WHAT WAS IMPLEMENTED
+--------------------------------------------------------------------------------
+
+  * Global alarm list backed by hvac_current.alarm_events
+  * ALARM / WARNING separation (category badge, row accent, separate counters)
+  * ACTIVE / CLEARED separation (two groups; ACTIVE prominent)
+  * Active summary: Active Alarm, Active Warning, Total Active
+  * Real-time refresh without page reload (10s poll)
+  * Browser alarm sound (Web Audio API generated tone)
+  * MUTE / UNMUTE control, persisted in localStorage
+  * New-alarm detection keyed on the stable event id
+
+Explicitly NOT implemented (per Final Scope): Energy Table, Temp & RH Hourly
+Table.
+
+--------------------------------------------------------------------------------
+4. EXISTING alarm_events STRUCTURE USED
+--------------------------------------------------------------------------------
+
+Inspected directly with SHOW COLUMNS / SHOW INDEX before writing any code
+(§2: "Do not assume column names"). 18 columns, all present and confirmed:
+
+  id            bigint(20) unsigned  PK, auto_increment   <- stable event id
+  event_class   enum('ALARM','WARNING')  NOT NULL
+  source        varchar(32)   NOT NULL   ('BACNET_POLLER' / 'EF_POLLER')
+  equip_type    varchar(50)   NULL
+  equipment     varchar(64)   NOT NULL
+  point_id      varchar(32)   NULL
+  ef_point_id   int(10) unsigned  NULL
+  panel_no      int(11)       NULL
+  ip_address    varchar(45)   NULL
+  metric        varchar(32)   NULL
+  description   varchar(255)  NOT NULL   <- alarm message
+  status        enum('ACTIVE','CLEARED') NOT NULL DEFAULT 'ACTIVE'
+  active_key    varchar(200)  NULL
+  value         float         NULL
+  limit_min     float         NULL
+  limit_max     float         NULL
+  raised_at     datetime(6)   NOT NULL   <- event time
+  cleared_at    datetime(6)   NULL       <- cleared time
+
+Indexes: PRIMARY(id), UNIQUE uq_alarm_active(active_key),
+idx_alarm_raised(raised_at), idx_alarm_status(status, raised_at),
+idx_alarm_equip(equip_type, raised_at), idx_alarm_point(point_id, raised_at),
+idx_alarm_ef_point(ef_point_id, raised_at), idx_alarm_class(event_class, raised_at).
+
+Row count at implementation time: 0 (empty). The page was therefore also
+validated against the live empty state — see section 12.
+
+No schema change, no new table, no column added, altered or dropped.
+
+--------------------------------------------------------------------------------
+5. API DESIGN  (api_alarm.php)
+--------------------------------------------------------------------------------
+
+Conventions matched to the existing api_*.php endpoints:
+
+  * require_once __DIR__ . '/auth.php'
+  * 401 + {"success":false,"error":"Authentication required"} when
+    $_SESSION['user_id'] is empty
+  * session_write_close() before DB work
+  * Content-Type: application/json; charset=utf-8
+  * $config = require __DIR__ . '/config.php' (existing DB config, reused)
+  * PDO with ERRMODE_EXCEPTION + FETCH_ASSOC
+  * try/catch(Throwable) -> error_log() server-side, generic
+    {"success":false,"error":"Internal server error"} to the client
+
+READ-ONLY: one SELECT for counts, one prepared SELECT for rows. No INSERT,
+UPDATE, DELETE, or DDL anywhere in the file.
+
+Response shape:
+
+  {
+    "success": true,
+    "counts": { "active_alarm": N, "active_warning": N, "active_total": N },
+    "window_hours": 24,
+    "server_time": "YYYY-MM-DD HH:MM:SS.ffffff",
+    "alarms": [ { "id", "event_class", "source", "equip_type", "equipment",
+                  "point_id", "ef_point_id", "panel_no", "ip_address",
+                  "metric", "description", "status", "value",
+                  "limit_min", "limit_max", "raised_at", "cleared_at" } ]
+  }
+
+Design decisions:
+
+  * Counts are computed over the whole table (WHERE status='ACTIVE'), NOT over
+    the returned rows, so the summary stays correct when history is truncated.
+  * Cleared rows are windowed because history grows without bound. ?hours=
+    default 24, clamped to 1..168. ACTIVE rows are always returned regardless
+    of age.
+  * ?limit= default 500, clamped 1..1000. Both parameters are cast to int and
+    clamped, never interpolated raw. The row LIMIT is bound with
+    PDO::PARAM_INT; the interval is a validated integer, not user text.
+  * Ordering: (status='ACTIVE') DESC, raised_at DESC — active rows lead.
+  * active_key is deliberately NOT returned. It is the pollers' internal
+    de-duplication key (UNIQUE index); the page's stable identifier is id.
+  * server_time comes from NOW(6), the same database clock the pollers stamp
+    raised_at with, so the window and the reported time share one clock.
+  * Numeric fields are cast ((int)/(float)) so the JSON types are stable.
+
+--------------------------------------------------------------------------------
+6. ALARM STATE HANDLING
+--------------------------------------------------------------------------------
+
+ACTIVE and CLEARED are rendered as two separate groups. ACTIVE is first, with
+a red/amber left accent and a red-tinted row background; CLEARED sits below in
+a receded grey group, labelled with the window ("CLEARED (last 24h)").
+
+Cleared rows show their cleared_at timestamp; active rows show "--" in that
+column, since a null there means "still active", not "unknown".
+
+A cleared row in alarm_events is immutable history: the poller clears in place
+(status='CLEARED', cleared_at set, active_key=NULL) and a recurrence INSERTs a
+new row, so a CLEARED event never reactivates.
+
+Per §4, this is kept distinct from the pre-existing per-card alarm colouring.
+The per-card red/amber blinking comes from each api_*.php returning an
+instantaneous `alarm` flag and *_min/*_max bounds — a live snapshot with no
+identity or history. The global page reads the event log. The two can
+disagree, and PROJECT.md section 12 says so explicitly.
+
+--------------------------------------------------------------------------------
+7. ALARM vs WARNING HANDLING
+--------------------------------------------------------------------------------
+
+event_class is an enum with exactly two values and they are kept conceptually
+separate at every layer:
+
+  ALARM   = native equipment alarm/status (poller's TryBuildNativeAlarm)
+  WARNING = threshold / value-limit violation (poller's TryBuildWarning)
+
+Separated in: the summary counters (Active Alarm / Active Warning), the row
+badge (red ALARM / amber WARNING), and the active row's left accent colour.
+No third category exists and none was introduced.
+
+--------------------------------------------------------------------------------
+8. SOUND BEHAVIOR
+--------------------------------------------------------------------------------
+
+Web Audio API generated tone. No external CDN, no third-party audio service,
+no audio asset of any kind — two 880 Hz square-wave beeps built from an
+OscillatorNode + GainNode.
+
+Short exponential gain ramps (0.0001 -> 0.18 -> 0.0001) are used instead of
+hard starts/stops, because a raw square wave produces an audible click.
+
+The AudioContext is created lazily on first need and reused. It is never
+created at page load, so a silent page allocates nothing.
+
+  Initial page load : silent. The first API response only records the baseline
+                      of active ids (see section 9).
+  New alarm         : sounds once, on the poll that first sees the new id.
+  Existing alarm    : never retriggers; the id is already in the known set.
+  Same event        : cannot repeat, because detection is by id, not by
+                      position or array order.
+
+--------------------------------------------------------------------------------
+9. NEW ALARM DETECTION
+--------------------------------------------------------------------------------
+
+State: `knownAlarmIds` — a Set of String(alarm.id) for rows with
+status === 'ACTIVE'. alarm_events.id is the bigint unsigned primary key, which
+is stable across polls and independent of row order and of array position.
+
+  1. First response  : knownAlarmIds === null, so the current active id set is
+                       recorded and NO sound is played. Alarms already active
+                       when the page opens never sound.
+  2. Later responses : the current id set is diffed against knownAlarmIds. Any
+                       newly appearing ACTIVE id triggers exactly one sound,
+                       then knownAlarmIds is replaced with the current set.
+  3. Known alarms    : already in the set, so they never sound again.
+  4. Cleared alarms  : filtered out of the id set entirely (status !== 'ACTIVE')
+                       and never sound. They still update the display normally.
+  5. Muted           : ids are still tracked while muted, so unmuting does not
+                       replay alarms that arrived during the mute.
+
+Ordering is deliberately NOT used as a signal. Reordering the rows, or
+truncating the list at the limit, cannot fabricate or lose a new alarm.
+
+--------------------------------------------------------------------------------
+10. MUTE BEHAVIOR
+--------------------------------------------------------------------------------
+
+A single MUTE / UNMUTE button in the alarm toolbar (label and aria-pressed
+reflect the current state).
+
+Mute:
+  * silences alarm sound              (soundAlarm() returns early)
+  * does NOT hide alarms              (the list is rendered identically)
+  * does NOT clear alarms             (no status is touched)
+  * does NOT modify alarm_events      (the API is read-only; mute never
+                                       reaches the server)
+  * does NOT modify any database state
+
+Mute affects the audible alert only. A muted page still shows every active
+alarm, still updates counts, and still tracks newly arriving ids.
+
+--------------------------------------------------------------------------------
+11. localStorage BEHAVIOR
+--------------------------------------------------------------------------------
+
+Key:   hvac_alarm_muted
+Value: "1" (muted) or "0" (unmuted)
+
+Written by toggleAlarmMute() on every toggle. Read by readAlarmMuted() into
+`alarmMuted` at page init, BEFORE the first poll, so a refresh during an active
+alarm never produces a burst of sound.
+
+Both the read and the write are wrapped in try/catch. In private mode or with
+site data blocked, localStorage can throw or come back empty; the page then
+degrades to "unmuted for this session" rather than failing to render. This key
+is the only thing the alarm feature stores, and it never leaves the browser.
+
+--------------------------------------------------------------------------------
+12. VALIDATION PERFORMED
+--------------------------------------------------------------------------------
+
+PHP syntax — every modified/added PHP file:
+    php -l api_alarm.php   -> No syntax errors detected
+    php -l index.php       -> No syntax errors detected
+    php -l (all *.php)     -> all clean
+
+JavaScript syntax — the inline <script> block was extracted from index.php and
+checked with `node --check` -> JS SYNTAX OK.
+
+SQL — both statements in api_alarm.php were executed against the real
+hvac_current database and returned successfully (0 rows, matching the table).
+
+API reachability & authentication:
+    unauthenticated GET api_alarm.php  -> HTTP 401
+        {"success":false,"error":"Authentication required"}
+    unauthenticated GET index.php      -> HTTP 302 -> login.php
+    api_ahu / api_ef / api_room / api_hvac_sc unauthenticated -> HTTP 401
+      (unchanged by this work)
+
+Frontend behaviour — a Node + vm harness ran the REAL extracted inline script
+against a stubbed DOM/Web Audio environment, counting oscillator starts as
+"did it sound". 39 assertions, all passing:
+
+    1  initial load: existing active alarms do NOT sound            PASS
+    2  same alarms on later polls do NOT retrigger                  PASS
+    3  row order changes are NOT treated as new                     PASS
+    4  genuinely new active alarm sounds once (2 beeps)             PASS
+    5  that new alarm does not repeat on later polls                PASS
+    6  a CLEARED row is not an active alarm and does not sound      PASS
+    7  MUTE silences but keeps tracking new ids                     PASS
+    8  UNMUTE restores sound; ids tracked while muted do not replay PASS
+    9  MUTE button handler writes localStorage (and only that key)  PASS
+    10 mute state is read back correctly on reload                  PASS
+    11 muted render still lists alarms (mute != hide)               PASS
+    12 render is idempotent — no stacking per poll                  PASS
+    13 summary counts come from the payload                         PASS
+    14 ALARM and WARNING rows render distinctly                     PASS
+    15 ACTIVE and CLEARED render as separate groups                 PASS
+    16 switching to another page does not break dispatch            PASS
+    17 the alarm poll still sounds while another page is shown      PASS
+
+Live empty state (the actual current condition — alarm_events has 0 rows):
+a second harness run confirmed the page renders with 0/0/0 counters, an
+explicit "No active alarms" / "No cleared alarms in the window" message in
+each group, the MUTE button present, and — importantly — that the first empty
+response records an empty baseline silently, after which a genuinely new alarm
+sounds once and then does not repeat.
+
+Layout — the actual DOM generated by the real render function was serialized,
+styled with the real style.css, and rendered in headless Chromium:
+
+    1920x1080  no horizontal overflow, 9-column table, counters 160/170/160px
+    1366x768   no horizontal overflow, 9-column table
+    390x844    no horizontal overflow, header row hidden, rows stacked as
+               labelled cards, every column label renders on one line
+
+Visual inspection of the rendered page confirmed: MUTE button visible, ALARM
+and WARNING badges distinct, ACTIVE rows accented, CLEARED group receded, full
+timestamps in the RAISED AT / CLEARED AT columns (not clipped), and the EVENT
+ID column present.
+
+Regression — existing dashboard pages:
+    * api_ahu / api_ef / api_room / api_hvac_sc all still return 401 when
+      unauthenticated, i.e. the auth model is unchanged.
+    * index.php still lints and its inline JS still parses.
+    * renderEquipment() gained one branch (ALARM) that returns early; the
+      EXHAUST_FAN, ROOM_TEMP_RH, HVAC_SC, AHU_G8 and AHU paths are untouched
+      and were exercised by the harness (AHU still draws its two placeholder
+      cards, section title still follows the equipment name).
+    * The pre-existing per-card alarm colouring (getStatus, applyAlarmClass,
+      .status-alarm, .value-alarm) is untouched and unreferenced by the new
+      code.
+
+--------------------------------------------------------------------------------
+13. REGRESSION CHECKS
+--------------------------------------------------------------------------------
+
+  * git diff is additive where it matters: index.php and style.css have 923
+    insertions and 0 deletions between them. No existing line of code was
+    changed or removed. PROJECT.md shows 2 deletions, both documentation
+    lines rewritten in place (not code).
+  * api.php was already absent before this work and is still absent — the
+    stale API_URL reference was left alone (documented in PROJECT.md §8).
+  * config.php untouched and not read into any new output; no credentials
+    appear in any added line.
+  * No poller file, no database schema, no Apache or PHP configuration, and
+    no system service was touched.
+  * ef.css and the EF G8 fix are untouched.
+  * Git history and staging state are unchanged: no git add / commit / push /
+    reset / checkout / revert was run (§17). The working tree still shows
+    index.php and style.css as modified and everything else as before.
+
+--------------------------------------------------------------------------------
+14. LIMITATIONS / FOLLOW-UP ITEMS
+--------------------------------------------------------------------------------
+
+  1. alarm_events is currently EMPTY (0 rows), so the page has been validated
+     against synthetic payloads and the real empty state, not against live
+     production alarms. The end-to-end path — poller writes a row, the browser
+     sounds — has not been observed with real data. This is the single most
+     important thing to confirm once the Phase 2B pollers are deployed.
+
+  2. The pollers that WRITE alarm_events (BACnet Phase 2B and EF Phase 2B) are
+     not deployed. Until they are, this page will correctly show zero alarms.
+
+  3. Cleared history is windowed at 24h and capped at 500 rows. Both are
+     server-side clamps, adjustable via ?hours= and ?limit=. There is no
+     pagination or date-range filter in the UI yet.
+
+  4. The sound is a fixed two-beep tone. It does not differentiate ALARM from
+     WARNING, and it does not repeat while an alarm stays unacknowledged —
+     a new alarm beeps once and then goes quiet. If a persistent/repeating
+     alert is wanted for standing alarms, that is a deliberate follow-up.
+
+  5. Sound is only as reliable as the browser's autoplay policy. A wall
+     display that is never touched may have a suspended AudioContext, in
+     which case the notice asks the user to press MUTE then UNMUTE once.
+     Unlocking audio at login would be a cleaner fix.
+
+  6. Mute state is per-browser, per-origin (localStorage). It is not shared
+     between the wall display and an operator's laptop, and it does not
+     survive clearing site data. A server-side acknowledgement model would be
+     a larger, separate piece of work.
+
+  7. There is no acknowledgement/shelve concept. Muting is global to the
+     browser and silences everything, including a WARNING the operator might
+     still want to hear.
+
+  8. ALARM_IMPLEMENTATION_REPORT.txt and the other *.md / *.sql files in the
+     repo remain untracked. Nothing was staged or committed (§17).
+
+================================================================================
+END OF REPORT
+================================================================================
