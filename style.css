@@ -777,14 +777,12 @@ footer {
     letter-spacing: 0.3px;
 }
 
-.hvac-card-badge {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 2px 5px;
-    border-radius: 3px;
-    background: rgba(0, 0, 0, 0.45);
-    letter-spacing: 0.4px;
-}
+/*
+ * .hvac-card-badge was removed with the AHU / EF G8 top-right RUN badge it
+ * existed for. That badge duplicated the card's own status background, and
+ * the G8 card header was its only emitter — leaving the rule behind would
+ * have been dead CSS pointing at nothing.
+ */
 
 /* Chiller Card (Taller, spacious 6-metric grid) */
 .chiller-card {
@@ -998,17 +996,28 @@ footer {
  * into a barcode.
  */
 .g8-val-run,
-.g8-val-off {
+.g8-val-off,
+.g8-val-ok,
+.g8-val-trip {
     padding: 0 5px;
     border-radius: 3px;
     background: rgba(0, 0, 0, 0.42);
 }
 
-.g8-val-run {
+.g8-val-run,
+.g8-val-ok {
     color: #4dffa0;
 }
 
-.g8-val-off {
+/*
+ * g8-val-off is an OFF status; g8-val-trip is an EC fan TRIP fault flag.
+ * Both are red, but they are separate classes because the value that produces
+ * them is inverted: a run status is red at 0, a trip flag is red at 1. Keeping
+ * them distinct stops the two polarities from being wired to one rule by
+ * accident, which is what previously painted a healthy fan's "OK" red.
+ */
+.g8-val-off,
+.g8-val-trip {
     color: #ff8a8a;
 }
 

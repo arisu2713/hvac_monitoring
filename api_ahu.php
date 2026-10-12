@@ -324,29 +324,25 @@ try {
     /*
      * AHU 96-97 EC Fan 1-5 (Daikin / Niagara).
      *
-     * IMPORTANT — READ BEFORE "FIXING" THE NULLS.
-     *
-     * The EC fan mapping exists in the point master daikin_points (50 rows:
+     * The EC fan mapping lives in the point master daikin_points (50 rows:
      * EC_FAN{1..5}_TRIP / _FREQ / _TEMP_MOTOR / _TEMP_ELECTRONIC /
-     * _TEMP_MODULE per AHU), and those rows were confirmed readable live on the
-     * station by read-only discovery probes. They are NOT collected by any
-     * production poller: the Daikin poller's read plan is a hardcoded list that
-     * contains no EC fan point, so NO EC_FAN* value is ever written to
-     * daikin_current. Verified: all 50 master rows have no matching
-     * daikin_current row, and daikin_current holds only the 13 non-EC-fan
-     * points per AHU.
+     * _TEMP_MODULE per AHU).
      *
-     * This query is therefore written against the MASTER (a LEFT JOIN), not
-     * against daikin_current: the fan structure is emitted from the mapping
-     * that genuinely exists, and each value is whatever the current table has —
-     * which is currently nothing. Every EC fan field is consequently null and
-     * the card shows them as unavailable (—), NOT as zero.
+     * This query is written against the MASTER (a LEFT JOIN), not against
+     * daikin_current alone: the fan structure is emitted from the mapping that
+     * genuinely exists, and each value is whatever the current table has. The
+     * LEFT JOIN is what makes the card degrade honestly — a point with no
+     * current row arrives as null and renders as "—", NOT as zero. Inventing a
+     * value, or defaulting these to 0, would report a fan as stopped when the
+     * truth is that nobody measured it.
      *
-     * That is deliberate. Inventing a value, or defaulting these to 0, would
-     * report a fan as stopped when the truth is that nobody measured it. The
-     * moment a poller starts writing these points the same code lights up with
-     * no further change — which is why the join is on point_id and not a
-     * hardcoded null.
+     * STATUS AS OF THE LAST CHECK (2026-10-12): daikin_current now DOES carry
+     * all 50 EC_FAN rows with live values (FREQ ~37-38 Hz, TRIP 0), so these
+     * cards show real readings. An earlier revision of this comment said no
+     * EC_FAN* value was ever written; that was true when it was written and is
+     * no longer. The code needed no change to pick the values up — the join
+     * was already on point_id rather than a hardcoded null, which is exactly
+     * why it lights up on its own.
      *
      * TRIP is a fault flag, not a run flag, so it is surfaced as its own field
      * and never folded into `run`.
@@ -420,9 +416,17 @@ try {
      *
      * Point names (verified against hnx_g8_points, 8 points per AHU):
      *   EC_FAN1_STATUS / EC_FAN2_STATUS / EC_FAN3_STATUS  boolean  -> value_bool
-     *   EC_FAN1_SPEED  / EC_FAN2_SPEED  / EC_FAN3_SPEED   numeric  -> not used
+     *   EC_FAN1_SPEED  / EC_FAN2_SPEED  / EC_FAN3_SPEED   numeric  -> fan frequency
      *   DUCT_TEMP                                         numeric  -> duct temp
      *   DUCT_RH                                           numeric  -> not used
+     *
+     * The three *_SPEED points are the fans' frequency in Hz (unit "Hz" in the
+     * point master) and are surfaced as fan1_frequency / fan2_frequency /
+     * fan3_frequency. They are read rather than assumed: the points exist and
+     * are mapped, but hnx_g8_current currently holds NULL for all six of them,
+     * so each one arrives null and the card renders "—". That is the honest
+     * reading of an uncollected point, and it lights up on its own the moment
+     * the poller starts writing values — no further code change.
      *
      * NOTE ON THE THREE FAN STATUSES. There is no unit-level run/stop point
      * for AHU 94/95 and no aggregation rule for one is documented anywhere
@@ -470,6 +474,18 @@ try {
         'EC_FAN3_STATUS' => 'fan3_status',
     ];
 
+    /*
+     * Frequency points, keyed the same way as the statuses so the card can
+     * render status and frequency side by side for the same fan. Unit is Hz
+     * in the point master; the value is passed through as a float or null,
+     * never coerced to 0.
+     */
+    $hnxG8SpeedNames = [
+        'EC_FAN1_SPEED' => 'fan1_frequency',
+        'EC_FAN2_SPEED' => 'fan2_frequency',
+        'EC_FAN3_SPEED' => 'fan3_frequency',
+    ];
+
     foreach ($pdo->query($hnxG8Sql)->fetchAll() as $row) {
 
         $unitName = 'AHU ' . (int)$row['equipment_no'];
@@ -487,6 +503,14 @@ try {
                 'fan1_status' => null,
                 'fan2_status' => null,
                 'fan3_status' => null,
+
+                /*
+                 * EC fan frequency (Hz). Null until the poller writes the
+                 * EC_FAN*_SPEED points; the card shows "—", not 0.
+                 */
+                'fan1_frequency' => null,
+                'fan2_frequency' => null,
+                'fan3_frequency' => null,
 
                 /*
                  * Duct RH. The unit's `temp` field carries Duct Temperature
@@ -555,6 +579,19 @@ try {
 
             $units[$unitName]['points']['run'][] =
                 $row['point_id'];
+        }
+
+        /*
+         * EC Fan frequency (Hz). Same null-preserving treatment as the
+         * statuses: a point the poller has not written stays null rather than
+         * becoming a measured zero.
+         */
+        elseif (isset($hnxG8SpeedNames[$pointName])) {
+
+            $units[$unitName][$hnxG8SpeedNames[$pointName]] =
+                $row['value_double'] !== null
+                    ? (float)$row['value_double']
+                    : null;
         }
     }
 

@@ -666,6 +666,12 @@ function g8BoolText(value, onText, offText) {
     return G8_EMPTY;
 }
 
+/*
+ * Colour for a plain ON/OFF status: 1 = on (green), 0 = off (red).
+ *
+ * Use this only where 1 genuinely means "running". A fault flag is the
+ * opposite polarity and must use g8TripClass instead — see the note there.
+ */
 function g8BoolClass(value) {
     if (value === null || value === undefined) {
         return "g8-val-unknown";
@@ -679,6 +685,33 @@ function g8BoolClass(value) {
 
     if (n === 0) {
         return "g8-val-off";
+    }
+
+    return "g8-val-unknown";
+}
+
+/*
+ * Colour for the EC fan TRIP flag, whose polarity is INVERTED relative to a
+ * run status: 1 = tripped (fault), 0 = healthy.
+ *
+ * This is why it cannot share g8BoolClass. Feeding a trip flag through the
+ * run-status helper painted a healthy fan's "OK" red and would have painted a
+ * real "TRIP" green — the colour would have said the exact opposite of the
+ * word. Green is reserved for healthy, red for an actual fault.
+ */
+function g8TripClass(value) {
+    if (value === null || value === undefined) {
+        return "g8-val-unknown";
+    }
+
+    const n = Number(value);
+
+    if (n === 1) {
+        return "g8-val-trip";
+    }
+
+    if (n === 0) {
+        return "g8-val-ok";
     }
 
     return "g8-val-unknown";
@@ -702,7 +735,16 @@ function g8Metric(label, value, valueClass) {
     return item;
 }
 
-function g8CardHeader(titleText, status) {
+/*
+ * The card header is the title alone.
+ *
+ * It used to carry a top-right status badge (RUN / OFF), which duplicated the
+ * card's own background — the background is already painted from the same
+ * status — so the same word appeared twice on every card. The status is not
+ * lost: the background keeps it, and every card still lists its row-level
+ * status values (per-fan status, EF Status) in the body.
+ */
+function g8CardHeader(titleText) {
     const header = document.createElement("div");
     header.className = "hvac-card-header";
 
@@ -710,12 +752,7 @@ function g8CardHeader(titleText, status) {
     title.className = "hvac-card-title";
     title.textContent = titleText;
 
-    const badge = document.createElement("span");
-    badge.className = "hvac-card-badge";
-    badge.textContent = status === "unknown" ? G8_EMPTY : String(status).toUpperCase();
-
     header.appendChild(title);
-    header.appendChild(badge);
 
     return header;
 }
@@ -755,7 +792,7 @@ function createG8EcFanTable(unit) {
         table.appendChild(name);
 
         const cells = [
-            { text: g8BoolText(fan.trip, "TRIP", "OK"), cls: g8BoolClass(fan.trip) },
+            { text: g8BoolText(fan.trip, "TRIP", "OK"), cls: g8TripClass(fan.trip) },
             { text: g8Format(fan.frequency, " Hz"), cls: "" },
             { text: g8Format(fan.temp_motor, " °C"), cls: "" },
             { text: g8Format(fan.temp_electronic, " °C"), cls: "" },
@@ -780,6 +817,13 @@ function createG8EcFanTable(unit) {
  * individual fans are listed underneath so that decision stays auditable.
  * The temperature and humidity labels say Duct, not Room: these are duct
  * sensors, and the two are different measurements.
+ *
+ * Each fan shows its status and its frequency. The frequency comes from the
+ * unit's own fan*_frequency field, which api_ahu.php reads from the
+ * EC_FAN*_SPEED points — so it is a real reading when one exists and "—" when
+ * the point has never been written. It is never defaulted to 0: a fan at 0 Hz
+ * and a fan nobody has measured are different facts, and only one of them is
+ * a fault.
  */
 function createG8Ahu9495Card(unit) {
     const status = getStatus(unit);
@@ -788,7 +832,7 @@ function createG8Ahu9495Card(unit) {
     card.className = "unit-card hvac-card compact-card g8-card status-" + status;
     card.dataset.status = status;
 
-    card.appendChild(g8CardHeader(unit.name ?? "", status));
+    card.appendChild(g8CardHeader(unit.name ?? ""));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -800,6 +844,11 @@ function createG8Ahu9495Card(unit) {
             "EC Fan " + n,
             g8BoolText(raw, "RUN", "OFF"),
             g8BoolClass(raw)
+        ));
+
+        metrics.appendChild(g8Metric(
+            "EC Fan " + n + " Frequency",
+            g8Format(unit["fan" + n + "_frequency"], " Hz")
         ));
     });
 
@@ -815,9 +864,12 @@ function createG8Ahu9495Card(unit) {
  * AHU 96-97 — Daikin / Niagara.
  *
  * Room Temperature and Room RH come from RoomTemp1 / SensorHumidityROOM, the
- * same two points the ROOM TEMP & RH page shows for these units. They are the
- * only live values here: everything in the EC fan table is mapped but not
- * collected, which is why it renders as "—" (see g8EcFanNote).
+ * same two points the ROOM TEMP & RH page shows for these units.
+ *
+ * The EC fan table is built from the daikin_points master via a LEFT JOIN, so
+ * a point with no current value renders as "—" rather than 0. As of
+ * 2026-10-12 daikin_current carries these points with live values, so the
+ * table shows real frequency and temperatures.
  */
 function createG8Ahu9697Card(unit) {
     const status = getStatus(unit);
@@ -826,7 +878,7 @@ function createG8Ahu9697Card(unit) {
     card.className = "unit-card hvac-card compact-card g8-card status-" + status;
     card.dataset.status = status;
 
-    card.appendChild(g8CardHeader(unit.name ?? "", status));
+    card.appendChild(g8CardHeader(unit.name ?? ""));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -860,7 +912,7 @@ function createG8EfCard(unit) {
     card.className = "unit-card hvac-card compact-card g8-card status-" + status;
     card.dataset.status = status;
 
-    card.appendChild(g8CardHeader(unit.name ?? "", status));
+    card.appendChild(g8CardHeader(unit.name ?? ""));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -917,42 +969,73 @@ function g8Group(title, cards, note) {
 }
 
 /*
- * Explains the wall of dashes on the AHU 96-97 cards, once, instead of
- * leaving the reader to guess whether it is a fault.
+ * Explains the dashes on the AHU cards, once, instead of leaving the reader to
+ * guess whether they are a fault.
  *
- * The EC fan points exist in the point master and were confirmed readable on
- * the station by read-only discovery probes, but the Daikin poller's read plan
- * is a hardcoded list that contains no EC fan point — so no EC_FAN* value is
- * ever written to daikin_current, and every field arrives null. Saying so is
- * the honest reading; showing 0 would claim a measurement nobody took.
+ * Two separate points can be uncollected, and the note reports each from the
+ * data rather than assuming a cause:
  *
- * The note is computed from the data, so it disappears on its own the moment
- * a poller starts writing these points. It is not a permanent disclaimer.
+ *  - AHU 96-97 EC fan telemetry (trip / frequency / motor, electronics and
+ *    module temperature). These points are in the daikin_points master and the
+ *    query LEFT JOINs them, so a unit with no written values shows "—".
+ *
+ *  - AHU 94-95 EC fan frequency (the EC_FAN*_SPEED points). The points exist
+ *    in the hnx_g8_points master with unit "Hz", but hnx_g8_current holds no
+ *    value for them yet.
+ *
+ * The note names only the units that actually have no value. It deliberately
+ * does not claim which unit is "the broken one": it reports what is missing,
+ * and disappears on its own the moment the values start arriving. Showing 0
+ * instead would claim a measurement nobody took.
  */
 function g8EcFanNote(ahuByName) {
     const metrics = ["trip", "frequency", "temp_motor", "temp_electronic", "temp_module"];
 
-    const anyValue = G8_AHU_9697.some(name => {
+    const ecFanMissing = G8_AHU_9697.filter(name => {
         const unit = ahuByName[name];
 
         if (!unit || !unit.ec_fans) {
             return false;
         }
 
-        return Object.keys(unit.ec_fans).some(k => {
+        /* Report the unit only when it has no value at all. */
+        return !Object.keys(unit.ec_fans).some(k => {
             const fan = unit.ec_fans[k];
 
             return fan && metrics.some(m => fan[m] !== null && fan[m] !== undefined);
         });
     });
 
-    if (anyValue) {
-        return null;
+    const freqMissing = G8_AHU_9495.filter(name => {
+        const unit = ahuByName[name];
+
+        if (!unit) {
+            return false;
+        }
+
+        return [1, 2, 3].every(n => {
+            const v = unit["fan" + n + "_frequency"];
+
+            return v === null || v === undefined;
+        });
+    });
+
+    const parts = [];
+
+    if (freqMissing.length) {
+        parts.push("EC fan frequency (" + freqMissing.join(", ")
+            + ") has no reading yet — the points are mapped but not written, so "
+            + "they show " + G8_EMPTY + " rather than zero.");
     }
 
-    return "EC fan telemetry (trip, frequency, motor / electronics / module "
-        + "temperature) is mapped but not collected by the poller yet, so it is "
-        + "shown as " + G8_EMPTY + " rather than as zero.";
+    if (ecFanMissing.length) {
+        parts.push("EC fan telemetry (trip, frequency, motor / electronics / "
+            + "module temperature) has no reading yet for "
+            + ecFanMissing.join(", ") + " — the points are mapped but not "
+            + "written, so they show " + G8_EMPTY + " rather than zero.");
+    }
+
+    return parts.length ? parts.join(" ") : null;
 }
 
 function renderAhuEfG8() {
