@@ -83,32 +83,68 @@ try {
      * for traceability against the point master.
      *
      * value_bool is the ON/OFF status: 1 = running, 0 = off, NULL = unknown.
+     *
+     * Each G8 fan has three rows in daikin_current — Sts_EF1/Sts_EF2 (status),
+     * FreqOUT (Hz) and MotorCurrent (A) — so the rows are grouped by
+     * equipment_no and the values pulled with conditional aggregation. That
+     * keeps ONE output row per fan, which is what the Sts_EF1/Sts_EF2 filter
+     * below was originally protecting: filtering the rows instead would have
+     * dropped the FreqOUT/MotorCurrent values along with the duplicate cards.
+     *
+     * The status point is named Sts_EF1 on EF 58/60 and Sts_EF2 on EF 59/61;
+     * both names are listed so every fan contributes a status. This mirrors the
+     * point_name filter api_ahu.php applies to the Daikin AHU 96-97 rows, which
+     * share the same table and the same problem.
+     *
+     * FreqOUT and MotorCurrent are the live points the poller actually writes
+     * (verified against daikin_current). They are NOT aliased into a single
+     * `frequency` / `current` field: those two names already mean "the panel's
+     * own frequency / current" elsewhere in this API's sibling pages, and
+     * reusing them here would silently merge two different sources.
+     *
+     * The NULL -> 'unknown' handling below is deliberately unchanged: a status
+     * point that has no value still renders as an unknown (grey) card, and a
+     * fan with no frequency or current keeps those values NULL rather than 0.
      */
     $exhaustFanG8 = [];
 
     $g8Sql = "
         SELECT
-            point_id,
             equipment_no,
-            value_bool,
-            last_update
+            MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN point_id END) AS status_point_id,
+            MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN value_bool END) AS value_bool,
+            MAX(CASE WHEN point_name = 'FreqOUT' THEN value_double END) AS frequency,
+            MAX(CASE WHEN point_name = 'MotorCurrent' THEN value_double END) AS motor_current,
+            MAX(last_update) AS last_update
         FROM daikin_current
         WHERE equipment_type = 'EF'
           AND equipment_no IN ('58', '59', '60', '61')
+          AND point_name IN ('Sts_EF1', 'Sts_EF2', 'FreqOUT', 'MotorCurrent')
+        GROUP BY equipment_no
         ORDER BY CAST(equipment_no AS UNSIGNED)
     ";
 
     foreach ($pdo->query($g8Sql)->fetchAll() as $row) {
 
         $exhaustFanG8[] = [
-            'id' => (int)$row['point_id'],
-            'daikin_point_id' => (int)$row['point_id'],
+            'id' => $row['status_point_id'] !== null
+                ? (int)$row['status_point_id']
+                : null,
+            'daikin_point_id' => $row['status_point_id'] !== null
+                ? (int)$row['status_point_id']
+                : null,
             // Not part of the existing Panel 1-9 grouping; the G8 groupbox
             // renders these as a single flat group.
             'panel_no' => null,
             'name' => 'EF ' . (int)$row['equipment_no'],
             'status' => $row['value_bool'] !== null
                 ? (int)$row['value_bool']
+                : null,
+            'frequency' => $row['frequency'] !== null
+                ? (float)$row['frequency']
+                : null,
+            'motor_current' => $row['motor_current'] !== null
+                ? (float)$row['motor_current']
                 : null,
             'last_update' => $row['last_update'],
         ];

@@ -922,6 +922,127 @@ footer {
     letter-spacing: 1px;
 }
 
+/* =========================================================
+   AHU / EF G8 PAGE
+   =========================================================
+
+   Two groupboxes (AHU 94-97, EF 58-61) reusing the existing .hvac-group-card
+   / .unit-card.hvac-card / .compact-metrics / .metric-item vocabulary, so the
+   page inherits the dashboard's typography and status colours rather than
+   restating them. Only what has no existing equivalent is defined here:
+   the two-column group layout, the EC fan table, and the footnote.
+*/
+
+.g8-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 24px;
+    width: 100%;
+    align-items: start;
+}
+
+.g8-group-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+/*
+ * The EC fan table sits under the room metrics inside an AHU 96-97 card, so
+ * it gets a separator rather than its own card.
+ */
+.g8-fan-table {
+    display: grid;
+    grid-template-columns: auto repeat(5, minmax(0, 1fr));
+    gap: 2px 6px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 10.5px;
+}
+
+.g8-fan-name {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.g8-fan-head {
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 700;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.g8-fan-cell {
+    color: #fff;
+    font-weight: 700;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/*
+ * Fan / status values carry the same green-red-grey language as the card
+ * backgrounds, but as text colour.
+ *
+ * The dark backing is not decoration. These values sit INSIDE a card whose
+ * background is already painted by the unit's own status, so plain coloured
+ * text can land on its own colour: a green "RUN" on a green card is close to
+ * invisible, and that is exactly the case that matters most — an aggregate
+ * card that is RUN while one individual fan is OFF. A translucent pill gives
+ * the word its own contrast, so it reads the same on a green, red or grey
+ * card without changing any of them.
+ *
+ * Only the words get the pill. The "—" placeholder is already subdued and
+ * needs no backing; filling a column of dashes with pills turns the table
+ * into a barcode.
+ */
+.g8-val-run,
+.g8-val-off {
+    padding: 0 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.42);
+}
+
+.g8-val-run {
+    color: #4dffa0;
+}
+
+.g8-val-off {
+    color: #ff8a8a;
+}
+
+.g8-val-unknown {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.g8-note {
+    margin-top: 12px;
+    padding: 7px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border-left: 3px solid #58a6ff;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/*
+ * Single column below the two-panel breakpoint, matching how the rest of the
+ * dashboard collapses. The card grid drops to one column on narrow phones so
+ * the EC fan table keeps its five numeric columns readable.
+ */
+@media (max-width: 1100px) {
+    .g8-page {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 650px) {
+    .g8-group-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
 
 
 /* ROOM TEMP & RH - teal theme */

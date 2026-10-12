@@ -34,7 +34,7 @@ require_login();
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">ROOM TEMP & RH</button>
     <button class="nav-button" data-equipment="EXHAUST_FAN">EXHAUST FAN</button>
-    <button class="nav-button" data-equipment="AHU_G8">AHU G8</button>
+    <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
     <button class="nav-button" data-equipment="ALARM">ALARM</button>
     <button class="nav-button" data-equipment="ENERGY">ENERGY</button>
 </nav>
@@ -607,6 +607,399 @@ function renderHvacSc() {
     grid.appendChild(container);
 }
 
+
+/* =========================================================
+   AHU / EF G8 PAGE
+   ========================================================= */
+
+/*
+ * The AHU / EF G8 page shows four AHU cards (94-97) and four EF cards
+ * (58-61).
+ *
+ * The numbers are listed explicitly rather than derived from "everything on
+ * the main AHU page that is not AHU 1-93": the AHU array from api_ahu.php
+ * carries all 97 units, and selecting by position would silently start
+ * showing the wrong four the moment a unit is added or dropped.
+ */
+const G8_AHU_NAMES = ["AHU 94", "AHU 95", "AHU 96", "AHU 97"];
+const G8_EF_NAMES = ["EF 58", "EF 59", "EF 60", "EF 61"];
+
+const G8_AHU_9495 = ["AHU 94", "AHU 95"];
+const G8_AHU_9697 = ["AHU 96", "AHU 97"];
+
+/*
+ * An em dash, not "--" and emphatically not "0". A good part of this page is
+ * genuinely unmeasured (see g8EcFanNote below), and a zero would read as a
+ * measurement: a stopped fan, 0 °C, 0 A.
+ */
+const G8_EMPTY = "—";
+
+function g8Format(value, suffix) {
+    if (value === null || value === undefined || value === "") {
+        return G8_EMPTY;
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return G8_EMPTY;
+    }
+
+    return n.toFixed(1) + suffix;
+}
+
+function g8BoolText(value, onText, offText) {
+    if (value === null || value === undefined) {
+        return G8_EMPTY;
+    }
+
+    const n = Number(value);
+
+    if (n === 1) {
+        return onText;
+    }
+
+    if (n === 0) {
+        return offText;
+    }
+
+    return G8_EMPTY;
+}
+
+function g8BoolClass(value) {
+    if (value === null || value === undefined) {
+        return "g8-val-unknown";
+    }
+
+    const n = Number(value);
+
+    if (n === 1) {
+        return "g8-val-run";
+    }
+
+    if (n === 0) {
+        return "g8-val-off";
+    }
+
+    return "g8-val-unknown";
+}
+
+function g8Metric(label, value, valueClass) {
+    const item = document.createElement("div");
+    item.className = "metric-item";
+
+    const lbl = document.createElement("span");
+    lbl.className = "m-lbl";
+    lbl.textContent = label;
+
+    const val = document.createElement("span");
+    val.className = "m-val" + (valueClass ? " " + valueClass : "");
+    val.textContent = value;
+
+    item.appendChild(lbl);
+    item.appendChild(val);
+
+    return item;
+}
+
+function g8CardHeader(titleText, status) {
+    const header = document.createElement("div");
+    header.className = "hvac-card-header";
+
+    const title = document.createElement("span");
+    title.className = "hvac-card-title";
+    title.textContent = titleText;
+
+    const badge = document.createElement("span");
+    badge.className = "hvac-card-badge";
+    badge.textContent = status === "unknown" ? G8_EMPTY : String(status).toUpperCase();
+
+    header.appendChild(title);
+    header.appendChild(badge);
+
+    return header;
+}
+
+/*
+ * EC Fan 1-5 table for AHU 96-97.
+ *
+ * Column meanings come from the point master (daikin_points): TRIP is a fault
+ * flag (1 = tripped, 0 = healthy), FREQ is the fan frequency in Hz, and the
+ * three temperatures are the fan's own motor, electronics and module
+ * temperatures in °C. They are labelled with the device part they measure —
+ * never "Room" — because they are fan hardware temperatures, not air
+ * temperatures.
+ *
+ * TRIP is rendered as TRIP / OK rather than RUN / OFF: it is a fault flag, so
+ * "OFF" would invert its meaning.
+ */
+function createG8EcFanTable(unit) {
+    const table = document.createElement("div");
+    table.className = "g8-fan-table";
+
+    ["", "Trip", "Freq", "Motor T", "Elec T", "Module T"].forEach((label, i) => {
+        const cell = document.createElement("div");
+        cell.className = i === 0 ? "g8-fan-name" : "g8-fan-head";
+        cell.textContent = label;
+        table.appendChild(cell);
+    });
+
+    const fans = unit.ec_fans || {};
+
+    for (let n = 1; n <= 5; n++) {
+        const fan = fans[n] || {};
+
+        const name = document.createElement("div");
+        name.className = "g8-fan-name";
+        name.textContent = "Fan " + n;
+        table.appendChild(name);
+
+        const cells = [
+            { text: g8BoolText(fan.trip, "TRIP", "OK"), cls: g8BoolClass(fan.trip) },
+            { text: g8Format(fan.frequency, " Hz"), cls: "" },
+            { text: g8Format(fan.temp_motor, " °C"), cls: "" },
+            { text: g8Format(fan.temp_electronic, " °C"), cls: "" },
+            { text: g8Format(fan.temp_module, " °C"), cls: "" }
+        ];
+
+        cells.forEach(c => {
+            const cell = document.createElement("div");
+            cell.className = "g8-fan-cell" + (c.cls ? " " + c.cls : "");
+            cell.textContent = c.text;
+            table.appendChild(cell);
+        });
+    }
+
+    return table;
+}
+
+/*
+ * AHU 94-95 — HNX G8 (Modbus TCP).
+ *
+ * run is the OR of the three fan statuses, folded in api_ahu.php. The
+ * individual fans are listed underneath so that decision stays auditable.
+ * The temperature and humidity labels say Duct, not Room: these are duct
+ * sensors, and the two are different measurements.
+ */
+function createG8Ahu9495Card(unit) {
+    const status = getStatus(unit);
+
+    const card = document.createElement("div");
+    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
+    card.dataset.status = status;
+
+    card.appendChild(g8CardHeader(unit.name ?? "", status));
+
+    const metrics = document.createElement("div");
+    metrics.className = "compact-metrics";
+
+    [1, 2, 3].forEach(n => {
+        const raw = unit["fan" + n + "_status"];
+
+        metrics.appendChild(g8Metric(
+            "EC Fan " + n,
+            g8BoolText(raw, "RUN", "OFF"),
+            g8BoolClass(raw)
+        ));
+    });
+
+    metrics.appendChild(g8Metric("Duct Temperature", g8Format(unit.temp, " °C")));
+    metrics.appendChild(g8Metric("Duct RH", g8Format(unit.duct_rh, " % RH")));
+
+    card.appendChild(metrics);
+
+    return card;
+}
+
+/*
+ * AHU 96-97 — Daikin / Niagara.
+ *
+ * Room Temperature and Room RH come from RoomTemp1 / SensorHumidityROOM, the
+ * same two points the ROOM TEMP & RH page shows for these units. They are the
+ * only live values here: everything in the EC fan table is mapped but not
+ * collected, which is why it renders as "—" (see g8EcFanNote).
+ */
+function createG8Ahu9697Card(unit) {
+    const status = getStatus(unit);
+
+    const card = document.createElement("div");
+    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
+    card.dataset.status = status;
+
+    card.appendChild(g8CardHeader(unit.name ?? "", status));
+
+    const metrics = document.createElement("div");
+    metrics.className = "compact-metrics";
+
+    metrics.appendChild(g8Metric("Room Temperature", g8Format(unit.room_temp, " °C")));
+    metrics.appendChild(g8Metric("Room RH", g8Format(unit.room_rh, " % RH")));
+
+    card.appendChild(metrics);
+    card.appendChild(createG8EcFanTable(unit));
+
+    return card;
+}
+
+function createG8AhuCard(unit) {
+    return G8_AHU_9495.includes(unit.name)
+        ? createG8Ahu9495Card(unit)
+        : createG8Ahu9697Card(unit);
+}
+
+/*
+ * EF 58-61 — Daikin / Niagara, via api_ef.php's EXHAUST_FAN_G8 key.
+ *
+ * Status, Frequency (Hz) and Motor Current (A). The status colours reuse the
+ * same getEfStatus() rules as Panel 1-9, so a G8 fan and a panel fan read the
+ * same way.
+ */
+function createG8EfCard(unit) {
+    const status = getEfStatus(unit);
+
+    const card = document.createElement("div");
+    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
+    card.dataset.status = status;
+
+    card.appendChild(g8CardHeader(unit.name ?? "", status));
+
+    const metrics = document.createElement("div");
+    metrics.className = "compact-metrics";
+
+    metrics.appendChild(g8Metric(
+        "Status",
+        g8BoolText(unit.status, "RUN", "OFF"),
+        g8BoolClass(unit.status)
+    ));
+    metrics.appendChild(g8Metric("Frequency", g8Format(unit.frequency, " Hz")));
+    metrics.appendChild(g8Metric("Motor Current", g8Format(unit.motor_current, " A")));
+
+    card.appendChild(metrics);
+
+    return card;
+}
+
+/*
+ * One groupbox: header + count, a grid of cards, and an optional footnote.
+ */
+function g8Group(title, cards, note) {
+    const group = document.createElement("section");
+    group.className = "hvac-group-card g8-group";
+
+    const header = document.createElement("div");
+    header.className = "hvac-group-header";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "hvac-group-title";
+    titleEl.textContent = title;
+
+    const count = document.createElement("div");
+    count.className = "hvac-group-count";
+    count.textContent = cards.length + (cards.length === 1 ? " unit" : " units");
+
+    header.appendChild(titleEl);
+    header.appendChild(count);
+    group.appendChild(header);
+
+    const cardGrid = document.createElement("div");
+    cardGrid.className = "g8-group-grid";
+
+    cards.forEach(card => cardGrid.appendChild(card));
+    group.appendChild(cardGrid);
+
+    if (note) {
+        const noteEl = document.createElement("div");
+        noteEl.className = "g8-note";
+        noteEl.textContent = note;
+        group.appendChild(noteEl);
+    }
+
+    return group;
+}
+
+/*
+ * Explains the wall of dashes on the AHU 96-97 cards, once, instead of
+ * leaving the reader to guess whether it is a fault.
+ *
+ * The EC fan points exist in the point master and were confirmed readable on
+ * the station by read-only discovery probes, but the Daikin poller's read plan
+ * is a hardcoded list that contains no EC fan point — so no EC_FAN* value is
+ * ever written to daikin_current, and every field arrives null. Saying so is
+ * the honest reading; showing 0 would claim a measurement nobody took.
+ *
+ * The note is computed from the data, so it disappears on its own the moment
+ * a poller starts writing these points. It is not a permanent disclaimer.
+ */
+function g8EcFanNote(ahuByName) {
+    const metrics = ["trip", "frequency", "temp_motor", "temp_electronic", "temp_module"];
+
+    const anyValue = G8_AHU_9697.some(name => {
+        const unit = ahuByName[name];
+
+        if (!unit || !unit.ec_fans) {
+            return false;
+        }
+
+        return Object.keys(unit.ec_fans).some(k => {
+            const fan = unit.ec_fans[k];
+
+            return fan && metrics.some(m => fan[m] !== null && fan[m] !== undefined);
+        });
+    });
+
+    if (anyValue) {
+        return null;
+    }
+
+    return "EC fan telemetry (trip, frequency, motor / electronics / module "
+        + "temperature) is mapped but not collected by the poller yet, so it is "
+        + "shown as " + G8_EMPTY + " rather than as zero.";
+}
+
+function renderAhuEfG8() {
+    grid.classList.add("hvac-view");
+
+    sectionTitle.textContent = "AHU / EF G8";
+
+    const ahuData = Array.isArray(allData.AHU) ? allData.AHU : [];
+    const efData = Array.isArray(allData.EXHAUST_FAN_G8) ? allData.EXHAUST_FAN_G8 : [];
+
+    /*
+     * Indexed by name and then walked in the order the constants declare, so
+     * the page always lays the four cards out in the same positions and a unit
+     * the API did not send leaves a gap instead of shifting its neighbours.
+     */
+    const ahuByName = {};
+    ahuData.forEach(unit => {
+        if (unit && unit.name) {
+            ahuByName[unit.name] = unit;
+        }
+    });
+
+    const efByName = {};
+    efData.forEach(unit => {
+        if (unit && unit.name) {
+            efByName[unit.name] = unit;
+        }
+    });
+
+    const ahuCards = G8_AHU_NAMES
+        .filter(name => ahuByName[name])
+        .map(name => createG8AhuCard(ahuByName[name]));
+
+    const efCards = G8_EF_NAMES
+        .filter(name => efByName[name])
+        .map(name => createG8EfCard(efByName[name]));
+
+    unitCount.textContent = (ahuCards.length + efCards.length) + " units";
+
+    const page = document.createElement("div");
+    page.className = "g8-page";
+
+    page.appendChild(g8Group("AHU 94 - 97", ahuCards, g8EcFanNote(ahuByName)));
+    page.appendChild(g8Group("EXHAUST FAN 58 - 61", efCards, null));
+
+    grid.appendChild(page);
+}
 
 function renderExhaustFan() {
     const data = allData.EXHAUST_FAN;
@@ -2021,20 +2414,11 @@ function renderEquipment() {
         return;
     }
 
-    const placeholderMenus = {
-        AHU_G8: "AHU G8"
-    };
-
-    if (placeholderMenus[currentEquipment]) {
-        sectionTitle.textContent = placeholderMenus[currentEquipment];
-        unitCount.textContent = "Coming Soon";
-        grid.classList.remove("hvac-view");
-        const placeholder = document.createElement("div");
-        placeholder.className = "coming-soon";
-        placeholder.textContent = "Coming Soon";
-        grid.appendChild(placeholder);
+    if (currentEquipment === "AHU_G8") {
+        renderAhuEfG8();
         return;
     }
+
     if (currentEquipment === "HVAC_SC") {
         grid.classList.add("hvac-view");
         renderHvacSc();
@@ -2051,12 +2435,12 @@ function renderEquipment() {
     }
 
     /*
-     * AHU 94-95 are still placeholders: they have no data source yet.
-     * AHU 96-97 are NOT placeholders — they now arrive as real units from
-     * api_ahu.php (Daikin / G8), so they are rendered by the createCard()
-     * loop above and must not be drawn twice.
+     * AHU 94-95 are no longer placeholders: they now arrive as real units from
+     * api_ahu.php (HNX G8 / Modbus TCP, hnx_g8_points + hnx_g8_current), so
+     * they are rendered by the createCard() loop above. Keeping them here as
+     * well would draw each of them twice.
      */
-    const placeholderNumbers = currentEquipment === "AHU" ? ["94", "95"] : [];
+    const placeholderNumbers = [];
 
     sectionTitle.textContent = currentEquipment;
     unitCount.textContent = (data.length + placeholderNumbers.length) + " units";
@@ -2115,7 +2499,7 @@ async function loadData() {
             return;
         }
 
-        const apiUrl = currentEquipment === "AHU"
+        const apiUrl = currentEquipment === "AHU" || currentEquipment === "AHU_G8"
             ? "api_ahu.php"
             : (currentEquipment === "HVAC_SC"
                 ? "api_hvac_sc.php"
@@ -2137,6 +2521,35 @@ async function loadData() {
         }
 
         allData = data.equipment || {};
+
+        /*
+         * AHU / EF G8 is the one page fed by TWO endpoints: its AHU cards come
+         * from api_ahu.php (above) and its EF cards from api_ef.php. Fetching
+         * the second one here rather than duplicating either unit's data into a
+         * third endpoint keeps every unit on exactly one source of truth — the
+         * same one its own page uses.
+         *
+         * If this second call fails the catch below marks the connection
+         * offline, but the AHU cards fetched above are already in allData and
+         * stay on screen: a half-drawn page beats a blank one.
+         */
+        if (currentEquipment === "AHU_G8") {
+            const efResponse = await fetch("api_ef.php?t=" + Date.now(), {
+                cache: "no-store"
+            });
+
+            if (!efResponse.ok) {
+                throw new Error("HTTP " + efResponse.status);
+            }
+
+            const efData = await efResponse.json();
+
+            if (!efData.success) {
+                throw new Error("API returned success=false");
+            }
+
+            allData = Object.assign({}, allData, efData.equipment || {});
+        }
 
         setConnection(true);
         renderEquipment();
