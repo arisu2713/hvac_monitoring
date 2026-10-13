@@ -2583,7 +2583,7 @@ function buildRoomChartPanel(data, metricKey, panelId) {
      */
     const unit = isRh ? (data.unit || "%RH") : "°C";
     const ref = ROOM_CHART_REFERENCE[isRh ? "rh" : "temp"];
-    const scale = ROOM_CHART_SCALE[isRh ? "rh" : "temp"];
+    const axis = ROOM_CHART_AXIS[isRh ? "rh" : "temp"];
 
     const series = rooms.map(room => ({
         name: room.label,
@@ -2626,13 +2626,16 @@ function buildRoomChartPanel(data, metricKey, panelId) {
             axisLabel: formatAxisHour,
             tipTitle: label => formatHour(label),
             /*
-             * Fixed 0-50 °C / 0-100 %RH bands. `unit` above is the chart's own
-             * spelling and does not feed the tooltip; the tooltip header unit
-             * still comes from `data.unit`, so it is unchanged.
+             * No pinned range: the band is derived from the readings in view,
+             * padded and snapped outward, and re-derived on every filter
+             * change. `preferred` only steers the tick step — 2/5 °C and
+             * 5/10 %RH read best for these two metrics. `unit` above is the
+             * chart's own spelling and does not feed the tooltip; the tooltip
+             * header unit still comes from `data.unit`, so it is unchanged.
              */
-            yMin: scale.min,
-            yMax: scale.max,
-            yStep: scale.step,
+            padFraction: axis.pad,
+            tickTarget: axis.target,
+            preferredSteps: axis.preferred,
             referenceLines: [{ value: ref.value, label: ref.label }]
         }
     });
@@ -3203,23 +3206,30 @@ const ROOM_CHART_REFERENCE = {
 };
 
 /*
- * Fixed y-scales for the two ROOM charts, so a reading can be judged against
- * the same grid on every date range, at every screen size, on every wall
- * display. 0-50 °C by 5, and 0-100 %RH by 10.
+ * Readable y-axes for the two ROOM charts.
  *
- * The bound is deliberately the instrument's range, not the data's: the whole
- * band is meaningful for both metrics (a room at 0 °C or 100 %RH is a real
- * reading, not a sentinel), so pinning it costs no resolution that matters and
- * buys a scale that never moves. Both reference lines sit inside their band.
+ * The band follows the readings currently in view. A fixed instrument range
+ * reads well on paper but badly on a wall display: pinning 0-50 °C squeezes a
+ * 26-36 °C day into the bottom fifth of the plot, and a 45-90 %RH day into the
+ * middle half, so the lines flatten and the day-to-day shape — the thing the
+ * chart exists to show — disappears.
  *
- * `yMin`/`yMax`/`yStep` are read by historyChartGeometry and
- * historyAxisTicks. Passing them also disables the two automatic range
- * behaviours, which is correct here: the band no longer follows the readings,
- * and a reference line no longer needs to widen a band it is already inside.
+ * So the band is derived per draw: the data range (plus any reference line, so
+ * the threshold stays on screen) is padded, then snapped outward to whole
+ * multiples of the tick step. Snapping outward is what guarantees the axis
+ * never clips an outlier — the bounds can only move away from the data, never
+ * into it — and the padding is what keeps the extreme lines off the frame.
+ *
+ * `preferred` lists the steps that read best for each metric (2 or 5 °C,
+ * 5 or 10 %RH). They are a preference, not a rule: a preferred step is used
+ * only when it leaves a legible number of intervals, so a narrow filter falls
+ * back to a finer step rather than collapsing to one or two giant intervals.
+ * `pad` is a fraction of the data span, and `target` is the interval count the
+ * step search aims for.
  */
-const ROOM_CHART_SCALE = {
-    temp: { min: 0, max: 50, step: 5 },
-    rh:   { min: 0, max: 100, step: 10 }
+const ROOM_CHART_AXIS = {
+    temp: { pad: 0.06, target: 6, preferred: [2, 5] },
+    rh:   { pad: 0.06, target: 6, preferred: [5, 10] }
 };
 
 const HISTORY_CHART = {
@@ -3250,6 +3260,24 @@ const HISTORY_RIGHT_PAD = 14;
  * than the plot it labels.
  */
 const HISTORY_FACET_LEFT_PAD = 38;
+
+/*
+ * The readable band for y-axis intervals. Below five the grid is coarse enough
+ * that a reader cannot interpolate a value between the lines; above eight the
+ * labels crowd and the chart turns into a ladder. The general step search only
+ * considers steps that land inside this band, which is what stops a narrow date
+ * filter from collapsing to two or three huge intervals.
+ *
+ * A step the caller explicitly prefers gets a wider band, so a 20 °C span can
+ * still take the preferred 5 °C step (four intervals) rather than being pushed
+ * to an unpreferred 2.5 °C just to reach five. Four intervals is still legible;
+ * the lower bound here exists only to reject a preferred step that would leave
+ * the axis nearly unlabelled.
+ */
+const HISTORY_TICK_MIN = 5;
+const HISTORY_TICK_MAX = 8;
+const HISTORY_PREFERRED_TICK_MIN = 4;
+const HISTORY_PREFERRED_TICK_MAX = 10;
 
 /*
  * Normalise `options.referenceLines` into a list of { value, label }.
@@ -3345,6 +3373,49 @@ function historyChartGeometry(canvas, series, options) {
         max += 1;
     }
 
+    /*
+     * Headroom so the extreme line never rides the frame, and an outward snap
+     * of the bounds to whole tick steps. Both are opt-in: ENERGY does not ask
+     * for them and must keep the band it has always drawn, so a caller that
+     * passes neither `autoScale` nor `padFraction` sees the plain data range.
+     *
+     * The padding is a fraction of the span (not a fixed amount), so the
+     * proportion is the same whether the readings span 4 °C or 40. A flat
+     * series — min and max already separated above — still pads, because the
+     * span it is given is the widened one, not zero.
+     */
+    const autoScale = opts.autoScale === true || Number.isFinite(opts.padFraction);
+    let step = Number.isFinite(opts.yStep) && opts.yStep > 0 ? opts.yStep : null;
+
+    if (!pinnedRange && autoScale) {
+        const frac = Number.isFinite(opts.padFraction) ? opts.padFraction : 0;
+        /*
+         * The flat-series case was already widened above, so the span here is
+         * never zero and the padding is always a real fraction of it.
+         */
+        const pad = frac > 0 ? (max - min) * frac : 0;
+
+        if (pad > 0) {
+            min -= pad;
+            max += pad;
+        }
+
+        /*
+         * Snap the padded band outward to whole multiples of the tick step, so
+         * the top and bottom gridlines land exactly on the plot frame instead
+         * of floating just inside it. Outward only: the bounds can move away
+         * from the data but never into it, which is what guarantees no outlier
+         * is clipped even after rounding. The step is decided here rather than
+         * in the tick builder so the bounds and the ticks cannot disagree.
+         */
+        step = historyAxisStep(max - min, opts.preferredSteps, opts.tickTarget);
+
+        if (step > 0) {
+            min = Math.floor(min / step + 1e-9) * step;
+            max = Math.ceil(max / step - 1e-9) * step;
+        }
+    }
+
     const valueSpan = max - min;
     const pointCount = series.length ? series[0].points.length : 1;
 
@@ -3357,7 +3428,60 @@ function historyChartGeometry(canvas, series, options) {
         : plot.left + (plot.right - plot.left) * (i / (pointCount - 1));
     const yAt = v => plot.bottom - (plot.bottom - plot.top) * ((v - min) / valueSpan);
 
-    return { ctx, w, h, plot, min, max, xAt, yAt, pointCount, dpr };
+    return { ctx, w, h, plot, min, max, xAt, yAt, pointCount, dpr, step };
+}
+
+/*
+ * Pick the y-axis interval for a band, preferring the steps that read best for
+ * the metric (2/5 °C, 5/10 %RH).
+ *
+ * A preferred step is accepted over a wider interval count than the general
+ * ladder, because "prefer 2 or 5 °C" is the stronger instruction: a 20 °C span
+ * is better served by 5 °C (four intervals) than by a fallback 2.5 °C, even
+ * though four is under the five-interval aim. Only when no preferred step is
+ * reasonable at all — a narrow filter, where every preferred step collapses to
+ * two or three intervals — does the search widen to the full 1/2/5 ladder, and
+ * there the stricter five-to-eight band applies. Either way the count is
+ * bounded, so the axis can never come out crowded.
+ */
+function historyAxisStep(span, preferred, target) {
+    const goal = Math.max(2, Number.isFinite(target) ? target : 6);
+    const mag = Math.pow(10, Math.floor(Math.log10(span / goal)));
+    const band = (n, lo, hi) => n >= lo && n <= hi;
+    /* Nearest to the target count wins; ties break toward the finer step. */
+    const better = (a, b) => b === null
+        || Math.abs(a.n - goal) < Math.abs(b.n - goal)
+        || (Math.abs(a.n - goal) === Math.abs(b.n - goal) && a.step < b.step);
+
+    let best = null;
+
+    (Array.isArray(preferred) ? preferred : []).forEach(step => {
+        if (!(step > 0)) return;
+        const n = Math.round(span / step);
+        if (band(n, HISTORY_PREFERRED_TICK_MIN, HISTORY_PREFERRED_TICK_MAX)
+            && better({ step, n }, best)) {
+            best = { step, n };
+        }
+    });
+
+    if (best) return best.step;
+
+    [0.5, 1, 2, 2.5, 5, 10, 20].forEach(m => {
+        const step = m * mag;
+        const n = Math.round(span / step);
+        if (band(n, HISTORY_TICK_MIN, HISTORY_TICK_MAX) && better({ step, n }, best)) {
+            best = { step, n };
+        }
+    });
+
+    /* Nothing lands in the band (a very wide or very narrow span): take the
+     * magnitude that comes closest rather than leaving the axis unlabelled. */
+    if (!best) {
+        const step = mag > 0 ? mag : span / goal;
+        return step > 0 ? step : span;
+    }
+
+    return best.step;
 }
 
 /*
@@ -3443,7 +3567,13 @@ function drawHistoryChart(canvas, series, options) {
     canvas.dataset.chartMin = String(min);
     canvas.dataset.chartMax = String(max);
 
-    const ticks = historyAxisTicks(min, max, opts.compact ? 2 : 5, opts.yStep);
+    /*
+     * The step comes back from the geometry, which chose it to snap the bounds.
+     * A facet is drawn a third of the width, so its labels are given more room
+     * by asking for fewer intervals; the step preference is unchanged.
+     */
+    const ticks = historyAxisTicks(min, max, opts.compact ? 2 : 5,
+        geo.step || opts.yStep);
 
     /* Recessive chart chrome: solid hairlines one step off the surface. */
     ctx.lineWidth = 1;
