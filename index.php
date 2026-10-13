@@ -1973,9 +1973,24 @@ const ROOM_VIEW_HOURLY = "hourly";
 
 let roomView = ROOM_VIEW_CURRENT;
 
+/*
+ * The ENERGY page's three view modes and its "all equipment" sentinel.
+ *
+ * Declared here, above `historyFilters`, because that object's initialiser runs
+ * at load time and `const` has no hoisting - referencing these further down the
+ * file would throw a ReferenceError before the page ever rendered.
+ *
+ * The sentinel is a string that cannot collide with a unit number, since unit
+ * numbers come from the API as digits.
+ */
+const ENERGY_ALL_UNITS = "__all__";
+const ENERGY_VIEW_OVERVIEW = "overview";
+const ENERGY_VIEW_DETAIL = "detail";
+const ENERGY_VIEW_COMBINED = "combined";
+
 /* Active filter values, kept out of the DOM so a re-render can restore them. */
 const historyFilters = {
-    ENERGY: { category: "CT", from: "", to: "" },
+    ENERGY: { category: "CT", from: "", to: "", unit: ENERGY_ALL_UNITS, view: ENERGY_VIEW_OVERVIEW },
     TEMP_RH_HOURLY: { metric: "temp", from: "", to: "" }
 };
 
@@ -2213,8 +2228,19 @@ function renderEnergy() {
 
     const units = data.units || [];
     const days = data.days || [];
+    const category = data.category || "CT";
 
     unitCount.textContent = days.length + (days.length === 1 ? " day" : " days");
+
+    /*
+     * A unit can stop appearing in the response (a meter dropped from the
+     * snapshot list, or a category swap that leaves a stale selection). Fall
+     * back to the combined view rather than charting a unit that is not there.
+     */
+    if (historyFilters.ENERGY.unit !== ENERGY_ALL_UNITS
+        && !units.some(u => String(u.unit) === String(historyFilters.ENERGY.unit))) {
+        historyFilters.ENERGY.unit = ENERGY_ALL_UNITS;
+    }
 
     const bar = buildFilterBar([
         {
@@ -2222,6 +2248,20 @@ function renderEnergy() {
             name: "category",
             label: "Category",
             options: (data.categories || ["CT"]).map(c => ({ value: c, text: c }))
+        },
+        /*
+         * Equipment options are derived from THIS response's unit list, so the
+         * selector can only ever offer equipment the selected category actually
+         * has - CT offers 1-6 and 9-13, CCP and CHWP offer 1-9. "Combined" is
+         * first because it is the default, and it is what the chart shows
+         * whenever no single unit is chosen.
+         */
+        {
+            type: "select",
+            name: "unit",
+            label: "Equipment",
+            options: [{ value: ENERGY_ALL_UNITS, text: "Combined — All equipment" }]
+                .concat(units.map(u => ({ value: String(u.unit), text: category + " " + u.unit })))
         },
         { type: "date", name: "from", label: "From" },
         { type: "date", name: "to", label: "To" }
@@ -2231,6 +2271,18 @@ function renderEnergy() {
         onToggle: () => {},
         onExport: () => exportEnergy(data)
     });
+
+    /*
+     * The three view modes, in its own container above the filter bar so
+     * switching modes never disturbs the filters (and vice versa). All three
+     * are available regardless of how many units the category has: with a
+     * single unit, Overview and Combined simply draw the same one line.
+     */
+    buildPageSwitch([
+        { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ALL EQUIPMENT" },
+        { value: ENERGY_VIEW_DETAIL, label: "DETAIL — SELECTED" },
+        { value: ENERGY_VIEW_COMBINED, label: "COMBINED — ONE CHART" }
+    ], historyFilters.ENERGY.view, setEnergyView);
 
     const page = document.createElement("div");
     page.className = "history-page";
@@ -2246,9 +2298,17 @@ function renderEnergy() {
      * The chart sits directly under the notice, above the table. Rendered
      * oldest-first so time runs left to right, while the table keeps its own
      * newest-first order.
+     *
+     * Wrapped in .history-chart-stack so the stylesheet can tell "ENERGY with a
+     * chart open" apart from "ENERGY with the chart closed" — the wall-display
+     * overflow override keys off that class, and emitting it only when a chart
+     * exists is what keeps the chartless page byte-identical to before.
      */
     if (showChart && units.length && days.length) {
-        page.appendChild(buildEnergyChart(data));
+        const stack = document.createElement("div");
+        stack.className = "history-chart-stack";
+        stack.appendChild(buildEnergyChart(data));
+        page.appendChild(stack);
     }
 
     if (!units.length) {
@@ -2270,9 +2330,12 @@ function renderEnergy() {
      * Headers are prefixed with the equipment category ("CT 1", "CCP 1",
      * "CHWP 1") rather than a generic "Unit 1", so a screenshot of the table
      * says which equipment it is about.
+     *
+     * The table always shows every unit in the category, in every view mode.
+     * Narrowing it to the selected unit would hide the comparison the combined
+     * chart exists to make, and would silently change what EXPORT writes — the
+     * task requires the export to keep matching the table it sits beside.
      */
-    const category = data.category || "CT";
-
     const columns = [{ label: "Date" }];
 
     units.forEach(u => {
@@ -2315,27 +2378,61 @@ function renderEnergy() {
 }
 
 /*
- * ENERGY chart: one line per unit, over the same days and the same `usage`
- * values the table's columns show. Rendered oldest-first so time reads left to
- * right (the table stays newest-first).
+ * ENERGY chart: the hybrid Overview / Detail / Combined experience.
  *
- * A null usage means "not derivable" (no previous day, or a meter reset). It
- * is left as a gap in the line and counted in the note — never plotted as 0,
- * which would invent a real reading of zero.
+ * All three modes plot the same `usage` values the table's columns show, over
+ * the same days, through the same formatters, so the chart and the table can
+ * never disagree.
+ *
+ * A null usage means "not derivable" (no previous day, or a meter reset). It is
+ * left as a gap in the line and counted in the note — never plotted as 0, which
+ * would invent a real reading of zero. That distinction is load-bearing on this
+ * page: several channels (CT 3, CCP 8, CHWP 2, CHWP 7) read a genuine 0 every
+ * single day, so a zero and a gap appear side by side in the same table and
+ * must not be conflated.
+ *
+ * Every mode pins an explicit y-range and asks for real tick counts. That is
+ * deliberate: the shared panel's facet path requests only two ticks and pins no
+ * step, which on this data drew just "0" and "100" across a 0-152 band (CCP:
+ * "0"/"500" on 0-696; CHWP: "0"/"500" on 0-888) and left the top of every plot
+ * unlabelled.
  */
 function buildEnergyChart(data) {
     const units = data.units || [];
     const days = (data.days || []).slice().reverse();
     const category = data.category || "CT";
+    const selected = historyFilters.ENERGY.unit;
+    const mode = historyFilters.ENERGY.view;
 
     /*
-     * Colour is keyed to the unit's identity, so hiding or adding a unit never
-     * repaints the others. There are more channels than palette slots, so the
-     * panel renders them as small multiples — one facet each, same colours.
+     * Which equipment each mode draws:
+     *   Combined - every unit in the category, on one shared axis.
+     *   Detail   - exactly the selected unit.
+     *   Overview - every unit in the category, one small chart each.
+     *
+     * Overview and Combined therefore plot the same set; they differ only in
+     * whether the units share a plot or get their own. Keeping them on the same
+     * set is what makes toggling between them a change of presentation rather
+     * than a change of subject.
      */
-    const series = units.map((u, i) => ({
+    const charted = mode === ENERGY_VIEW_DETAIL
+        ? units.filter(u => String(u.unit) === String(selected))
+        : units;
+
+    if (!charted.length) {
+        return buildHistoryChartPanel({
+            title: "DAILY ENERGY USAGE",
+            meta: "No equipment selected",
+            series: [],
+            emptyText: "No equipment to chart for this filter.",
+            options: energyChartOptions()
+        });
+    }
+
+    /* Colour is keyed to the equipment's identity, never its array position. */
+    const series = charted.map(u => ({
         name: category + " " + u.unit,
-        color: HISTORY_SERIES_COLORS[i % HISTORY_SERIES_COLORS.length],
+        color: energyChartColor(units, u.unit),
         points: days.map(day => {
             const v = (day.values || {})[String(u.unit)] || {};
             return {
@@ -2357,20 +2454,119 @@ function buildEnergyChart(data) {
           + " readings have no derivable usage and are left as gaps (not plotted as 0)."
         : "All " + (series.length * days.length) + " readings have a derivable usage.";
 
+    const dayWord = days.length === 1 ? " day" : " days";
+    const span = (data.from || "--") + " to " + (data.to || "--");
+
+    if (mode === ENERGY_VIEW_OVERVIEW) {
+        /*
+         * One small chart per unit, all on ONE shared scale, zero-based.
+         *
+         * A shared scale is what makes the panels comparable — separate scales
+         * would make a channel that idles at 12 kWh look as busy as one that
+         * swings between 400 and 858, and the reader would have no way to tell
+         * which panel is the big consumer. The band starts at 0 for the same
+         * reason: usage is a quantity, and two panels whose axes start at
+         * different heights cannot be compared by eye at all.
+         *
+         * The top is padded so the tallest line never rides the frame.
+         */
+        let peak = 0;
+
+        series.forEach(s => s.points.forEach(p => {
+            if (!isMissingValue(p.value) && p.value > peak) peak = p.value;
+        }));
+
+        /* All-zero category: give the panels a clean 0-1 axis to sit on rather
+         * than a zero-height band. */
+        if (!(peak > 0)) peak = 1;
+
+        const top = peak * 1.08;
+
+        return buildHistoryChartPanel({
+            title: "DAILY ENERGY USAGE — " + category + " OVERVIEW (" + days.length + dayWord + ")",
+            meta: span + " — " + series.length + " channels, one panel each, shared 0-" + formatCompactNumber(Math.round(top)) + " kWh scale",
+            series: series,
+            note: note,
+            /*
+             * `combine` keeps the shared panel from applying its own faceting
+             * rule, so this mode controls the layout. `forceFacets` asks for the
+             * one-panel-per-channel layout explicitly, and the pinned range is
+             * the shared band computed above.
+             */
+            combine: true,
+            forceFacets: true,
+            facetColumns: 3,
+            facetTickTarget: 5,
+            facetRange: { min: 0, max: top },
+            emptyText: "No daily usage to chart for this filter.",
+            options: energyChartOptions()
+        });
+    }
+
+    if (mode === ENERGY_VIEW_DETAIL) {
+        const unit = charted[0];
+
+        return buildHistoryChartPanel({
+            title: "DAILY ENERGY USAGE — " + category + " " + unit.unit + " (" + days.length + dayWord + ")",
+            meta: span + " — daily usage in kWh",
+            series: series,
+            note: note,
+            emptyText: "No daily usage to chart for this filter.",
+            options: energyChartOptions()
+        });
+    }
+
+    /*
+     * Combined: every unit in the category on ONE shared axis, with a legend
+     * that shows and hides individual series.
+     *
+     * This is the only mode that can carry more series than the palette has
+     * slots, which is why the palette was extended to eleven validated hues
+     * rather than cycled. `combine` opts out of the shared panel's faceting
+     * fallback; the legend toggle is opted into separately so ROOM TEMP & RH,
+     * which shares this panel, keeps its current display-only legend.
+     */
     return buildHistoryChartPanel({
-        title: "DAILY ENERGY USAGE — " + category + " (" + days.length
-            + (days.length === 1 ? " day" : " days") + ")",
-        meta: (data.from || "--") + " to " + (data.to || "--")
-            + " — " + series.length + " channels, one panel each",
+        title: "DAILY ENERGY USAGE — ALL " + category + " (" + days.length + dayWord + ")",
+        meta: span + " — " + series.length + " channels on one shared scale (kWh)",
         series: series,
         note: note,
+        combine: true,
+        legendToggle: true,
         emptyText: "No daily usage to chart for this filter.",
-        options: {
-            unit: "kWh",
-            axisLabel: formatAxisDate,
-            tipTitle: label => label
-        }
+        options: energyChartOptions()
     });
+}
+
+/*
+ * Shared chart options for all three ENERGY modes.
+ *
+ * `padFraction` is what switches on adaptive scaling in the geometry (a caller
+ * passing neither it nor `autoScale` gets the plain data range), so every mode
+ * gets a padded, outward-snapped band that keeps the extreme lines off the
+ * frame and can never clip an outlier.
+ *
+ * The tick target is 6, not the facet path's 2, and `preferredSteps` lists the
+ * steps that read cleanly for energy in kWh — 50/100/200/250/500 and their
+ * powers-of-ten relatives. A preferred step is only taken when it leaves a
+ * legible number of intervals, so a narrow range falls back to the general
+ * ladder rather than collapsing to one or two giant intervals.
+ */
+function energyChartOptions() {
+    return {
+        unit: "kWh",
+        axisLabel: formatAxisDate,
+        tipTitle: label => label,
+        padFraction: 0.06,
+        tickTarget: 6,
+        preferredSteps: [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000],
+        /*
+         * Daily usage is a non-negative quantity, so the axis is floored at 0
+         * rather than padded below it. Without this a 0-858 channel is drawn on
+         * a -200..1000 axis, which labels negative energy.
+         */
+        nonNegative: true
+    };
 }
 
 /*
@@ -2411,11 +2607,71 @@ function exportEnergy(data) {
     downloadSpreadsheet(exportFilename("energy_" + category, data.from, data.to), xml);
 }
 
+/*
+ * APPLY and RESET both come through here.
+ *
+ * Category, equipment and view mode are NOT date fields, so RESET deliberately
+ * leaves them alone: it clears the date range, which is the only thing the
+ * RESET button has ever cleared on this page. Silently resetting the category
+ * to CT or the view to Overview as well would make one button do three jobs and
+ * lose the reader's place.
+ *
+ * Changing category always re-fetches, because the equipment list and the
+ * equipment selector are both derived from the response. Changing only the
+ * equipment or the view mode does not: both re-present data already in hand, so
+ * they re-render from cache instead of making the reader wait on a request that
+ * would return the same numbers — and, more importantly, so the page does not
+ * flash empty in between.
+ */
 function applyEnergyFilter(inputs, isReset) {
-    historyFilters.ENERGY.category = inputs.category.value;
-    historyFilters.ENERGY.from = isReset ? "" : inputs.from.value;
-    historyFilters.ENERGY.to = isReset ? "" : inputs.to.value;
+    const f = historyFilters.ENERGY;
+    const prev = { category: f.category, unit: f.unit, from: f.from, to: f.to };
+
+    f.category = inputs.category.value;
+    f.unit = inputs.unit.value;
+    f.from = isReset ? "" : inputs.from.value;
+    f.to = isReset ? "" : inputs.to.value;
+
+    /*
+     * A unit selection belongs to the category it was made in — CT 11 is not a
+     * CCP channel — so a category change drops it back to the combined view
+     * rather than carrying a stale selection across.
+     */
+    if (f.category !== prev.category) {
+        f.unit = ENERGY_ALL_UNITS;
+    }
+
+    /*
+     * DETAIL is about one piece of equipment, so it cannot be showing with no
+     * equipment chosen. Picking "Combined — All equipment" while DETAIL is the
+     * active mode therefore means the reader wants all of them, which is
+     * OVERVIEW — so the mode follows the selection rather than drawing an empty
+     * frame that reads as "this filter has no data".
+     */
+    if (f.unit === ENERGY_ALL_UNITS && f.view === ENERGY_VIEW_DETAIL) {
+        f.view = ENERGY_VIEW_OVERVIEW;
+    }
+
+    const dataUnchanged = f.category === prev.category
+        && f.from === prev.from && f.to === prev.to;
+
+    if (dataUnchanged && allData.ENERGY) {
+        renderEquipment();
+        return;
+    }
+
     safeLoadData();
+}
+
+/*
+ * Switch view mode in place. Re-renders from the data already loaded, so the
+ * three modes can be compared without a round trip.
+ */
+function setEnergyView(view) {
+    if (historyFilters.ENERGY.view === view) return;
+
+    historyFilters.ENERGY.view = view;
+    renderEquipment();
 }
 
 function buildEnergyUrl() {
@@ -3196,6 +3452,57 @@ function roomChartColor(roomKey) {
 }
 
 /*
+ * ENERGY carries eleven CT channels, nine CCP and nine CHWP, and the task
+ * requires every one of them as a distinct line on ONE combined chart — so the
+ * eight documented slots cannot cover it and the usual "facet instead of
+ * cycling" escape hatch is unavailable (facets are the Overview mode, not the
+ * combined one).
+ *
+ * Slots 1-8 are the documented order, unchanged. Slots 9-11 are DERIVED, by the
+ * same method as the ROOM extension above: candidates generated in OKLCH,
+ * filtered to the dark lightness band (L 0.48-0.67), the chroma floor (C>=0.10)
+ * and >=3:1 contrast on this panel's #161616 surface, then hill-climbed against
+ * the same CVD model.
+ *
+ * Verified with the skill's validator on the real surface:
+ *   node scripts/validate_palette.js "<11 slots>" --mode dark --surface "#161616"
+ *   -> ALL CHECKS PASS, no warnings. Worst adjacent pair CVD dE 8.4 (protan),
+ *      worst adjacent normal-vision dE 19.3.
+ *
+ * An earlier search reported that no clone-free eleven-hue set existed. That was
+ * a sampling artefact, not a real ceiling: a hill-climb that trades adjacent
+ * headroom against base-spread finds this trio, whose worst distance to ANY
+ * other slot is 16.3 - comfortably clear of a near-clone.
+ */
+const ENERGY_CHART_COLORS = HISTORY_SERIES_COLORS.concat(["#7136f5", "#835c00", "#c91fe8"]);
+
+/*
+ * Unit -> colour slot.
+ *
+ * Keyed by the unit's POSITION in the category's full inventory, not by the
+ * unit number and not by the order it appears in a chart. Three reasons:
+ *
+ *  - Unit numbers are not contiguous. CT is 1-6 then 9-13; indexing by number
+ *    would run off the end of an eleven-slot palette and wrap CT 12 onto CT 1's
+ *    colour, which is exactly the "two channels, one hue" failure the extended
+ *    palette exists to prevent.
+ *  - The inventory order is stable, so a channel's colour survives a legend
+ *    hide/show and a date-range change. An insertion-ordered map would hand out
+ *    a fresh slot on every rebuild and repaint the lines still on screen.
+ *  - Each category numbers its own units from its own inventory, so CT 1, CCP 1
+ *    and CHWP 1 all take slot 1 — the same convention the table's columns use,
+ *    where "CT 1" and "CCP 1" are both the first column.
+ *
+ * `units` is the category's FULL unit list from the API, never the subset being
+ * charted, so narrowing the view never shifts a colour.
+ */
+function energyChartColor(units, unit) {
+    const i = units.findIndex(u => String(u.unit) === String(unit));
+
+    return ENERGY_CHART_COLORS[(i < 0 ? 0 : i) % ENERGY_CHART_COLORS.length];
+}
+
+/*
  * Fixed, exact thresholds for the two ROOM charts. These are annotation only:
  * they colour nothing, alarm nothing and classify nothing — the panel merely
  * draws a line where the value is reached.
@@ -3401,6 +3708,24 @@ function historyChartGeometry(canvas, series, options) {
         }
 
         /*
+         * A quantity that cannot be negative must not be given a negative axis.
+         *
+         * Daily kWh usage is always >= 0, but the padding above is symmetric, so
+         * a channel whose minimum is 0 gets its band pushed below zero — and
+         * since the snap then rounds OUTWARD to a whole step, a 0-858 channel
+         * with a 200 step lands on -200..1000. That draws negative energy on the
+         * axis and wastes a fifth of the plot on a range that cannot occur.
+         *
+         * The floor is applied BEFORE the step is chosen and the bounds snapped,
+         * so 0 stays an exact multiple of the step and the top gridline still
+         * lands on the frame. Clamping after the snap would break that.
+         */
+        if (opts.nonNegative === true) {
+            if (min < 0) min = 0;
+            if (max <= min) max = min + 1;
+        }
+
+        /*
          * Snap the padded band outward to whole multiples of the tick step, so
          * the top and bottom gridlines land exactly on the plot frame instead
          * of floating just inside it. Outward only: the bounds can move away
@@ -3570,10 +3895,16 @@ function drawHistoryChart(canvas, series, options) {
     /*
      * The step comes back from the geometry, which chose it to snap the bounds.
      * A facet is drawn a third of the width, so its labels are given more room
-     * by asking for fewer intervals; the step preference is unchanged.
+     * by asking for fewer intervals; the step preference is unchanged. An
+     * explicit `tickTarget` overrides that default — a facet that carries a real
+     * axis needs real ticks, and two is what left the ENERGY plots labelled only
+     * at the bottom. When the geometry pinned a step, that step governs and this
+     * count is not consulted at all.
      */
-    const ticks = historyAxisTicks(min, max, opts.compact ? 2 : 5,
-        geo.step || opts.yStep);
+    const tickTarget = Number.isFinite(opts.tickTarget)
+        ? opts.tickTarget
+        : (opts.compact ? 2 : 5);
+    const ticks = historyAxisTicks(min, max, tickTarget, geo.step || opts.yStep);
 
     /* Recessive chart chrome: solid hairlines one step off the surface. */
     ctx.lineWidth = 1;
@@ -3837,6 +4168,20 @@ function attachHistoryChartHover(canvas, series, options) {
 
     const leave = () => { tip.style.display = "none"; };
 
+    /*
+     * Replace rather than accumulate. A panel can now be redrawn without being
+     * rebuilt - the ENERGY legend toggles a series on and off in place - and
+     * stacking a second listener per redraw would leave stale closures holding
+     * a superseded geometry, so a hover could report the previous filter's
+     * values.
+     */
+    if (canvas.__historyHover) {
+        canvas.removeEventListener("mousemove", canvas.__historyHover.move);
+        canvas.removeEventListener("mouseleave", canvas.__historyHover.leave);
+    }
+
+    canvas.__historyHover = { move, leave };
+
     canvas.addEventListener("mousemove", move);
     canvas.addEventListener("mouseleave", leave);
 }
@@ -3899,7 +4244,7 @@ function buildHistoryChartPanel(config) {
      */
     const visible = config.series.filter(s => s.points.some(p => !isMissingValue(p.value)));
 
-    if (!config.combine && visible.length > HISTORY_SERIES_COLORS.length) {
+    if (config.forceFacets || (!config.combine && visible.length > HISTORY_SERIES_COLORS.length)) {
         return buildHistoryFacets(panel, config, visible);
     }
 
@@ -3913,7 +4258,19 @@ function buildHistoryChartPanel(config) {
     /*
      * A legend is shown only for two or more series. One series needs no
      * legend box — the panel title already names what is plotted.
+     *
+     * When `config.legendToggle` is set the legend becomes the series control:
+     * clicking an entry hides or shows that one line, and the axis is re-derived
+     * from whatever remains on screen. The flag is opt-in because this panel is
+     * shared with ROOM TEMP & RH, whose legend stays exactly as it was.
+     *
+     * The hidden set is keyed by series NAME, not index: the same panel is
+     * rebuilt on every filter change and the series array can be reordered or
+     * shortened, and an index-keyed set would hide a different channel after a
+     * re-render.
      */
+    const hidden = new Set();
+
     if (visible.length >= 2) {
         const legend = document.createElement("div");
         legend.className = "history-chart-legend";
@@ -3930,6 +4287,40 @@ function buildHistoryChartPanel(config) {
             const txt = document.createElement("span");
             txt.textContent = s.name;
             item.appendChild(txt);
+
+            if (config.legendToggle) {
+                item.classList.add("is-toggleable");
+                item.setAttribute("role", "button");
+                item.setAttribute("tabindex", "0");
+
+                const itemKey = s.name;
+
+                const toggle = () => {
+                    /*
+                     * Never hide the last line. An empty plot with a live legend
+                     * reads as "this filter has no data", which is a different
+                     * and false statement — so the final visible series stays.
+                     */
+                    if (hidden.has(itemKey)) {
+                        hidden.delete(itemKey);
+                    } else if (visible.length - hidden.size > 1) {
+                        hidden.add(itemKey);
+                    }
+
+                    item.classList.toggle("is-hidden", hidden.has(itemKey));
+                    item.setAttribute("aria-pressed", hidden.has(itemKey) ? "false" : "true");
+                    redraw();
+                };
+
+                item.setAttribute("aria-pressed", "true");
+                item.addEventListener("click", toggle);
+                item.addEventListener("keydown", ev => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                        ev.preventDefault();
+                        toggle();
+                    }
+                });
+            }
 
             legend.appendChild(item);
         });
@@ -3949,15 +4340,22 @@ function buildHistoryChartPanel(config) {
     /*
      * Draw after layout so the canvas has a real width. getBoundingClientRect
      * inside a 0-height parent would otherwise size the plot to nothing.
+     *
+     * `redraw` is what the legend calls: it re-derives the plot from the series
+     * still shown, so hiding a line rescales the axis to the lines that remain
+     * instead of leaving them squashed into the corner of a range set by a line
+     * no longer on screen. It is deliberately the same function the resize path
+     * uses, so both go through one code path.
      */
-    const render = () => {
-        const geo = drawHistoryChart(canvas, config.series, config.options || {});
+    const redraw = () => {
+        const shown = config.series.filter(s => !hidden.has(s.name));
+        const geo = drawHistoryChart(canvas, shown, config.options || {});
         canvas.__historyGeo = geo;
-        if (geo) attachHistoryChartHover(canvas, config.series, config.options || {});
+        if (geo) attachHistoryChartHover(canvas, shown, config.options || {});
     };
 
-    requestAnimationFrame(render);
-    registerHistoryChartResize(canvases, render);
+    requestAnimationFrame(redraw);
+    registerHistoryChartResize(canvases, redraw);
 
     return panel;
 }
@@ -3967,23 +4365,45 @@ function buildHistoryChartPanel(config) {
  * facet is its own canvas with its own title, all sharing ONE y-scale so the
  * panels stay comparable — separate scales would make a flat room look as
  * volatile as a swinging one.
+ *
+ * The shared band is normally computed here from the visible series. A caller
+ * may instead pin it with `config.facetRange`, which ENERGY's Overview mode does
+ * so the band can start at 0 (usage is a quantity, so a zero base is what makes
+ * the panels comparable at all). The pinned range is also the natural place to
+ * put that zero base: a facet is a fixed 116px tall, so a zero-based band on a
+ * per-facet scale would collapse an all-zero channel to a degenerate 0-1 axis
+ * and stack its ticks on top of each other.
  */
 function buildHistoryFacets(panel, config, visible) {
-    /* The shared band spans every visible series. */
     let yMin = Infinity;
     let yMax = -Infinity;
 
-    visible.forEach(s => s.points.forEach(p => {
-        if (isMissingValue(p.value)) return;
-        if (p.value < yMin) yMin = p.value;
-        if (p.value > yMax) yMax = p.value;
-    }));
+    if (config.facetRange && Number.isFinite(config.facetRange.min)
+        && Number.isFinite(config.facetRange.max)) {
+        yMin = config.facetRange.min;
+        yMax = config.facetRange.max;
+    } else {
+        visible.forEach(s => s.points.forEach(p => {
+            if (isMissingValue(p.value)) return;
+            if (p.value < yMin) yMin = p.value;
+            if (p.value > yMax) yMax = p.value;
+        }));
 
-    if (!Number.isFinite(yMin)) { yMin = 0; yMax = 1; }
-    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+        if (!Number.isFinite(yMin)) { yMin = 0; yMax = 1; }
+        if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    }
 
     const grid = document.createElement("div");
     grid.className = "history-chart-facets";
+
+    /*
+     * A fixed column count, when asked for, instead of the stylesheet's
+     * auto-fit. Eleven CT channels land as four tidy rows of three rather than
+     * a ragged last row, which keeps the panels the same width as each other.
+     */
+    if (Number.isFinite(config.facetColumns) && config.facetColumns > 0) {
+        grid.style.gridTemplateColumns = "repeat(" + config.facetColumns + ", minmax(0, 1fr))";
+    }
 
     const canvases = [];
     const renders = [];
@@ -4012,9 +4432,20 @@ function buildHistoryFacets(panel, config, visible) {
             const opts = Object.assign({}, config.options || {}, {
                 compact: true,
                 hideAxisLabels: true,
+                /*
+                 * The facet path normally asks for two ticks. That is what left
+                 * every ENERGY plot with only its bottom tick labelled — "0" and
+                 * "100" across a 0-152 band, "0" and "500" across 0-888 — so the
+                 * caller can raise the count, and Overview does.
+                 */
+                tickTarget: Number.isFinite(config.facetTickTarget)
+                    ? config.facetTickTarget
+                    : 2,
+                /* The shared band, pinned so every facet reads the same scale. */
                 yMin: yMin,
                 yMax: yMax
             });
+
             const geo = drawHistoryChart(canvas, [s], opts);
             canvas.__historyGeo = geo;
             if (geo) attachHistoryChartHover(canvas, [s], opts);

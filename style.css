@@ -615,6 +615,28 @@ footer {
         overflow-y: auto;
     }
 
+    /*
+     * ENERGY, but only while its hybrid chart is on screen.
+     *
+     * The rule above is scoped away from .history-page precisely because ENERGY
+     * emits that class, and ENERGY's chartless page was already reachable
+     * without a scroll. But the hybrid view adds a mode switch and a taller
+     * chart area, and in the 1600-2499px band html/body are pinned to exactly
+     * the viewport height and clipped — so with Overview's eleven panels open,
+     * the table below them became unreachable, and ENERGY's table owns only an
+     * internal scroll, not a page scroll.
+     *
+     * Scoping to .history-chart-stack as well as .history-page is what keeps
+     * this from being a blanket change: the class is emitted ONLY when a chart
+     * is actually drawn, so ENERGY's no-chart page, and every other .history-page
+     * (the AHU history views), keep the clip they have always had.
+     */
+    html:has(.history-page .history-chart-stack),
+    body:has(.history-page .history-chart-stack) {
+        height: auto;
+        overflow-y: auto;
+    }
+
     .topbar {
         height: 50px;
         padding: 6px 20px;
@@ -2085,6 +2107,56 @@ footer {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+}
+
+/*
+ * ENERGY's Combined mode makes each legend entry a show/hide control. Opted
+ * into per panel, so ROOM TEMP & RH's legend stays a plain display list.
+ */
+.history-chart-legend-item.is-toggleable {
+    cursor: pointer;
+    user-select: none;
+    padding: 1px 4px;
+    margin: -1px -4px;
+    border-radius: 3px;
+}
+
+.history-chart-legend-item.is-toggleable:hover {
+    background: #242424;
+}
+
+.history-chart-legend-item.is-toggleable:focus-visible {
+    outline: 2px solid #3987e5;
+    outline-offset: 1px;
+}
+
+/*
+ * A hidden series is struck through and dimmed rather than removed, so the
+ * entry stays where it was and the reader can find it again. Its swatch keeps
+ * the series colour: the colour still means that channel, it is just not drawn.
+ */
+.history-chart-legend-item.is-hidden {
+    opacity: .45;
+    text-decoration: line-through;
+}
+
+/*
+ * The per-facet column count is set inline by the ENERGY Overview mode; these
+ * breakpoints win over it, because a fixed three-across is unreadable once the
+ * viewport is narrow enough that each panel would be a sliver.
+ */
+@media (max-width: 1100px) {
+
+    .history-chart-facets {
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .history-chart-facets {
+        grid-template-columns: 1fr !important;
+    }
 }
 
 /* The swatch carries the series colour; the text stays in ink tokens. */
