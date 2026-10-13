@@ -2097,6 +2097,12 @@ function buildFilterBar(defs, values, onApply) {
         onApply(inputs, true);
     });
     pageFilters.appendChild(reset);
+
+    /*
+     * Returned so a page can append its own controls (CHART / EXPORT) to the
+     * same bar rather than introducing a second one.
+     */
+    return pageFilters;
 }
 
 function filterNotice(available) {
@@ -2210,7 +2216,7 @@ function renderEnergy() {
 
     unitCount.textContent = days.length + (days.length === 1 ? " day" : " days");
 
-    buildFilterBar([
+    const bar = buildFilterBar([
         {
             type: "select",
             name: "category",
@@ -2221,6 +2227,11 @@ function renderEnergy() {
         { type: "date", name: "to", label: "To" }
     ], historyFilters.ENERGY, applyEnergyFilter);
 
+    appendHistoryButtons(bar, {
+        onToggle: () => {},
+        onExport: () => exportEnergy(data)
+    });
+
     const page = document.createElement("div");
     page.className = "history-page";
 
@@ -2230,6 +2241,15 @@ function renderEnergy() {
         + " Showing " + (data.from || "--") + " to " + (data.to || "--")
         + " — daily usage in kWh.";
     page.appendChild(notice);
+
+    /*
+     * The chart sits directly under the notice, above the table. Rendered
+     * oldest-first so time runs left to right, while the table keeps its own
+     * newest-first order.
+     */
+    if (showChart && units.length && days.length) {
+        page.appendChild(buildEnergyChart(data));
+    }
 
     if (!units.length) {
         const empty = document.createElement("div");
@@ -2289,6 +2309,106 @@ function renderEnergy() {
     }));
 
     grid.appendChild(page);
+
+    /* Measure only once the table is in the document. */
+    syncHistoryTableOffset();
+}
+
+/*
+ * ENERGY chart: one line per unit, over the same days and the same `usage`
+ * values the table's columns show. Rendered oldest-first so time reads left to
+ * right (the table stays newest-first).
+ *
+ * A null usage means "not derivable" (no previous day, or a meter reset). It
+ * is left as a gap in the line and counted in the note — never plotted as 0,
+ * which would invent a real reading of zero.
+ */
+function buildEnergyChart(data) {
+    const units = data.units || [];
+    const days = (data.days || []).slice().reverse();
+    const category = data.category || "CT";
+
+    /*
+     * Colour is keyed to the unit's identity, so hiding or adding a unit never
+     * repaints the others. There are more channels than palette slots, so the
+     * panel renders them as small multiples — one facet each, same colours.
+     */
+    const series = units.map((u, i) => ({
+        name: category + " " + u.unit,
+        color: HISTORY_SERIES_COLORS[i % HISTORY_SERIES_COLORS.length],
+        points: days.map(day => {
+            const v = (day.values || {})[String(u.unit)] || {};
+            return {
+                label: day.date,
+                full: day.date,
+                value: isMissingValue(v.usage) ? null : Number(v.usage)
+            };
+        })
+    }));
+
+    let missing = 0;
+
+    series.forEach(s => s.points.forEach(p => {
+        if (isMissingValue(p.value)) missing++;
+    }));
+
+    const note = missing
+        ? missing + " of " + (series.length * days.length)
+          + " readings have no derivable usage and are left as gaps (not plotted as 0)."
+        : "All " + (series.length * days.length) + " readings have a derivable usage.";
+
+    return buildHistoryChartPanel({
+        title: "DAILY ENERGY USAGE — " + category + " (" + days.length
+            + (days.length === 1 ? " day" : " days") + ")",
+        meta: (data.from || "--") + " to " + (data.to || "--")
+            + " — " + series.length + " channels, one panel each",
+        series: series,
+        note: note,
+        emptyText: "No daily usage to chart for this filter.",
+        options: {
+            unit: "kWh",
+            axisLabel: formatAxisDate,
+            tipTitle: label => label
+        }
+    });
+}
+
+/*
+ * Export exactly what the table shows: same days, same columns, same
+ * newest-first order, same numbers. Nulls are written as empty cells so a
+ * missing reading is not silently exported as 0.
+ */
+function exportEnergy(data) {
+    const units = data.units || [];
+    const days = data.days || [];
+    const category = data.category || "CT";
+
+    const columns = ["Date"];
+
+    units.forEach(u => columns.push(category + " " + u.unit + " (kWh)"));
+
+    columns.push("Usage Sum (kWh)");
+
+    const rows = days.map(day => {
+        const row = [day.date];
+
+        units.forEach(u => {
+            const v = (day.values || {})[String(u.unit)] || {};
+            row.push(isMissingValue(v.usage) ? null : Number(v.usage));
+        });
+
+        row.push(isMissingValue(day.sum_usage) ? null : Number(day.sum_usage));
+
+        return row;
+    });
+
+    const xml = buildSpreadsheetXml(
+        "ENERGY " + category,
+        columns,
+        rows
+    );
+
+    downloadSpreadsheet(exportFilename("energy_" + category, data.from, data.to), xml);
 }
 
 function applyEnergyFilter(inputs, isReset) {
@@ -2343,7 +2463,7 @@ function renderRoomHourly() {
 
     unitCount.textContent = hours.length + (hours.length === 1 ? " hour" : " hours");
 
-    buildFilterBar([
+    const bar = buildFilterBar([
         {
             type: "select",
             name: "metric",
@@ -2356,6 +2476,11 @@ function renderRoomHourly() {
         { type: "date", name: "from", label: "From" },
         { type: "date", name: "to", label: "To" }
     ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
+
+    appendHistoryButtons(bar, {
+        onToggle: () => {},
+        onExport: () => exportTempRh(data)
+    });
 
     const page = document.createElement("div");
     page.className = "history-page";
@@ -2375,6 +2500,10 @@ function renderRoomHourly() {
         page.appendChild(empty);
         grid.appendChild(page);
         return;
+    }
+
+    if (showChart) {
+        page.appendChild(buildRoomCharts(data, allData.TEMP_RH_HOURLY_PEER));
     }
 
     const columns = [{ label: "Hour" }];
@@ -2425,6 +2554,185 @@ function renderRoomHourly() {
     }));
 
     grid.appendChild(page);
+
+    /* Measure only once the table is in the document. */
+    syncHistoryTableOffset();
+}
+
+/*
+ * One combined chart for one metric: every room is a line, all sharing the
+ * hours the table is showing.
+ *
+ * The series list is built from the rooms the API reports for the range, and
+ * each line is keyed to the room's own key — so a room keeps its colour when
+ * the range narrows and the same room is the same colour in both charts.
+ *
+ * A missing reading stays null. The chart geometry skips nulls, which leaves a
+ * real gap in the line; it is never coerced to 0, which would draw a plunge to
+ * the baseline and read as a genuine measurement.
+ */
+function buildRoomChartPanel(data, metricKey, panelId) {
+    const rooms = data.rooms || [];
+    const hours = (data.hours || []).slice().reverse();
+    const isRh = metricKey === "rh";
+    /*
+     * The API reports the temperature unit as plain "C". The chart is asked for
+     * degrees, so the display unit is mapped here — in the chart only. The
+     * table, the notice and the export keep reading `data.unit`, so nothing
+     * outside this panel changes spelling.
+     */
+    const unit = isRh ? (data.unit || "%RH") : "°C";
+    const ref = ROOM_CHART_REFERENCE[isRh ? "rh" : "temp"];
+    const scale = ROOM_CHART_SCALE[isRh ? "rh" : "temp"];
+
+    const series = rooms.map(room => ({
+        name: room.label,
+        color: roomChartColor(room.key),
+        points: hours.map(hour => {
+            const v = (hour.values || {})[room.key];
+            return {
+                label: hour.recorded_at,
+                full: hour.recorded_at,
+                value: isMissingValue(v) ? null : Number(v)
+            };
+        })
+    }));
+
+    let missing = 0;
+
+    series.forEach(s => s.points.forEach(p => {
+        if (isMissingValue(p.value)) missing++;
+    }));
+
+    const total = series.length * hours.length;
+
+    const note = missing
+        ? missing + " of " + total
+          + " readings are missing and are left as gaps (not plotted as 0)."
+        : "All " + total + " readings are present.";
+
+    return buildHistoryChartPanel({
+        panelId: panelId,
+        title: (isRh ? "HUMIDITY" : "TEMPERATURE") + " — ALL ROOMS ("
+            + hours.length + (hours.length === 1 ? " hour" : " hours") + ")",
+        meta: (data.from || "--") + " to " + (data.to || "--")
+            + " — " + series.length + " rooms, reference line at " + ref.label,
+        series: series,
+        note: note,
+        combine: true,
+        emptyText: "No hourly readings to chart for this filter.",
+        options: {
+            unit: unit,
+            axisLabel: formatAxisHour,
+            tipTitle: label => formatHour(label),
+            /*
+             * Fixed 0-50 °C / 0-100 %RH bands. `unit` above is the chart's own
+             * spelling and does not feed the tooltip; the tooltip header unit
+             * still comes from `data.unit`, so it is unchanged.
+             */
+            yMin: scale.min,
+            yMax: scale.max,
+            yStep: scale.step,
+            referenceLines: [{ value: ref.value, label: ref.label }]
+        }
+    });
+}
+
+/*
+ * ROOM TEMP & RH charts: exactly two panels, always Temperature then Humidity,
+ * regardless of which metric the filter bar has selected. The filter still
+ * drives the table and the export (which remain single-metric), and it still
+ * drives the date range both charts are drawn from.
+ *
+ * The order is fixed rather than led by the selected metric so the pair never
+ * swaps places: on a wall display the reader learns "top is temperature" once
+ * and it stays true.
+ *
+ * The peer metric is a separate fetch, so it can be absent — after a failed
+ * load, or on the very first paint. That case renders the selected metric's
+ * chart alone and says why, rather than drawing an empty frame that would look
+ * like "this room has no data".
+ */
+function buildRoomCharts(primary, peer) {
+    const wrap = document.createElement("div");
+    wrap.className = "history-chart-stack";
+
+    const primaryMetric = primary && primary.metric === "rh" ? "rh" : "temp";
+    const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
+
+    const hasPeer = peer && Array.isArray(peer.hours) && peer.hours.length > 0;
+
+    if (hasPeer) {
+        const byMetric = {};
+        byMetric[primaryMetric] = primary;
+        byMetric[peerMetric] = peer;
+
+        /* Fixed order: Temperature first, then Humidity. */
+        ["temp", "rh"].forEach(metricKey => {
+            wrap.appendChild(buildRoomChartPanel(byMetric[metricKey], metricKey, metricKey));
+        });
+
+        return wrap;
+    }
+
+    wrap.appendChild(buildRoomChartPanel(primary, primaryMetric, primaryMetric));
+
+    const warn = document.createElement("div");
+    warn.className = "history-chart-note";
+    warn.textContent = "The " + (peerMetric === "rh" ? "humidity" : "temperature")
+        + " chart is unavailable: that reading could not be loaded for this range.";
+    wrap.appendChild(warn);
+
+    return wrap;
+}
+
+/*
+ * Export exactly what the table shows: same hours, same room columns, same
+ * newest-first order, same timestamp rendering. "Reading at" is written with
+ * the same formatter the table uses (a spread is shown as "min … max" rather
+ * than silently collapsed), so every cell in the file matches the screen.
+ */
+function exportTempRh(data) {
+    const rooms = data.rooms || [];
+    const hours = data.hours || [];
+    const unit = data.unit || (data.metric === "rh" ? "%RH" : "C");
+
+    const columns = ["Hour"];
+
+    rooms.forEach(r => columns.push(r.label + " (" + unit + ")"));
+
+    columns.push("Reading at");
+
+    const rows = hours.map(hour => {
+        const row = [formatHour(hour.recorded_at)];
+
+        rooms.forEach(room => {
+            const v = (hour.values || {})[room.key];
+            row.push(isMissingValue(v) ? null : Number(v));
+        });
+
+        const min = hour.read_at_min;
+        const max = hour.read_at_max;
+        let readAt = "";
+
+        if (min && max) {
+            readAt = min === max
+                ? formatHour(min)
+                : formatHour(min) + " … " + formatHour(max);
+        }
+
+        row.push(readAt);
+
+        return row;
+    });
+
+    const xml = buildSpreadsheetXml(
+        "TEMP RH " + (data.metric === "rh" ? "HUMIDITY" : "TEMPERATURE"),
+        columns,
+        rows
+    );
+
+    downloadSpreadsheet(exportFilename("temp_rh_" + (data.metric || "temp"), data.from, data.to), xml);
 }
 
 function applyTempRhFilter(inputs, isReset) {
@@ -2434,9 +2742,16 @@ function applyTempRhFilter(inputs, isReset) {
     safeLoadData();
 }
 
-function buildTempRhHourlyUrl() {
+/*
+ * The ROOM page needs BOTH metrics at once — one chart each — but the endpoint
+ * serves one metric per request, so the caller may ask for the other half
+ * explicitly. Everything else about the query (the date range, the cache
+ * buster) stays identical, so the two responses describe the same hours.
+ */
+function buildTempRhHourlyUrl(metricOverride) {
     const f = historyFilters.TEMP_RH_HOURLY;
-    let url = TEMP_RH_HOURLY_API_URL + "?metric=" + encodeURIComponent(f.metric);
+    const metric = metricOverride || f.metric;
+    let url = TEMP_RH_HOURLY_API_URL + "?metric=" + encodeURIComponent(metric);
 
     if (f.from) {
         url += "&from=" + encodeURIComponent(f.from);
@@ -2574,7 +2889,29 @@ async function loadData() {
          * api_temp_rh_hourly.php, the live cards read api_room.php below.
          */
         if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) {
-            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl());
+            /*
+             * The table and the export follow the selected metric; the charts
+             * show BOTH. The peer metric is fetched over the identical date
+             * range so the two charts describe the same hours.
+             *
+             * The selected metric is fatal — it drives the table, so a failure
+             * there is a real load failure. The peer is NOT: it feeds one chart,
+             * and letting it blank the whole page would mean a single flaky
+             * request costs the reader the table as well. It degrades to one
+             * chart plus a note saying why.
+             */
+            const selectedMetric = historyFilters.TEMP_RH_HOURLY.metric;
+            const peerMetric = selectedMetric === "rh" ? "temp" : "rh";
+
+            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl(selectedMetric));
+
+            try {
+                allData.TEMP_RH_HOURLY_PEER = await loadHistoryPage(buildTempRhHourlyUrl(peerMetric));
+            } catch (peerError) {
+                allData.TEMP_RH_HOURLY_PEER = null;
+                console.warn("HVAC peer metric unavailable:", peerError);
+            }
+
             setConnection(true);
             renderRoomTempRh();
             lastUpdate.textContent = "Hourly history: " + (allData.TEMP_RH_HOURLY.from || "--")
@@ -2664,6 +3001,14 @@ document.querySelectorAll(".nav-button").forEach(button => {
         button.classList.add("active");
 
         currentEquipment = button.dataset.equipment;
+
+        /*
+         * The chart toggle is per-visit: leaving a history page closes its
+         * chart, so returning to it shows the page as it was before. Without
+         * this the panel would reappear unrequested on the next visit.
+         */
+        showChart = false;
+
         renderEquipment();
         safeLoadData();
 
@@ -2737,6 +3082,1034 @@ window.addEventListener("resize", () => {
     clearTimeout(efFitTimer);
     efFitTimer = setTimeout(fitExhaustFanToViewport, 120);
 });
+
+/* =========================================================
+   SHARED CELL FORMATTERS (table + chart + export)
+   =========================================================
+
+   The table, the chart's tooltip and the exported file all have to show the
+   same number for the same reading. They therefore share these formatters
+   rather than each formatting independently, so a value can never disagree
+   with its own export.
+   ========================================================= */
+
+/*
+ * formatNumber() renders 87 as "87.0", which is right for a table cell but
+ * would turn a whole-number y-axis tick into "100.0". Ticks and tooltips drop
+ * the decimal when the value is whole.
+ */
+function formatCompactNumber(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return "--";
+    }
+
+    const n = Number(value);
+
+    return Number.isInteger(n) ? String(n) : formatNumber(n, 1);
+}
+
+/*
+ * The x-axis label. ENERGY rows are days, so the date alone is the identity;
+ * the hourly table keeps the hour. Shortened so 11 tick labels fit at 320px
+ * without colliding.
+ */
+function formatAxisDate(value) {
+    const s = String(value || "");
+
+    return s.length >= 10 ? s.slice(5, 10) : s;
+}
+
+function formatAxisHour(value) {
+    const s = String(value || "").replace("T", " ");
+
+    return s.length >= 13 ? s.slice(11, 13) + ":00" : s;
+}
+
+/* Detect the honesty note behind a value: null means "no reading", not zero. */
+function isMissingValue(value) {
+    return value === null || value === undefined || value === "";
+}
+
+/* =========================================================
+   HISTORY CHARTS
+   =========================================================
+
+   One canvas renderer serves both history pages. It is written by hand rather
+   than with a library: the app loads no JS dependencies at all, and a single
+   line chart does not justify introducing one (Chart.js alone is ~200KB).
+
+   Every number plotted comes from the same `allData` payload the table is
+   built from, through the same formatters, so the chart and the table can
+   never disagree.
+
+   Colour: the categorical slot-1 blue (#3987e5) for a single series, and the
+   documented dark categorical order for the ENERGY multi-series view. A
+   line's colour is keyed to its series identity (room key / unit number), not
+   to its position in the array, so filtering never repaints the survivors.
+   Validated against this panel's #161616 surface (see the task report).
+   ========================================================= */
+
+/* Documented dark categorical slots, in fixed order. Never cycled or generated. */
+const HISTORY_SERIES_COLORS = [
+    "#3987e5", "#d95926", "#199e70", "#c98500",
+    "#d55181", "#008300", "#9085e9", "#e66767"
+];
+
+/*
+ * ROOM TEMP & RH carries ten rooms, and the task requires every one of them as
+ * a distinct line on ONE chart — so faceting is not available as the escape
+ * hatch the eight-slot palette normally uses, and cycling would paint two rooms
+ * the same colour.
+ *
+ * Slots 1-8 are the documented order above, unchanged. Slots 9-10 are DERIVED,
+ * not from the documented palette: candidate hues were generated in OKLCH,
+ * filtered to the dark lightness band (L 0.48-0.67), the chroma floor (C>=0.10)
+ * and >=3:1 contrast on #161616, then scored with the same CVD model the
+ * documented slots are validated against. The resulting ten-slot order passes
+ * every adjacent-pair gate - worst CVD dE 8.4 (protan), worst normal-vision
+ * dE 19.3. This deviation from the "documented palette only" rule is forced by
+ * the task's ten-series, two-chart requirement and is reported as such.
+ */
+const ROOM_CHART_COLORS = HISTORY_SERIES_COLORS.concat(["#62891b", "#6274c1"]);
+
+/*
+ * Room -> colour slot, assigned on first sight and kept for the life of the
+ * page. Colour follows the room's identity, not its position in the current
+ * room list, so narrowing the date range never repaints the rooms that remain,
+ * and the Temperature and Humidity charts always agree on a room's colour.
+ *
+ * Ten rooms fill ten slots exactly. An eleventh room would wrap onto slot 1,
+ * which is why the count is asserted in the panel note rather than left
+ * implicit.
+ */
+const ROOM_COLOR_SLOTS = new Map();
+
+function roomChartColor(roomKey) {
+    if (!ROOM_COLOR_SLOTS.has(roomKey)) {
+        ROOM_COLOR_SLOTS.set(roomKey, ROOM_COLOR_SLOTS.size % ROOM_CHART_COLORS.length);
+    }
+
+    return ROOM_CHART_COLORS[ROOM_COLOR_SLOTS.get(roomKey)];
+}
+
+/*
+ * Fixed, exact thresholds for the two ROOM charts. These are annotation only:
+ * they colour nothing, alarm nothing and classify nothing — the panel merely
+ * draws a line where the value is reached.
+ */
+const ROOM_CHART_REFERENCE = {
+    temp: { value: 30, label: "30 °C" },
+    rh:   { value: 65, label: "65 %RH" }
+};
+
+/*
+ * Fixed y-scales for the two ROOM charts, so a reading can be judged against
+ * the same grid on every date range, at every screen size, on every wall
+ * display. 0-50 °C by 5, and 0-100 %RH by 10.
+ *
+ * The bound is deliberately the instrument's range, not the data's: the whole
+ * band is meaningful for both metrics (a room at 0 °C or 100 %RH is a real
+ * reading, not a sentinel), so pinning it costs no resolution that matters and
+ * buys a scale that never moves. Both reference lines sit inside their band.
+ *
+ * `yMin`/`yMax`/`yStep` are read by historyChartGeometry and
+ * historyAxisTicks. Passing them also disables the two automatic range
+ * behaviours, which is correct here: the band no longer follows the readings,
+ * and a reference line no longer needs to widen a band it is already inside.
+ */
+const ROOM_CHART_SCALE = {
+    temp: { min: 0, max: 50, step: 5 },
+    rh:   { min: 0, max: 100, step: 10 }
+};
+
+const HISTORY_CHART = {
+    gridline: "#2c2c2a",
+    axis: "#383835",
+    muted: "#898781",
+    text: "#c3c2b7",
+    /*
+     * The reference line. The panel's primary ink, chosen by measurement over
+     * the app's other ink and status colours: it separates from all ten room
+     * colours (worst all-pairs dE 28.0 under CVD, 31.4 normal) and clears the
+     * 15.7:1 contrast mark on #161616. The muted grey and the status reds
+     * COLLIDE with room hues under CVD (dE 1.1 and 1.3) and are not usable here.
+     */
+    reference: "#f0efec"
+};
+
+/* Pad the x span so the first/last marker is not clipped by the plot edge. */
+const HISTORY_X_PAD = 10;
+const HISTORY_TOP_PAD = 10;
+const HISTORY_BOTTOM_PAD = 22;
+const HISTORY_LEFT_PAD = 54;
+const HISTORY_RIGHT_PAD = 14;
+
+/*
+ * Facets are drawn a third of the width, so the y-axis gutter is trimmed and
+ * only a few ticks are shown — at that size a full tick column would be wider
+ * than the plot it labels.
+ */
+const HISTORY_FACET_LEFT_PAD = 38;
+
+/*
+ * Normalise `options.referenceLines` into a list of { value, label }.
+ *
+ * Optional everywhere: ENERGY never passes it, so its charts are untouched.
+ * Anything that is not a finite number is dropped rather than coerced, so a
+ * bad caller cannot silently draw a line at 0.
+ */
+function historyReferenceLines(opts) {
+    const raw = opts && opts.referenceLines;
+
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+        .filter(r => r && Number.isFinite(Number(r.value)))
+        .map(r => ({
+            value: Number(r.value),
+            label: r.label === undefined ? String(r.value) : String(r.label)
+        }));
+}
+
+function historyChartGeometry(canvas, series, options) {
+    const opts = options || {};
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(160, Math.round(rect.width));
+    const h = Math.max(90, Math.round(rect.height));
+
+    /* Backing store at device resolution; CSS size stays as laid out. */
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const plot = {
+        left: opts.compact ? HISTORY_FACET_LEFT_PAD : HISTORY_LEFT_PAD,
+        right: w - HISTORY_RIGHT_PAD,
+        top: HISTORY_TOP_PAD,
+        /*
+         * A facet still draws its first/last x labels, so it needs the same
+         * label band as a full chart — trimming it here clips the text.
+         */
+        bottom: h - HISTORY_BOTTOM_PAD
+    };
+
+    let min = Infinity;
+    let max = -Infinity;
+
+    series.forEach(s => s.points.forEach(p => {
+        if (p.value === null || p.value === undefined) return;
+        if (p.value < min) min = p.value;
+        if (p.value > max) max = p.value;
+    }));
+
+    if (!Number.isFinite(min)) {
+        min = 0;
+        max = 1;
+    }
+
+    /*
+     * A shared scale across facets is what makes them comparable, so the
+     * caller can pin the range. Only fall back to the local range when it
+     * was not supplied.
+     */
+    if (Number.isFinite(opts.yMin)) min = opts.yMin;
+    if (Number.isFinite(opts.yMax)) max = opts.yMax;
+
+    /*
+     * A reference line has to be on screen to be a reference. When a narrow
+     * date range leaves the threshold outside the data band, the band is
+     * widened to reach it rather than letting the line vanish off-plot —
+     * an invisible 30 °C line would read as "no threshold here". Only an
+     * explicitly pinned range is left alone.
+     *
+     * A pinned range also means the band is the caller's fixed scale, and that
+     * scale must not depend on whether a reference line was passed: widening it
+     * would hand the same chart two different grids, one per call site.
+     */
+    const pinnedRange = Number.isFinite(opts.yMin) || Number.isFinite(opts.yMax);
+
+    if (!pinnedRange) {
+        historyReferenceLines(opts).forEach(ref => {
+            if (ref.value < min) min = ref.value;
+            if (ref.value > max) max = ref.value;
+        });
+    }
+
+    if (min === max) {
+        /* A flat series still needs a band, or every point sits on the edge. */
+        min -= 1;
+        max += 1;
+    }
+
+    const valueSpan = max - min;
+    const pointCount = series.length ? series[0].points.length : 1;
+
+    /*
+     * A single point has no span to interpolate across, so it is centred
+     * rather than left sitting on the y-axis.
+     */
+    const xAt = i => pointCount <= 1
+        ? (plot.left + plot.right) / 2
+        : plot.left + (plot.right - plot.left) * (i / (pointCount - 1));
+    const yAt = v => plot.bottom - (plot.bottom - plot.top) * ((v - min) / valueSpan);
+
+    return { ctx, w, h, plot, min, max, xAt, yAt, pointCount, dpr };
+}
+
+/*
+ * Axis ticks rounded to clean numbers.
+ *
+ * The step is chosen by how many ticks actually land inside the data range,
+ * not by the span alone. A span-derived step can fall almost entirely outside
+ * the range — a 25.6-37.8 band with a step of 10 leaves a single usable tick —
+ * which is unreadable, so every candidate step is tried and the one closest to
+ * the requested count (but never fewer than two) wins. Ticks are then built
+ * from the first one at or above `min`, so none are drawn outside the plot.
+ */
+function historyAxisTicks(min, max, target, step) {
+    const span = max - min;
+
+    if (!(span > 0)) return [min];
+
+    /*
+     * A caller can pin the step, for an axis that must read the same on every
+     * date range and every screen. Ticks are still built from the first
+     * multiple at or above `min`, so a pinned step can never place a tick
+     * outside the plot — the same guarantee the derived path below gives.
+     */
+    if (Number.isFinite(step) && step > 0) {
+        const first = Math.ceil(min / step - 1e-9) * step;
+        const ticks = [];
+
+        for (let v = first; v <= max + 1e-9; v += step) {
+            ticks.push(Number(v.toFixed(10)));
+        }
+
+        return ticks.length ? ticks : [min];
+    }
+
+    const goal = Math.max(2, target);
+    const mag = Math.pow(10, Math.floor(Math.log10(span / goal)));
+
+    let best = null;
+
+    [0.5, 1, 2, 2.5, 5, 10, 20].forEach(m => {
+        const step = m * mag;
+        const first = Math.ceil(min / step) * step;
+        const count = Math.floor((max - first) / step + 1e-9) + 1;
+
+        if (count < 2) return;
+
+        const score = Math.abs(count - goal);
+
+        if (best === null || score < best.score) best = { step, first, count, score };
+    });
+
+    /* Too narrow for any step to fit twice: label the ends rather than nothing. */
+    if (!best) return [min, max];
+
+    const ticks = [];
+
+    for (let i = 0; i < best.count; i++) {
+        ticks.push(Number((best.first + i * best.step).toFixed(10)));
+    }
+
+    return ticks;
+}
+
+/*
+ * Draw one chart. `series` is [{ name, color, points: [{ label, value, full }] }].
+ *
+ * A point whose value is null leaves a real gap in the line — the geometry
+ * simply skips it — so a missing reading reads as missing rather than as zero
+ * at the baseline.
+ */
+function drawHistoryChart(canvas, series, options) {
+    const opts = options || {};
+    const unit = opts.unit || "";
+    const visible = series.filter(s => s.points.some(p => !isMissingValue(p.value)));
+
+    if (!visible.length) {
+        return null;
+    }
+
+    const geo = historyChartGeometry(canvas, visible, opts);
+    const { ctx, plot, min, max, xAt, yAt, pointCount } = geo;
+
+    canvas.dataset.chartMin = String(min);
+    canvas.dataset.chartMax = String(max);
+
+    const ticks = historyAxisTicks(min, max, opts.compact ? 2 : 5, opts.yStep);
+
+    /* Recessive chart chrome: solid hairlines one step off the surface. */
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = HISTORY_CHART.gridline;
+    ctx.fillStyle = HISTORY_CHART.muted;
+    ctx.font = "10px Arial, Helvetica, sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+
+    ticks.forEach(t => {
+        const y = Math.round(yAt(t)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(plot.left, y);
+        ctx.lineTo(plot.right, y);
+        ctx.stroke();
+        ctx.fillText(formatCompactNumber(t), plot.left - 6, y);
+    });
+
+    /* Baseline is a step stronger than the gridlines. */
+    ctx.strokeStyle = HISTORY_CHART.axis;
+    ctx.beginPath();
+    ctx.moveTo(plot.left, Math.round(plot.bottom) + 0.5);
+    ctx.lineTo(plot.right, Math.round(plot.bottom) + 0.5);
+    ctx.stroke();
+
+    /*
+     * X labels: thinned so they never collide on a narrow screen. A facet
+     * shows the first and last tick only — its title carries the identity.
+     */
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = HISTORY_CHART.muted;
+
+    if (opts.hideAxisLabels) {
+        if (pointCount > 0) {
+            const first = opts.axisLabel
+                ? opts.axisLabel(visible[0].points[0].label)
+                : visible[0].points[0].label;
+            const last = opts.axisLabel
+                ? opts.axisLabel(visible[0].points[pointCount - 1].label)
+                : visible[0].points[pointCount - 1].label;
+            ctx.textAlign = "left";
+            ctx.fillText(first, plot.left, plot.bottom + 5);
+            ctx.textAlign = "right";
+            ctx.fillText(last, plot.right, plot.bottom + 5);
+        }
+    } else {
+        const stepX = Math.max(1, Math.ceil(pointCount / Math.max(2, Math.floor(geo.w / 78))));
+
+        visible[0].points.forEach((p, i) => {
+            if (i % stepX !== 0 && i !== pointCount - 1) return;
+            const label = opts.axisLabel ? opts.axisLabel(p.label) : p.label;
+            ctx.fillText(label, xAt(i), plot.bottom + 6);
+        });
+    }
+
+    /* Series, thinnest first so the loudest line ends on top. */
+    visible.forEach(s => {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = opts.compact ? 1.5 : 2;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+
+        let open = false;
+
+        s.points.forEach((p, i) => {
+            if (isMissingValue(p.value)) {
+                open = false;
+                return;
+            }
+
+            const x = xAt(i);
+            const y = yAt(p.value);
+
+            if (open) {
+                ctx.lineTo(x, y);
+            } else {
+                ctx.moveTo(x, y);
+                open = true;
+            }
+        });
+
+        ctx.stroke();
+    });
+
+    /*
+     * End markers: one per series, never one per point. A 2px surface ring
+     * keeps them legible where lines cross.
+     */
+    visible.forEach(s => {
+        for (let i = s.points.length - 1; i >= 0; i--) {
+            if (isMissingValue(s.points[i].value)) continue;
+
+            const x = xAt(i);
+            const y = yAt(s.points[i].value);
+
+            ctx.beginPath();
+            ctx.arc(x, y, opts.compact ? 3 : 4, 0, Math.PI * 2);
+            ctx.fillStyle = s.color;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#161616";
+            ctx.stroke();
+            break;
+        }
+    });
+
+    /*
+     * Reference lines are drawn AFTER the series and dashed on purpose.
+     *
+     * Underneath ten lines a solid rule would simply be painted over wherever
+     * it matters, so it goes on top; and it is dashed rather than solid so a
+     * room crossing the threshold stays visible through the gaps. The dash is
+     * what separates it from the gridlines, which are solid and recessive —
+     * dashing a gridline would be noise, dashing a real threshold is the
+     * signal.
+     */
+    historyReferenceLines(opts).forEach(ref => {
+        /* Skip a threshold that the plot band does not actually reach. */
+        if (ref.value < min || ref.value > max) return;
+
+        const y = Math.round(yAt(ref.value)) + 0.5;
+
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = HISTORY_CHART.reference;
+        ctx.beginPath();
+        ctx.moveTo(plot.left, y);
+        ctx.lineTo(plot.right, y);
+        ctx.stroke();
+        ctx.restore();
+
+        /*
+         * A label chip, so the value is read off the chart, not guessed.
+         *
+         * It sits at the LEFT edge, just inside the plot. The right edge is
+         * where every series carries its end marker, and a 14px chip there
+         * would cover one; the left edge is only line starts.
+         */
+        ctx.font = "10px Arial, Helvetica, sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+
+        const text = ref.label;
+        const tw = ctx.measureText(text).width;
+        const bx = plot.left + 3;
+        const by = y - 7;
+
+        ctx.fillStyle = HISTORY_CHART.reference;
+        ctx.fillRect(bx, by, tw + 8, 14);
+
+        ctx.fillStyle = "#161616";
+        ctx.fillText(text, bx + 4, y + 0.5);
+    });
+
+    /* Y-axis unit caption, so the scale is never ambiguous. */
+    if (unit && !opts.compact) {
+        ctx.save();
+        ctx.translate(12, (plot.top + plot.bottom) / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = HISTORY_CHART.muted;
+        ctx.font = "10px Arial, Helvetica, sans-serif";
+        ctx.fillText(unit, 0, 0);
+        ctx.restore();
+    }
+
+    return geo;
+}
+
+/*
+ * Tooltip. A crosshair picks the nearest x index rather than requiring the
+ * pointer to land on a 4px dot, so the hit target is a whole column.
+ */
+function attachHistoryChartHover(canvas, series, options) {
+    const geoState = canvas.__historyGeo;
+    if (!geoState) return;
+
+    const opts = options || {};
+    const visible = series.filter(s => s.points.some(p => !isMissingValue(p.value)));
+
+    if (!visible.length) return;
+
+    let tip = canvas.parentElement.querySelector(".history-chart-tooltip");
+
+    if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "history-chart-tooltip";
+        canvas.parentElement.appendChild(tip);
+    }
+
+    const move = ev => {
+        const rect = canvas.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        const points = visible[0].points;
+        const span = geoState.plot.right - geoState.plot.left;
+
+        let idx = 0;
+
+        if (points.length > 1 && span > 0) {
+            idx = Math.round((x - geoState.plot.left) / span * (points.length - 1));
+            idx = Math.max(0, Math.min(points.length - 1, idx));
+        }
+
+        const rows = visible.map(s => {
+            const p = s.points[idx] || {};
+            return {
+                name: s.name,
+                color: s.color,
+                value: formatCompactNumber(p.value),
+                missing: isMissingValue(p.value)
+            };
+        });
+
+        const head = opts.tipTitle
+            ? opts.tipTitle(points[idx] ? points[idx].label : "")
+            : (points[idx] ? points[idx].label : "");
+
+        tip.innerHTML = "";
+
+        const h = document.createElement("div");
+        h.className = "history-chart-tip-head";
+        h.textContent = head + (opts.unit ? "  (" + opts.unit + ")" : "");
+        tip.appendChild(h);
+
+        rows.forEach(r => {
+            const line = document.createElement("div");
+            line.className = "history-chart-tip-row";
+
+            const sw = document.createElement("span");
+            sw.className = "history-chart-swatch";
+            sw.style.background = r.missing ? "transparent" : r.color;
+            if (r.missing) sw.style.border = "1px solid " + HISTORY_CHART.muted;
+            line.appendChild(sw);
+
+            const nm = document.createElement("span");
+            nm.className = "history-chart-tip-name";
+            nm.textContent = r.name;
+            line.appendChild(nm);
+
+            const val = document.createElement("span");
+            val.className = "history-chart-tip-value";
+            val.textContent = r.missing ? "no reading" : r.value;
+            if (r.missing) val.style.color = HISTORY_CHART.muted;
+            line.appendChild(val);
+
+            tip.appendChild(line);
+        });
+
+        tip.style.display = "block";
+
+        /* Flip the tip to the other side of the crosshair near the right edge. */
+        const tipW = tip.offsetWidth;
+        const px = geoState.xAt(idx);
+        tip.style.left = (px + 14 + tipW > rect.width ? px - 14 - tipW : px + 14) + "px";
+        tip.style.top = "10px";
+    };
+
+    const leave = () => { tip.style.display = "none"; };
+
+    canvas.addEventListener("mousemove", move);
+    canvas.addEventListener("mouseleave", leave);
+}
+
+/* Tracked so a re-render replaces the previous resize handler instead of
+   stacking a new listener on every chart draw. */
+let historyChartResizeEntries = [];
+let historyChartResizePruneQueued = false;
+let historyChartResizeHandler = null;
+let historyChartResizeTimer = null;
+
+/*
+ * Build the chart panel. The caller supplies the series and the labels; this
+ * owns only the DOM shell, so both pages look identical.
+ */
+function buildHistoryChartPanel(config) {
+    const panel = document.createElement("div");
+    panel.className = "history-chart-panel";
+
+    if (config.panelId) {
+        panel.dataset.chartPanel = config.panelId;
+    }
+
+    const head = document.createElement("div");
+    head.className = "history-chart-head";
+
+    const title = document.createElement("div");
+    title.className = "history-chart-title";
+    title.textContent = config.title;
+    head.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "history-chart-meta";
+    meta.textContent = config.meta || "";
+    head.appendChild(meta);
+
+    panel.appendChild(head);
+
+    const hasData = config.series.some(s => s.points.some(p => !isMissingValue(p.value)));
+
+    if (!hasData) {
+        const empty = document.createElement("div");
+        empty.className = "history-chart-empty";
+        empty.textContent = config.emptyText || "No chartable values for this filter.";
+        panel.appendChild(empty);
+        return panel;
+    }
+
+    /*
+     * Series are drawn in the documented order and never cycled. Past the
+     * eight slots the chart does not generate a ninth hue — it facets into
+     * small multiples, one panel per series, each keeping its own slot colour.
+     * That is also the honest choice for this data: eleven lines on one plot
+     * would overlap into an unreadable band.
+     *
+     * `config.combine` opts out of that fallback. The ROOM page sets it because
+     * its task requires exactly two charts with all ten rooms combined, and it
+     * supplies its own validated ten-slot palette to make that legible. ENERGY
+     * does not set it, so its faceting behaviour is unchanged.
+     */
+    const visible = config.series.filter(s => s.points.some(p => !isMissingValue(p.value)));
+
+    if (!config.combine && visible.length > HISTORY_SERIES_COLORS.length) {
+        return buildHistoryFacets(panel, config, visible);
+    }
+
+    const canvasWrap = document.createElement("div");
+    canvasWrap.className = "history-chart-canvas-wrap";
+
+    const canvas = document.createElement("canvas");
+    canvasWrap.appendChild(canvas);
+    panel.appendChild(canvasWrap);
+
+    /*
+     * A legend is shown only for two or more series. One series needs no
+     * legend box — the panel title already names what is plotted.
+     */
+    if (visible.length >= 2) {
+        const legend = document.createElement("div");
+        legend.className = "history-chart-legend";
+
+        visible.forEach(s => {
+            const item = document.createElement("span");
+            item.className = "history-chart-legend-item";
+
+            const sw = document.createElement("span");
+            sw.className = "history-chart-swatch";
+            sw.style.background = s.color;
+            item.appendChild(sw);
+
+            const txt = document.createElement("span");
+            txt.textContent = s.name;
+            item.appendChild(txt);
+
+            legend.appendChild(item);
+        });
+
+        panel.appendChild(legend);
+    }
+
+    if (config.note) {
+        const note = document.createElement("div");
+        note.className = "history-chart-note";
+        note.textContent = config.note;
+        panel.appendChild(note);
+    }
+
+    const canvases = [canvas];
+
+    /*
+     * Draw after layout so the canvas has a real width. getBoundingClientRect
+     * inside a 0-height parent would otherwise size the plot to nothing.
+     */
+    const render = () => {
+        const geo = drawHistoryChart(canvas, config.series, config.options || {});
+        canvas.__historyGeo = geo;
+        if (geo) attachHistoryChartHover(canvas, config.series, config.options || {});
+    };
+
+    requestAnimationFrame(render);
+    registerHistoryChartResize(canvases, render);
+
+    return panel;
+}
+
+/*
+ * Small multiples for a page with more series than the palette carries. Each
+ * facet is its own canvas with its own title, all sharing ONE y-scale so the
+ * panels stay comparable — separate scales would make a flat room look as
+ * volatile as a swinging one.
+ */
+function buildHistoryFacets(panel, config, visible) {
+    /* The shared band spans every visible series. */
+    let yMin = Infinity;
+    let yMax = -Infinity;
+
+    visible.forEach(s => s.points.forEach(p => {
+        if (isMissingValue(p.value)) return;
+        if (p.value < yMin) yMin = p.value;
+        if (p.value > yMax) yMax = p.value;
+    }));
+
+    if (!Number.isFinite(yMin)) { yMin = 0; yMax = 1; }
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+
+    const grid = document.createElement("div");
+    grid.className = "history-chart-facets";
+
+    const canvases = [];
+    const renders = [];
+
+    visible.forEach(s => {
+        const facet = document.createElement("div");
+        facet.className = "history-chart-facet";
+
+        const name = document.createElement("div");
+        name.className = "history-chart-facet-name";
+        name.textContent = s.name;
+        facet.appendChild(name);
+
+        const wrap = document.createElement("div");
+        wrap.className = "history-chart-canvas-wrap is-facet";
+
+        const canvas = document.createElement("canvas");
+        wrap.appendChild(canvas);
+        facet.appendChild(wrap);
+
+        grid.appendChild(facet);
+
+        canvases.push(canvas);
+
+        renders.push(() => {
+            const opts = Object.assign({}, config.options || {}, {
+                compact: true,
+                hideAxisLabels: true,
+                yMin: yMin,
+                yMax: yMax
+            });
+            const geo = drawHistoryChart(canvas, [s], opts);
+            canvas.__historyGeo = geo;
+            if (geo) attachHistoryChartHover(canvas, [s], opts);
+        });
+    });
+
+    panel.appendChild(grid);
+
+    if (config.note) {
+        const note = document.createElement("div");
+        note.className = "history-chart-note";
+        note.textContent = config.note;
+        panel.appendChild(note);
+    }
+
+    const render = () => renders.forEach(fn => fn());
+
+    requestAnimationFrame(render);
+    registerHistoryChartResize(canvases, render);
+
+    return panel;
+}
+
+/*
+ * One resize listener for the whole page, shared by every chart panel.
+ *
+ * A page can now carry more than one panel (ROOM TEMP & RH draws two), and
+ * each panel registers as it is built. Replacing the handler outright — as a
+ * single-panel page could — would leave only the last panel redrawing on
+ * resize, so registrations ACCUMULATE.
+ *
+ * Stale entries are pruned so the list does not grow across re-renders, but the
+ * prune is deferred to the next frame. A panel registers while its canvas is
+ * still detached — the caller appends the panel only after building it — so an
+ * immediate prune would evict every panel of the current pass but the last,
+ * which is exactly the bug it is meant to prevent.
+ */
+function registerHistoryChartResize(canvases, render) {
+    historyChartResizeEntries.push({ canvases: canvases, render: render });
+
+    if (!historyChartResizePruneQueued) {
+        historyChartResizePruneQueued = true;
+
+        requestAnimationFrame(() => {
+            historyChartResizePruneQueued = false;
+            historyChartResizeEntries = historyChartResizeEntries
+                .filter(entry => entry.canvases.some(c => c.isConnected));
+        });
+    }
+
+    if (historyChartResizeHandler) {
+        window.removeEventListener("resize", historyChartResizeHandler);
+    }
+
+    historyChartResizeHandler = () => {
+        clearTimeout(historyChartResizeTimer);
+        historyChartResizeTimer = setTimeout(() => {
+            /* Also skip anything detached, in case a prune has not run yet. */
+            historyChartResizeEntries.forEach(entry => {
+                if (entry.canvases.some(c => c.isConnected)) entry.render();
+            });
+        }, 150);
+    };
+
+    window.addEventListener("resize", historyChartResizeHandler);
+}
+
+/* =========================================================
+   EXCEL EXPORT
+   =========================================================
+
+   Writes a real SpreadsheetML 2003 workbook (.xls), not CSV renamed: the
+   extension matches the bytes, numbers stay numbers, and a NULL reading stays
+   an empty cell rather than becoming 0. No library, and it opens in Excel /
+   LibreOffice / Google Sheets without a warning.
+
+   The `.xls` extension is deliberate — the older .xlsx (ZIP) format cannot be
+   produced honestly without a zip writer or a dependency.
+   ========================================================= */
+
+function xmlEscape(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function spreadsheetCell(value) {
+    if (value === null || value === undefined || value === "") {
+        return '<Cell/>';
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return '<Cell><Data ss:Type="Number">' + value + '</Data></Cell>';
+    }
+
+    return '<Cell><Data ss:Type="String">' + xmlEscape(value) + '</Data></Cell>';
+}
+
+/*
+ * `columns` is a list of header strings; `rows` is a list of arrays whose
+ * entries are string | number | null. Null becomes an empty cell.
+ *
+ * ExpandedRowCount / ExpandedColumnCount are declared up front: a strict
+ * SpreadsheetML reader uses them to size the grid, and leaving them out can
+ * make the last column or row unreachable in some versions of Excel.
+ */
+function buildSpreadsheetXml(sheetName, columns, rows) {
+    const head = "<Row>" + columns.map(spreadsheetCell).join("") + "</Row>";
+    const body = rows.map(r => "<Row>" + r.map(spreadsheetCell).join("") + "</Row>").join("");
+
+    const rowCount = rows.length + 1;
+    const colCount = columns.length;
+
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + '<?mso-application progid="Excel.Sheet"?>\n'
+        + '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n'
+        + ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n'
+        + ' xmlns:x="urn:schemas-microsoft-com:office:excel">\n'
+        + '<Worksheet ss:Name="' + xmlEscape(sheetName).slice(0, 31) + '">\n'
+        + '<Table ss:ExpandedColumnCount="' + colCount + '"'
+        + ' ss:ExpandedRowCount="' + rowCount + '" x:FullColumns="1" x:FullRows="1">\n'
+        + head + body + '</Table>\n'
+        + '</Worksheet>\n'
+        + '</Workbook>\n';
+}
+
+/*
+ * A UTF-8 blob. The BOM is what makes Excel read the degree sign and the
+ * ellipsis correctly instead of as mojibake.
+ */
+function downloadSpreadsheet(filename, xml) {
+    const blob = new Blob(["﻿", xml], {
+        type: "application/vnd.ms-excel;charset=utf-8"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    /* Revoke on the next tick: revoking synchronously can cancel the download. */
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportFilename(prefix, from, to) {
+    const f = from || "all";
+    const t = to || "all";
+
+    return prefix + "_" + f + "_to_" + t + ".xls";
+}
+
+/* =========================================================
+   HISTORY TABLE HEIGHT
+   =========================================================
+
+   Measured rather than hardcoded: the control bar above the table wraps to a
+   different number of lines as the window narrows, so the space left below it
+   is not a constant. Everything is measured relative to the top of the table
+   wrapper, so an error in the offset cannot accumulate.
+   ========================================================= */
+
+function syncHistoryTableOffset() {
+    const wrap = document.querySelector(".history-table-wrap");
+
+    if (!wrap) return;
+
+    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    document.documentElement.style.setProperty("--history-vh-offset", Math.round(top) + "px");
+}
+
+let historyTableOffsetTimer = null;
+
+window.addEventListener("resize", () => {
+    if (!document.querySelector(".history-table-wrap")) return;
+
+    clearTimeout(historyTableOffsetTimer);
+    historyTableOffsetTimer = setTimeout(syncHistoryTableOffset, 150);
+});
+
+/* =========================================================
+   HISTORY CONTROLS (CHART + EXPORT TO EXCEL)
+   =========================================================
+
+   These live in the filter bar because that is the bar already carrying the
+   page's controls, so the layout gains a button rather than a new region. The
+   filter bar is rebuilt on every render, so the button state is read from
+   `showChart` rather than from the DOM.
+   ========================================================= */
+
+let showChart = false;
+
+/*
+ * Appended after APPLY/RESET so the existing controls keep their order and
+ * position. Returns nothing the caller has to wire up.
+ */
+function appendHistoryButtons(bar, config) {
+    if (!bar) return;
+
+    const chart = document.createElement("button");
+    chart.type = "button";
+    chart.className = "filter-button filter-button-chart" + (showChart ? " is-active" : "");
+    chart.textContent = "CHART";
+    chart.setAttribute("aria-pressed", showChart ? "true" : "false");
+    chart.addEventListener("click", () => {
+        showChart = !showChart;
+        config.onToggle();
+        renderEquipment();
+    });
+    bar.appendChild(chart);
+
+    const exportBtn = document.createElement("button");
+    exportBtn.type = "button";
+    exportBtn.className = "filter-button filter-button-export";
+    exportBtn.textContent = "EXPORT TO EXCEL";
+    exportBtn.addEventListener("click", config.onExport);
+    bar.appendChild(exportBtn);
+}
+
+
 
 /*
  * Restore the persisted mute state before anything can sound, so a refresh

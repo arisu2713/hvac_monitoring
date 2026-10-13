@@ -579,6 +579,42 @@ footer {
         overflow-y: hidden;
     }
 
+    /*
+     * ...except the ROOM TEMP & RH history page once its two combined charts
+     * are open, which is taller than one screen by design.
+     *
+     * This rule exists so the wall display never scrolls, but applied here it
+     * made the overflow unreachable: html and body were both pinned to exactly
+     * the viewport height and clipped, so there was nothing to scroll and the
+     * table below the charts could not be reached at all. Measured at
+     * 1920x1080 with the charts open: scrollHeight === clientHeight === 1080,
+     * the table sat at y 1069-1289, and a scroll attempt moved 0px.
+     *
+     * The table's own max-height clamp (see the history-table-wrap rule below)
+     * cannot rescue this: with two charts above it there is no viewport left to
+     * give, so the clamp bottoms out at its 220px floor and the rest of the
+     * table is simply cut off.
+     *
+     * Only these two declarations are needed. `height: auto` undoes the
+     * `height: 100%` above — without it body would get a nested scrollbar of
+     * its own — and `overflow-y: auto` undoes the clip. min-height is already
+     * 100% on html/body from the base rule, so it is not repeated here.
+     *
+     * Scoped to .history-chart-stack, which only ROOM TEMP & RH emits, and
+     * deliberately NOT to .history-page: ENERGY also emits .history-page and
+     * this rule must not touch it. Measured, ENERGY's document is 42px taller
+     * than the viewport when its chart is open, but every part of it is
+     * reachable today — its table owns an internal scroll, and its footer is
+     * cosmetic. That is a pre-existing, separate condition and is left exactly
+     * as it was. Mobile and tablet never had this problem: the rule stops at
+     * 2499px, and the 900/650/600/380px breakpoints leave overflow alone.
+     */
+    html:has(.history-chart-stack),
+    body:has(.history-chart-stack) {
+        height: auto;
+        overflow-y: auto;
+    }
+
     .topbar {
         height: 50px;
         padding: 6px 20px;
@@ -1769,6 +1805,11 @@ footer {
     z-index: 1;
 }
 
+/*
+ * Header labels are centred over their column, and the vertical rule is a
+ * shade brighter than the body's so the header reads as a caption strip. The
+ * values underneath keep their own alignment: numbers right, date/time centre.
+ */
 .history-head .history-cell {
     font-size: 10px;
     font-weight: 700;
@@ -1776,6 +1817,8 @@ footer {
     color: #888;
     text-transform: uppercase;
     white-space: nowrap;
+    text-align: center;
+    border-right-color: #3d3d3d;
 }
 
 .history-cell {
@@ -1783,7 +1826,7 @@ footer {
     font-size: 12px;
     color: #ccc;
     white-space: nowrap;
-    border-right: 1px solid #1e1e1e;
+    border-right: 1px solid #2c2c2c;
 }
 
 .history-cell:last-child {
@@ -1798,6 +1841,7 @@ footer {
     position: sticky;
     left: 0;
     z-index: 2;
+    text-align: center;
 }
 
 .history-head .history-cell-key {
@@ -1820,8 +1864,13 @@ footer {
     color: #666;
 }
 
+/*
+ * "Reading at" holds a timestamp, so it follows the same rule as the date and
+ * hour columns and centres rather than right-aligns.
+ */
 .history-cell-time {
     color: #9a9a9a;
+    text-align: center;
 }
 
 .history-empty {
@@ -1903,5 +1952,277 @@ footer {
     /* A sticky first column would eat the little width there is. */
     .history-cell-key {
         position: static;
+    }
+}
+
+/* =========================================================
+   HISTORY PAGES — VERTICAL SCROLLING (desktop fix)
+   =========================================================
+
+   The table wrapper already had overflow-x:auto, but the wrapper itself was
+   allowed to grow to its content height (ROOM TEMP & RH = 100 rows ≈ 3530px).
+   At the 1600-2499px fullscreen breakpoint the page is height:100% with
+   overflow-y:hidden, so every row past the fold was simply unreachable —
+   there was nothing to scroll, on the wrapper OR the page.
+
+   The fix caps the wrapper at the height left below it in the viewport and
+   lets it scroll internally. The header is position:sticky inside the
+   wrapper, so it stays pinned while the rows move. Scoped to .history-page
+   so no other page's layout is touched.
+
+   --history-vh-offset is the distance from the top of the viewport down to
+   the top of the table; each page sets it below. It is measured in JS
+   (syncHistoryTableOffset) because the control bars above the table wrap to
+   a different number of lines at different widths, which CSS alone cannot
+   know. The fallback here keeps it usable before the first measurement.
+   ========================================================= */
+
+.history-table-wrap {
+    /*
+     * The clamp keeps the last row reachable when the page itself cannot
+     * scroll. `max()` gives it a floor: with the chart open the table is
+     * pushed further down the page, and on a short viewport the raw
+     * subtraction would go to zero or negative and collapse the table
+     * entirely. A minimum height means the worst case is that the page
+     * scrolls a little, never that the table disappears.
+     */
+    max-height: var(--history-max-h, max(220px, calc(100vh - var(--history-vh-offset, 300px))));
+}
+
+/* Room for the last row plus the horizontal scrollbar, so neither is clipped. */
+.history-table-wrap {
+    scrollbar-gutter: stable;
+}
+
+.history-table {
+    margin-bottom: 1px;
+}
+
+/* =========================================================
+   HISTORY PAGES — CHART PANEL + EXPORT
+   =========================================================
+
+   Deliberately plain: a hairline ring on the same dark surfaces the table
+   already uses, so opening the chart reads as the same dashboard. Nothing
+   here restyles the table, the filters or the page chrome.
+   ========================================================= */
+
+.history-chart-panel {
+    border: 1px solid #2c2c2c;
+    border-radius: 8px;
+    background: #161616;
+    padding: 12px 14px 10px;
+}
+
+/*
+ * ROOM TEMP & RH stacks its two combined charts (Temperature, Humidity).
+ * A single column at every width, so the pair never sits side by side on a
+ * narrow screen where each plot would be too small to read ten lines in.
+ */
+.history-chart-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.history-chart-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.history-chart-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    color: #888;
+    text-transform: uppercase;
+}
+
+.history-chart-meta {
+    font-size: 11px;
+    color: #999;
+}
+
+/* The canvas is sized by JS to the panel's width; height is set per page. */
+.history-chart-canvas-wrap {
+    position: relative;
+    width: 100%;
+    height: 260px;
+}
+
+.history-chart-panel canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: pan-y;
+}
+
+/*
+ * Values that the line could not plot (a NULL reading, or a day whose usage
+ * is not derivable). Shown as counts beside the chart so a gap in the line is
+ * never mistaken for a zero.
+ */
+.history-chart-note {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #999;
+}
+
+.history-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #ccc;
+}
+
+.history-chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* The swatch carries the series colour; the text stays in ink tokens. */
+.history-chart-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex: 0 0 auto;
+}
+
+.history-chart-empty {
+    padding: 24px 12px;
+    font-size: 12px;
+    color: #777;
+    text-align: center;
+}
+
+@media (min-width: 1600px) {
+
+    .history-chart-canvas-wrap {
+        height: 320px;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .history-chart-canvas-wrap {
+        height: 220px;
+    }
+
+    .history-chart-panel {
+        padding: 10px 10px 8px;
+    }
+}
+
+/* Crosshair tooltip: positioned by JS, never clipped by the panel. */
+.history-chart-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 5;
+    pointer-events: none;
+    min-width: 130px;
+    padding: 7px 9px;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    background: #0f0f0f;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .55);
+    font-size: 11px;
+    color: #ccc;
+}
+
+.history-chart-tip-head {
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+    white-space: nowrap;
+}
+
+.history-chart-tip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.history-chart-tip-name {
+    flex: 1 1 auto;
+    color: #999;
+}
+
+.history-chart-tip-value {
+    font-weight: 700;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The active CHART button matches the active switch-button treatment. */
+.filter-button.is-active {
+    background: #444;
+    color: #fff;
+    border-color: #777;
+}
+
+.filter-button-chart,
+.filter-button-export {
+    letter-spacing: .5px;
+}
+
+/* ---------- Small multiples (more series than palette slots) ---------- */
+
+.history-chart-facets {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 10px;
+}
+
+.history-chart-facet {
+    border: 1px solid #232323;
+    border-radius: 6px;
+    background: #131313;
+    padding: 6px 8px 2px;
+}
+
+.history-chart-facet-name {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    color: #bbb;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* A facet is short and narrow; the shared y-scale lives on the left gutter. */
+.history-chart-canvas-wrap.is-facet {
+    height: 116px;
+}
+
+@media (min-width: 1600px) {
+
+    .history-chart-facets {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+
+    .history-chart-canvas-wrap.is-facet {
+        height: 126px;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .history-chart-facets {
+        grid-template-columns: 1fr;
+    }
+
+    .history-chart-canvas-wrap.is-facet {
+        height: 112px;
     }
 }
