@@ -637,6 +637,33 @@ footer {
         overflow-y: auto;
     }
 
+    /*
+     * GLOBAL ALARM: allow full-page scrolling on wall-display widths.
+     *
+     * Same clip, same escape hatch as the two rules above. The alarm page is a
+     * single unbounded list - one row per event, 400+ rows in a normal day and
+     * 602 on the busiest day on record - and it has no internal scroller, so
+     * with html/body pinned to the viewport height the rows below the fold were
+     * simply unreachable. Measured at 1920x1080 with 410 rows: html
+     * scrollHeight === clientHeight === 1080, body scrollHeight 16351 clipped
+     * by overflow-y:hidden, the last row at y 16308, and window.scrollTo moved
+     * 0px. No element on the page had a scrollable overflow, so there was no
+     * fallback.
+     *
+     * html gets the scroller; body deliberately does NOT (see the sticky block
+     * below for why `height: auto` alone, with no overflow, is the whole body
+     * rule). Scoped to .alarm-page, which only the ALARM tab emits, so the wall
+     * display still never scrolls on any other page.
+     */
+    html:has(.alarm-page) {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    body:has(.alarm-page) {
+        height: auto;
+    }
+
     .topbar {
         height: 50px;
         padding: 6px 20px;
@@ -1309,6 +1336,100 @@ footer {
     gap: 14px;
 }
 
+/* =========================================================
+   GLOBAL ALARM — STICKY CHROME + FULL-PAGE SCROLL
+   =========================================================
+
+   The alarm list is unbounded: one row per event, 400+ in a normal day and 602
+   on the busiest day on record, which is over 17,000px of page. Two things
+   follow, and both are scoped to .alarm-page so no other page is affected.
+
+   1. The page must scroll. In the 1600-2499px band html/body are pinned to the
+      viewport height with overflow-y:hidden (see that media query), so the list
+      was clipped with no scroller anywhere - the escape hatch there sets
+      `height: auto; overflow-y: auto` on html.
+
+   2. The chrome must stay on screen while it does. Without this, reaching the
+      CLEARED group means the nav and the column headers are 17,000px behind.
+
+   Why body gets `overflow-x: clip; overflow-y: visible` and NOT `overflow: auto`:
+   a non-visible overflow makes an element a scroll container, and a sticky
+   descendant then resolves against THAT element's scrollport instead of the
+   viewport. With body as the scroller its scrollport is the whole content
+   height, which never scrolls, so every sticky element silently scrolls away
+   with the content. Measured: with body{overflow-y:auto} the topbar sat at
+   top=-6000 after scrolling to 6000; with body{overflow-y:visible} it sat at
+   top=0. The base rule sets `overflow-x: hidden` on body, and `hidden` is NOT
+   exempt from the "visible computes to auto" rule - `clip` is - so clip is what
+   keeps the horizontal clip without re-creating the scroll container.
+
+   Offsets are measured at runtime into custom properties by
+   syncAlarmStickyOffset() in index.php, because the nav wraps to two lines at
+   narrower widths and the topbar's height changes with the media query; CSS
+   cannot know either. The fallbacks keep it usable before the first measurement.
+   ========================================================= */
+
+body:has(.alarm-page) {
+    overflow-x: clip;
+    overflow-y: visible;
+}
+
+/* Three pinned bars, stacked in DOM order with no overlap between them. */
+html:has(.alarm-page) .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
+
+html:has(.alarm-page) .equipment-nav {
+    position: sticky;
+    top: var(--alarm-nav-top, 54px);
+    z-index: 30;
+}
+
+/*
+ * The footer is the last element in flow, so pinning it to the bottom can only
+ * ever cover space the user has already scrolled past. It is opaque so rows
+ * cannot show through it.
+ */
+html:has(.alarm-page) footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    background: #111;
+    border-top: 1px solid #292929;
+}
+
+/*
+ * .alarm-group carries `overflow: hidden` to clip its rows to the rounded
+ * corners. That also makes it a scroll container, which traps the sticky column
+ * header: it would stick to the group (which does not scroll) instead of the
+ * viewport, and never move. Measured: with `overflow: hidden` the header sat at
+ * top=-5311 after scrolling to 6000; with `clip` it sat at top=85, under the
+ * nav. `overflow: clip` clips identically - border radius included - without
+ * creating a scroll container.
+ */
+html:has(.alarm-page) .alarm-group {
+    overflow: clip;
+}
+
+/*
+ * The table's own column header, pinned below the nav. Without it the 400+
+ * CLEARED rows have no column labels at all once the first screen is scrolled
+ * past. z-index sits under the nav (30) so the header can never cover it.
+ */
+html:has(.alarm-page) .alarm-group .alarm-thead {
+    position: sticky;
+    top: var(--alarm-sticky-offset, 89px);
+    z-index: 20;
+    background: #131313;
+}
+
+/* Room for the pinned footer, so the last row is never covered by it. */
+html:has(.alarm-page) .alarm-page {
+    padding-bottom: 34px;
+}
+
 /* ---------- Active summary ---------- */
 
 .alarm-summary {
@@ -1568,6 +1689,23 @@ footer {
     padding: 14px;
     font-size: 12px;
     color: #777;
+    text-align: center;
+}
+
+/*
+ * Truncation notice. Sits below the CLEARED group and is deliberately plain:
+ * it states a fact about the payload (the API cap was reached), not an alarm,
+ * so it must not read as another warning row.
+ */
+.alarm-notice {
+    padding: 9px 14px;
+    background: #1c1a12;
+    border: 1px solid #5a4a1a;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    color: #d8b25a;
     text-align: center;
 }
 

@@ -1453,13 +1453,32 @@ function selectRoomView(view) {
 const ALARM_API_URL = "api_alarm.php";
 const ALARM_POLL_MS = 10000;
 const ALARM_MUTE_KEY = "hvac_alarm_muted";
+const ALARM_WINDOW_KEY = "hvac_alarm_window_hours";
 
 /* Active rows shown before the list is folded behind a "show all" toggle. */
 const ALARM_ACTIVE_PREVIEW = 50;
 
+/*
+ * The cleared-history window. api_alarm.php accepts ?hours= clamped to 1-168;
+ * the two values the page offers are the ends of that range. 168 is 7 days
+ * exactly, which is the API's own ceiling - the page cannot ask for more.
+ */
+const ALARM_WINDOW_OPTIONS = [
+    { value: 24, label: "LAST 24 HOURS" },
+    { value: 168, label: "LAST 7 DAYS" }
+];
+const ALARM_WINDOW_DEFAULT = 24;
+
 let alarmMuted = false;
 let alarmSoundBlocked = false;
 let alarmShowAll = false;
+
+/*
+ * The selected window, kept out of the DOM so the 10s poll can re-render
+ * without losing the user's choice. Persisted in localStorage so it also
+ * survives a reload, matching how the mute state behaves.
+ */
+let alarmWindowHours = ALARM_WINDOW_DEFAULT;
 
 /*
  * New-alarm detection uses the primary key of alarm_events, which is stable
@@ -1484,6 +1503,69 @@ function writeAlarmMuted(muted) {
     } catch (error) {
         /* Mute still applies for this session even if it cannot persist. */
     }
+}
+
+/*
+ * The selected history window, read once at load. Only the two offered values
+ * are accepted; anything else in storage (hand-edited, or left by an older
+ * build) falls back to the default rather than being sent to the API.
+ */
+function readAlarmWindowHours() {
+    let stored = null;
+
+    try {
+        stored = window.localStorage.getItem(ALARM_WINDOW_KEY);
+    } catch (error) {
+        return ALARM_WINDOW_DEFAULT;
+    }
+
+    const value = parseInt(stored, 10);
+
+    return ALARM_WINDOW_OPTIONS.some(opt => opt.value === value)
+        ? value
+        : ALARM_WINDOW_DEFAULT;
+}
+
+function writeAlarmWindowHours(hours) {
+    try {
+        window.localStorage.setItem(ALARM_WINDOW_KEY, String(hours));
+    } catch (error) {
+        /* The choice still applies for this session if it cannot persist. */
+    }
+}
+
+/*
+ * Switching the window re-fetches immediately rather than waiting up to 10s
+ * for the next poll, so the list and the counts agree with the control the
+ * moment it is used. The selection itself lives in alarmWindowHours, so the
+ * poll that follows keeps it.
+ */
+function selectAlarmWindow(hours) {
+    if (hours === alarmWindowHours) {
+        return;
+    }
+
+    alarmWindowHours = hours;
+    writeAlarmWindowHours(hours);
+
+    /*
+     * A new window is a new row set; the fold state and the "already seen"
+     * baseline both belong to the old one. Resetting the baseline keeps a
+     * window change from being mistaken for newly raised alarms and sounding.
+     */
+    alarmShowAll = false;
+    knownAlarmIds = null;
+
+    /*
+     * The page is not re-rendered from the old payload here: the group heading
+     * is derived from the window, so drawing it before the new rows arrive
+     * would label 24h of rows "last 168h" for the length of one request. The
+     * switch shows the change immediately, and the fetch below redraws the
+     * whole page - heading, rows and counts - in one consistent pass.
+     */
+    updateAlarmWindowSwitch();
+
+    safeLoadAlarmData();
 }
 
 function getAlarmAudioContext() {
@@ -1625,6 +1707,23 @@ function formatAlarmTime(value) {
 
     /* SQL datetime(6) arrives as "YYYY-MM-DD HH:MM:SS.ffffff". */
     return String(value).replace("T", " ").slice(0, 19);
+}
+
+/*
+ * The history-window switch, built into #pageSwitch - the same container and
+ * the same classes ROOM TEMP & RH uses for its CURRENT / HOURLY switch, so it
+ * matches the existing bar styling without introducing new markup.
+ *
+ * Rebuilt on every render so the active state always reflects
+ * alarmWindowHours; the click handler calls selectAlarmWindow, which re-fetches
+ * rather than waiting for the next poll.
+ */
+function updateAlarmWindowSwitch() {
+    buildPageSwitch(
+        ALARM_WINDOW_OPTIONS.map(opt => ({ value: opt.value, label: opt.label })),
+        alarmWindowHours,
+        selectAlarmWindow
+    );
 }
 
 function alarmSourceLabel(alarm) {
@@ -1796,7 +1895,17 @@ function renderAlarm() {
     const activeAlarms = data.alarms.filter(a => a.status === "ACTIVE");
     const clearedAlarms = data.alarms.filter(a => a.status !== "ACTIVE");
 
+    /*
+     * The window actually applied by the API, not the one the page asked for:
+     * the endpoint clamps ?hours= to 1-168, so echoing its value back keeps the
+     * heading honest even if the request were ever out of range.
+     */
+    const windowHours = Number(data.window_hours || alarmWindowHours);
+
     unitCount.textContent = activeTotal + " active";
+
+    /* The history-window switch lives in #pageSwitch, above the grid. */
+    updateAlarmWindowSwitch();
 
     const page = document.createElement("div");
     page.className = "alarm-page";
@@ -1865,14 +1974,45 @@ function renderAlarm() {
     }
 
     /* ---- Cleared history, compact and receded ---- */
+    /*
+     * The heading names both timestamps because that is what the window now
+     * means: an event is listed when it was RAISED in the window or CLEARED in
+     * it. Saying only "last 24h" was what made a long-lived alarm look like it
+     * had been dropped - it was raised before the window and cleared inside it.
+     */
     page.appendChild(createAlarmGroup(
-        "CLEARED (last " + (data.window_hours || 24) + "h)",
+        "CLEARED — RAISED OR CLEARED IN THE LAST " + windowHours + "h",
         clearedAlarms,
         false
     ));
 
+    /*
+     * Truncation notice.
+     *
+     * The API caps its payload (LIMIT, default 1000). When the cap bites, the
+     * oldest rows in the window are dropped by the ORDER BY, and the page must
+     * say so rather than presenting a partial list as the whole history. The
+     * counts come from the API's own before-LIMIT count over the identical
+     * predicate, so this is exact and not an estimate.
+     *
+     * "returned" and "matched" are both whole-window figures, not per-class: the
+     * API's LIMIT applies to the combined ACTIVE + CLEARED result set. Naming
+     * the window explicitly is what keeps the two numbers unambiguous - a bare
+     * "in this window" reads as the wrong window the moment the user switches.
+     */
+    if (data.truncated) {
+        const notice2 = document.createElement("div");
+        notice2.className = "alarm-notice";
+        notice2.textContent = "SHOWING " + data.returned
+            + " OF " + data.matched + " EVENTS IN THE LAST " + windowHours + "h"
+            + " — the oldest " + (data.matched - data.returned)
+            + " are beyond the " + (data.limit || 1000) + "-row API limit.";
+        page.appendChild(notice2);
+    }
+
     grid.appendChild(page);
     renderMuteButton();
+    syncAlarmStickyOffset();
 }
 
 /*
@@ -1914,11 +2054,16 @@ function renderAlarm() {
 /*
  * The alarm poll always targets api_alarm.php, so it keeps running while
  * another equipment page is on screen and can still sound for a new alarm.
+ *
+ * The selected window is sent on every request, including the first, so a
+ * reload restores the user's choice instead of silently reverting to 24h.
  */
 async function loadAlarmData() {
-    const response = await fetch(ALARM_API_URL + "?t=" + Date.now(), {
-        cache: "no-store"
-    });
+    const response = await fetch(
+        ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
+            + "&t=" + Date.now(),
+        { cache: "no-store" }
+    );
 
     if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -1944,6 +2089,48 @@ async function safeLoadAlarmData() {
         }
     }
 }
+
+/*
+ * The sticky chrome stacks: topbar, then nav, then the alarm table's own
+ * column header. CSS cannot know where the second one ends - the nav wraps to
+ * two lines at narrower widths, and the topbar's height changes with the media
+ * query - so both offsets are measured here and published as custom properties.
+ *
+ * Measured from the two elements' real rects rather than hardcoded, and only
+ * while the ALARM page is on screen, so no other page pays for it. Called after
+ * every alarm render and on resize.
+ */
+function syncAlarmStickyOffset() {
+    if (currentEquipment !== "ALARM") {
+        return;
+    }
+
+    const topbar = document.querySelector(".topbar");
+    const nav = document.getElementById("equipmentNav");
+
+    if (!topbar || !nav) {
+        return;
+    }
+
+    /*
+     * Both offsets are distances from the document top, which is exactly the
+     * space each sticky bar must clear. getBoundingClientRect is viewport
+     * relative, so the current scroll offset is added back in.
+     */
+    const scrollTop = window.scrollY;
+    const navTop = Math.round(topbar.getBoundingClientRect().bottom + scrollTop);
+    const headerTop = Math.round(nav.getBoundingClientRect().bottom + scrollTop);
+
+    const root = document.documentElement;
+    root.style.setProperty("--alarm-nav-top", Math.max(0, navTop) + "px");
+    root.style.setProperty("--alarm-sticky-offset", Math.max(0, headerTop) + "px");
+}
+
+window.addEventListener("resize", () => {
+    if (currentEquipment === "ALARM") {
+        syncAlarmStickyOffset();
+    }
+});
 
 /* =========================================================
    HISTORY VIEWS (ENERGY + the ROOM TEMP & RH hourly view)
@@ -4677,6 +4864,12 @@ function appendHistoryButtons(bar, config) {
  * during an active alarm never produces a burst of sound.
  */
 alarmMuted = readAlarmMuted();
+
+/*
+ * Restore the persisted history window before the first alarm request, so the
+ * initial load already asks for the window the user last chose.
+ */
+alarmWindowHours = readAlarmWindowHours();
 
 safeLoadData();
 
