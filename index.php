@@ -3343,7 +3343,427 @@ async function loadHistoryPage(apiUrl) {
     return data;
 }
 
+/* =========================================================
+   AHU SEVERITY DASHBOARD
+   ========================================================= */
+
+const AHU_VIEW_ISSUES = "issues";
+const AHU_VIEW_ALL = "all";
+
+/*
+ * View state lives outside the DOM, like historyFilters, so the 10s poll's
+ * re-render cannot silently reset the reader's sort or search.
+ */
+const ahuView = {
+    mode: AHU_VIEW_ISSUES,
+    /* Exactly what the reader typed, so the box redraws unchanged. */
+    searchRaw: "",
+    /* Normalised once here; matching never re-derives it. */
+    search: "",
+    /*
+     * Whether the search box held focus at the last render.
+     *
+     * Captured by reading document.activeElement at the TOP of
+     * renderEquipment(), before the grid is cleared. A focus/blur listener
+     * cannot do this job: focus events do not fire at all while the document
+     * itself is unfocused, and clearing the grid detaches the input without
+     * firing blur, so both the event and a post-clear activeElement read
+     * report nothing. Before the clear is the only moment the answer exists.
+     */
+    searchFocused: false
+};
+
+let ahuSectionsHost = null;
+let ahuUnits = [];
+
+const AHU_BANDS = [
+    { key: "critical", title: "CRITICAL", note: "action required" },
+    { key: "warning",  title: "WARNING", note: "outside normal range" },
+    { key: "off",      title: "OFF / UNKNOWN", note: "not running" },
+    { key: "normal",   title: "NORMAL", note: "running normally" }
+];
+
+function ahuUnitNumber(name) {
+    const m = String(name ?? "").match(/(\d+)/);
+    return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+/*
+ * Read a numeric field WITHOUT letting a missing value become a number.
+ *
+ * Number(null) is 0 and Number("") is 0, so a plain Number() turns "nobody
+ * measured this" into a measured zero. On this page that would report an
+ * unread AHU as 0.0 °C and as switched off — two claims the data does not
+ * support. api_ahu.php emits run=null for AHU 94/95 whenever its hnx_g8
+ * source is unavailable, so this is a reachable state, not a hypothetical.
+ *
+ * Returns null for absent, empty and non-finite input; otherwise the number.
+ */
+function ahuNum(value) {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+
+    const n = Number(value);
+
+    return Number.isFinite(n) ? n : null;
+}
+
+function ahuCompareName(a, b) {
+    return ahuUnitNumber(a.name) - ahuUnitNumber(b.name);
+}
+
+/*
+ * Band a unit using only data the API already sends. No threshold is invented
+ * here: temp_max / temp_min are the unit's own configured bounds (null when it
+ * has none, in which case isOutOfRange never fires) and `alarm` is the unit's
+ * native alarm point.
+ *
+ * Precedence is alarm > temperature > not-running. A measured temperature
+ * violation is a real fault, so it must not be hidden behind an OFF badge.
+ */
+function ahuBandOf(unit) {
+    if (ahuNum(unit.alarm) === 1) {
+        return "critical";
+    }
+
+    if (isOutOfRange(unit.temp, unit.temp_min, unit.temp_max)) {
+        return "warning";
+    }
+
+    /*
+     * Anything that is not demonstrably running — run=0, or run absent because
+     * no point reported — is reported as not-running. "We cannot see it" and
+     * "it is switched off" are different facts, which is why the card carries
+     * the run dot and an explicit tag rather than only the band colour.
+     */
+    if (ahuNum(unit.run) !== 1) {
+        return "off";
+    }
+
+    return "normal";
+}
+
+/* Signed distance outside the configured bounds, or null when inside them. */
+function ahuDeviation(unit) {
+    const t = ahuNum(unit.temp);
+
+    if (t === null) {
+        return null;
+    }
+
+    const max = ahuNum(unit.temp_max);
+
+    if (max !== null && t > max) {
+        return t - max;
+    }
+
+    const min = ahuNum(unit.temp_min);
+
+    if (min !== null && t < min) {
+        return t - min;
+    }
+
+    return null;
+}
+
+function ahuFormatTemp(value) {
+    const t = ahuNum(value);
+
+    return t === null ? "-- °C" : t.toFixed(1) + " °C";
+}
+
+function ahuTagFor(unit, band) {
+    if (band === "critical") {
+        return "ALARM";
+    }
+
+    if (band === "warning") {
+        const d = ahuDeviation(unit);
+
+        if (d === null) {
+            return "OUT OF RANGE";
+        }
+
+        return (d > 0 ? "▲ +" : "▼ ") + d.toFixed(1);
+    }
+
+    if (band === "off") {
+        return ahuNum(unit.run) === 0 ? "OFF" : "UNKNOWN";
+    }
+
+    return "";
+}
+
+function ahuCreateCard(unit) {
+    const band = ahuBandOf(unit);
+
+    const card = document.createElement("div");
+    card.className = "ahu-card is-" + band;
+    card.dataset.band = band;
+
+    /*
+     * RUN indicator. Green when running, red when off, grey when no run point
+     * reported. Sits on every card so run state is readable at a glance in
+     * every band, including the amber and red ones.
+     *
+     * The grey case is a real state, not a fallback: api_ahu.php emits
+     * run=null for AHU 94/95 when its hnx_g8 source cannot be read, and
+     * Number(null) === 0 would paint those red — "off" — when the truth is
+     * that nobody could look.
+     */
+    const run = ahuNum(unit.run);
+
+    const dot = document.createElement("span");
+    dot.className = "ahu-run-dot "
+        + (run === 1 ? "is-run" : (run === 0 ? "is-off" : "is-unknown"));
+    dot.title = run === 1 ? "RUN" : (run === 0 ? "OFF" : "Status unknown");
+    card.appendChild(dot);
+
+    const tagText = ahuTagFor(unit, band);
+
+    if (tagText) {
+        const tag = document.createElement("span");
+        tag.className = "ahu-card-tag";
+        tag.textContent = tagText;
+        card.appendChild(tag);
+    }
+
+    const name = document.createElement("span");
+    name.className = "ahu-card-name";
+    name.textContent = unit.name ?? "";
+    card.appendChild(name);
+
+    const value = document.createElement("span");
+    value.className = "ahu-card-value";
+    value.textContent = ahuFormatTemp(unit.temp);
+    card.appendChild(value);
+
+    return card;
+}
+
+function ahuMatchesSearch(unit) {
+    if (!ahuView.search) {
+        return true;
+    }
+
+    return String(unit.name ?? "").toLowerCase().includes(ahuView.search);
+}
+
+/*
+ * Rebuilds only the band sections, leaving the controls (and therefore the
+ * search input's focus and caret) untouched. This is what makes typing in the
+ * search box safe both between keystrokes and across the 10s poll.
+ */
+function ahuRenderSections() {
+    if (!ahuSectionsHost) {
+        return;
+    }
+
+    ahuSectionsHost.innerHTML = "";
+
+    const visible = ahuUnits.filter(ahuMatchesSearch);
+
+    if (visible.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "ahu-empty";
+        empty.textContent = ahuView.search
+            ? "No units match your search."
+            : "No AHU units to display.";
+        ahuSectionsHost.appendChild(empty);
+        return;
+    }
+
+    /* "All" is one flat, name-ordered grid — no bands, no severity order. */
+    if (ahuView.mode === AHU_VIEW_ALL) {
+        ahuSectionsHost.appendChild(
+            ahuBuildSection(
+                { key: "normal", title: "ALL UNITS",
+                  note: visible.length + (visible.length === 1 ? " unit" : " units") },
+                visible.slice().sort(ahuCompareName)
+            )
+        );
+        return;
+    }
+
+    AHU_BANDS.forEach(band => {
+        const members = visible.filter(u => ahuBandOf(u) === band.key);
+
+        if (members.length === 0) {
+            return;
+        }
+
+        members.sort(band.key === "warning"
+            ? (a, b) => (ahuDeviation(b) ?? 0) - (ahuDeviation(a) ?? 0) || ahuCompareName(a, b)
+            : ahuCompareName);
+
+        ahuSectionsHost.appendChild(
+            ahuBuildSection(
+                Object.assign({}, band, {
+                    note: band.key === "normal"
+                        ? members.length + (members.length === 1 ? " unit" : " units")
+                        : band.note
+                }),
+                members
+            )
+        );
+    });
+}
+
+function ahuBuildSection(band, units) {
+    const section = document.createElement("section");
+    section.className = "ahu-section is-" + band.key;
+
+    const head = document.createElement("div");
+    head.className = "ahu-section-head";
+
+    const title = document.createElement("h2");
+    title.className = "ahu-section-title";
+    title.textContent = band.title;
+    head.appendChild(title);
+
+    if (band.note) {
+        const note = document.createElement("span");
+        note.className = "ahu-section-note";
+        note.textContent = band.note;
+        head.appendChild(note);
+    }
+
+    section.appendChild(head);
+
+    const cards = document.createElement("div");
+    cards.className = "ahu-cards";
+
+    units.forEach(unit => cards.appendChild(ahuCreateCard(unit)));
+
+    section.appendChild(cards);
+
+    return section;
+}
+
+function ahuBuildTile(label, value, modifier) {
+    const tile = document.createElement("div");
+    tile.className = "ahu-tile " + modifier;
+
+    const number = document.createElement("span");
+    number.className = "ahu-tile-value";
+    number.textContent = value;
+
+    const text = document.createElement("span");
+    text.className = "ahu-tile-label";
+    text.textContent = label;
+
+    tile.appendChild(number);
+    tile.appendChild(text);
+
+    return tile;
+}
+
+function renderAhuDashboard(units) {
+    ahuUnits = Array.isArray(units) ? units : [];
+    ahuSectionsHost = null;
+
+    sectionTitle.textContent = "AHU";
+    unitCount.textContent = ahuUnits.length + " units";
+
+    const counts = { critical: 0, warning: 0, off: 0, normal: 0 };
+
+    ahuUnits.forEach(unit => {
+        counts[ahuBandOf(unit)] += 1;
+    });
+
+    const page = document.createElement("div");
+    page.className = "ahu-dashboard";
+
+    /* ---- Summary tiles ---- */
+    const summary = document.createElement("div");
+    summary.className = "ahu-summary";
+    summary.appendChild(ahuBuildTile("CRITICAL", counts.critical, "is-critical"));
+    summary.appendChild(ahuBuildTile("WARNING", counts.warning, "is-warning"));
+    summary.appendChild(ahuBuildTile("NORMAL", counts.normal, "is-normal"));
+    /*
+     * Labelled to match the band heading it counts. The tile total includes
+     * units whose run point reported nothing (UNKNOWN), so calling it plain
+     * "OFF" would claim they are switched off when nobody could look — the
+     * same distinction the run dot and the card tag exist to preserve.
+     */
+    summary.appendChild(ahuBuildTile("OFF / UNKNOWN", counts.off, "is-off"));
+    page.appendChild(summary);
+
+    /* ---- Sort chips + search ---- */
+    const controls = document.createElement("div");
+    controls.className = "ahu-controls";
+
+    const chips = [
+        { mode: AHU_VIEW_ISSUES, label: "Issues First" },
+        { mode: AHU_VIEW_ALL, label: "All " + ahuUnits.length }
+    ];
+
+    chips.forEach(chip => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ahu-chip" + (ahuView.mode === chip.mode ? " is-on" : "");
+        button.textContent = chip.label;
+        button.addEventListener("click", () => {
+            if (ahuView.mode === chip.mode) {
+                return;
+            }
+
+            ahuView.mode = chip.mode;
+            controls.querySelectorAll(".ahu-chip").forEach(other => {
+                other.classList.toggle("is-on", other === button);
+            });
+            ahuRenderSections();
+        });
+        controls.appendChild(button);
+    });
+
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "ahu-search";
+    search.placeholder = "Search…";
+    search.value = ahuView.searchRaw;
+    search.setAttribute("aria-label", "Search AHU units");
+    search.addEventListener("input", () => {
+        ahuView.searchRaw = search.value;
+        ahuView.search = search.value.trim().toLowerCase();
+        ahuRenderSections();
+    });
+    controls.appendChild(search);
+
+    page.appendChild(controls);
+
+    /* ---- Band sections ---- */
+    const host = document.createElement("div");
+    ahuSectionsHost = host;
+    page.appendChild(host);
+
+    grid.appendChild(page);
+
+    ahuRenderSections();
+
+    /*
+     * The 10s poll rebuilds this whole subtree, which would otherwise drop the
+     * caret out of the search box mid-typing. The value survives in ahuView;
+     * only the focus has to be handed back.
+     */
+    if (ahuView.searchFocused) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
+    }
+}
+
 function renderEquipment() {
+    /*
+     * Read focus BEFORE the grid is cleared. Clearing detaches the search
+     * input without firing blur, and a detached node is no longer
+     * document.activeElement, so after this point the answer is unrecoverable.
+     * See the ahuView.searchFocused comment for why a listener cannot do it.
+     */
+    const active = document.activeElement;
+    ahuView.searchFocused = !!(active && active.classList
+        && active.classList.contains("ahu-search"));
+
     grid.innerHTML = "";
 
     /*
@@ -3392,6 +3812,16 @@ function renderEquipment() {
 
     if (!Array.isArray(data)) {
         unitCount.textContent = "0 units";
+        return;
+    }
+
+    /*
+     * AHU gets the severity dashboard: KRITIS / PERHATIAN / OFF / NORMAL bands,
+     * issues first, with a search box. Every other equipment type keeps the
+     * flat grid it has always had.
+     */
+    if (currentEquipment === "AHU") {
+        renderAhuDashboard(data);
         return;
     }
 

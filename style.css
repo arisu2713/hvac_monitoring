@@ -679,6 +679,35 @@ footer {
         height: auto;
     }
 
+    /*
+     * AHU severity dashboard: same clip, same escape hatch as the alarm page
+     * above.
+     *
+     * The dashboard adds a summary row and a controls row above the cards, so
+     * it is taller than the flat grid it replaces. Measured at 1600x900 with
+     * the real 97-unit payload: the last card sat at y 1091 against a 900px
+     * viewport, 36 cards were below the fold, and html scrollHeight ===
+     * clientHeight === 900 with overflow-y:hidden — nothing could scroll, so
+     * those 36 units were unreachable. The old flat grid fitted that same
+     * viewport (last card at y 869), so this is a regression the dashboard
+     * introduced and it has to be paid for here.
+     *
+     * Not needed at 1920x1080 (last card y 1005) or 2499x1080 (y 919), but the
+     * rule is written for the whole band rather than for the one viewport that
+     * happens to break: any window in 1600-2499px narrower than ~1900px clips,
+     * and a 1600x1080 window clips too. Scoped to .ahu-dashboard, which only
+     * the AHU tab emits, so every other page keeps the wall display's
+     * never-scroll behaviour exactly as it was.
+     */
+    html:has(.ahu-dashboard) {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    body:has(.ahu-dashboard) {
+        height: auto;
+    }
+
     .topbar {
         height: 50px;
         padding: 6px 20px;
@@ -2449,5 +2478,349 @@ html:has(.alarm-page) .alarm-page {
 
     .history-chart-canvas-wrap.is-facet {
         height: 112px;
+    }
+}
+
+/* =========================================================
+   AHU SEVERITY DASHBOARD
+   Scoped entirely under .ahu-dashboard, which only the AHU
+   tab emits. Every other page (HVAC SC, ROOM TEMP & RH,
+   EXHAUST FAN, AHU/EF G8, ALARM, ENERGY) is untouched: the
+   flat .unit-card grid and its .status-* colours still apply
+   to them exactly as before.
+
+   Bands come from data the API already sends — never from a
+   new threshold:
+     CRITICAL  unit.alarm === 1        (native device alarm)
+     WARNING   temp outside its own bounds (temp_min/temp_max)
+     OFF       run !== 1               (off, or not known)
+     NORMAL    everything else
+   ========================================================= */
+
+.equipment-grid:has(.ahu-dashboard) {
+    display: block;
+    padding: 0 20px 20px;
+}
+
+/* --- Summary tiles: CRITICAL / WARNING / NORMAL / OFF / UNKNOWN --- */
+
+.ahu-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.ahu-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid #222b34;
+    border-radius: 10px;
+    background: #151b22;
+}
+
+.ahu-tile-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.ahu-tile-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+}
+
+.ahu-tile.is-critical {
+    background: #c62828;
+    border-color: #c62828;
+    color: #fff;
+}
+
+.ahu-tile.is-warning {
+    background: #f5b83d;
+    border-color: #f5b83d;
+    color: #1a1300;
+}
+
+.ahu-tile.is-normal .ahu-tile-value {
+    color: #4ade80;
+}
+
+.ahu-tile.is-normal .ahu-tile-label,
+.ahu-tile.is-off .ahu-tile-label {
+    color: #9aa7b3;
+}
+
+.ahu-tile.is-off .ahu-tile-value {
+    color: #9aa7b3;
+}
+
+/* --- Sort chips + search --- */
+
+.ahu-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.ahu-chip {
+    min-height: 40px;
+    padding: 0 16px;
+    border: 1px solid #2c3640;
+    border-radius: 20px;
+    background: #151b22;
+    color: #c9d3dc;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.ahu-chip:hover {
+    border-color: #4a5763;
+}
+
+.ahu-chip.is-on {
+    background: #e6ebf0;
+    border-color: #e6ebf0;
+    color: #0e1318;
+    font-weight: 600;
+}
+
+.ahu-search {
+    flex: 1 1 170px;
+    min-width: 0;
+    min-height: 40px;
+    padding: 0 16px;
+    border: 1px solid #2c3640;
+    border-radius: 20px;
+    background: #151b22;
+    color: #e6ebf0;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.ahu-search::placeholder {
+    color: #6f7c88;
+}
+
+.ahu-search:focus {
+    outline: none;
+    border-color: #5a6875;
+}
+
+/* --- Band sections --- */
+
+.ahu-section {
+    margin-bottom: 16px;
+}
+
+.ahu-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 2px 8px;
+}
+
+.ahu-section-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.ahu-section-note {
+    font-size: 12px;
+    color: #9aa7b3;
+    text-align: right;
+}
+
+.ahu-section.is-critical .ahu-section-title { color: #ff9a92; }
+.ahu-section.is-warning .ahu-section-title  { color: #f5b83d; }
+.ahu-section.is-normal .ahu-section-title   { color: #4ade80; }
+.ahu-section.is-off .ahu-section-title      { color: #9aa7b3; }
+
+/*
+ * auto-fill keeps the mockup's 3-up rhythm on a phone (3 x 104px + gaps
+ * still fits 390px) and widens to as many columns as the wall display
+ * has room for, with no per-breakpoint arithmetic.
+ */
+.ahu-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 8px;
+}
+
+/* --- Cards --- */
+
+.ahu-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    min-height: 78px;
+    padding: 8px 6px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.ahu-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+}
+
+.ahu-card-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.15;
+}
+
+.ahu-card-tag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+}
+
+.ahu-card.is-normal {
+    background: #151b22;
+    border: 1px solid #222b34;
+}
+
+.ahu-card.is-normal .ahu-card-name {
+    color: #9aa7b3;
+    font-weight: 500;
+}
+
+.ahu-card.is-normal .ahu-card-value {
+    font-size: 18px;
+    font-weight: 500;
+}
+
+.ahu-card.is-warning {
+    background: #f5b83d;
+    border: 2px solid #ffd98a;
+    color: #1a1300;
+}
+
+.ahu-card.is-critical {
+    background: #c62828;
+    border: 2px solid #ff9a92;
+    color: #fff;
+}
+
+.ahu-card.is-off {
+    background: #1b222a;
+    border: 1px solid #2c3640;
+}
+
+.ahu-card.is-off .ahu-card-name {
+    color: #9aa7b3;
+    font-weight: 500;
+}
+
+.ahu-card.is-off .ahu-card-value {
+    color: #9aa7b3;
+    font-size: 18px;
+    font-weight: 500;
+}
+
+/*
+ * RUN indicator. 13px per the design brief (was a 6px dot), so the green
+ * is legible from across a control room. The dark ring keeps it readable
+ * on the amber and red band backgrounds as well as the dark ones.
+ */
+.ahu-run-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, .38);
+}
+
+.ahu-run-dot.is-run     { background: #4ade80; }
+.ahu-run-dot.is-off     { background: #ed3c3c; }
+.ahu-run-dot.is-unknown { background: #777; }
+
+/* --- Empty / unavailable notice --- */
+
+.ahu-empty {
+    padding: 14px 2px;
+    color: #9aa7b3;
+    font-size: 13px;
+}
+
+/* --- Responsive --- */
+
+@media (min-width: 1100px) {
+    .ahu-cards {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .equipment-grid:has(.ahu-dashboard) {
+        padding: 0 10px 16px;
+    }
+}
+
+@media (max-width: 600px) {
+    .equipment-grid:has(.ahu-dashboard) {
+        padding: 0 8px 12px;
+    }
+
+    .ahu-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ahu-tile-value {
+        font-size: 22px;
+    }
+
+    .ahu-cards {
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        gap: 6px;
+    }
+
+    .ahu-card {
+        min-height: 72px;
+        padding: 7px 4px;
+    }
+
+    .ahu-card-value {
+        font-size: 17px;
+    }
+
+    .ahu-card.is-normal .ahu-card-value,
+    .ahu-card.is-off .ahu-card-value {
+        font-size: 16px;
+    }
+
+    .ahu-section-note {
+        font-size: 11px;
+    }
+}
+
+@media (max-width: 380px) {
+    .ahu-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ahu-cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
