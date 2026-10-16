@@ -224,119 +224,83 @@ function createAhuPlaceholderCard(number) {
     return card;
 }
 
-function createChillerCard(unit) {
+/*
+ * One card per unit in the All Units view.
+ *
+ * The presentation is the Issues First design language — a dark neutral card
+ * with a restrained severity accent — rather than the old solid red/green
+ * blocks. The band, badge, reason and readings all come from the shared
+ * helpers above, so this view can never classify a unit differently from the
+ * issues view.
+ *
+ * The readings are not capped at three the way a collapsed issue card is:
+ * this view is the inventory, so every value the API sends is shown, and a
+ * metric with no reading stays "--" rather than becoming a number.
+ */
+function hvacScUnitCard(entry) {
+    const { kind, label, unit } = entry;
+    const band = hvacScBandOf(kind, unit);
+
     const card = document.createElement("div");
-    const status = getStatus(unit);
-    card.className = "unit-card hvac-card chiller-card status-" + status;
-    card.dataset.status = status;
+    card.className = "hsc-card hsc-u is-" + band;
+    card.dataset.band = band;
 
-    const header = document.createElement("div");
-    header.className = "hvac-card-header";
+    const row = document.createElement("div");
+    row.className = "hsc-card-row";
 
-    const title = document.createElement("span");
-    title.className = "hvac-card-title";
-    title.textContent = "Chiller " + unit.name;
+    /*
+     * The green RUN dot belongs to the healthy units only. A unit in an issue
+     * band already carries a badge saying what is wrong, and a green dot
+     * beside it would read as "fine".
+     */
+    if (band === "normal") {
+        const dot = document.createElement("span");
+        dot.className = "hsc-o-dot";
+        dot.title = "RUN";
+        row.appendChild(dot);
+    }
 
-    header.appendChild(title);
-    card.appendChild(header);
+    const name = document.createElement("span");
+    name.className = "hsc-card-name";
+    name.textContent = label;
+    row.appendChild(name);
 
-    const metrics = document.createElement("div");
-    metrics.className = "chiller-metrics";
+    const badgeText = hvacScBadge(kind, unit, band);
 
-    const formatValue = (value, suffix) => {
-        if (value === null || value === undefined || value === "") {
-            return "--" + suffix;
-        }
+    if (badgeText) {
+        const badge = document.createElement("span");
+        badge.className = "hsc-badge";
+        badge.textContent = badgeText;
+        row.appendChild(badge);
+    }
 
-        const n = Number(value);
+    card.appendChild(row);
 
-        return Number.isFinite(n)
-            ? n.toFixed(1) + suffix
-            : String(value) + suffix;
-    };
+    const reason = hvacScReason(kind, unit, band);
 
-    const fields = [
-        { label: "SP:", val: unit.setpoint,            suffix: " °C" },
-        { label: "RLA:", val: unit.rla,                suffix: " %" },
-        { label: "EL:", val: unit.evap_leaving_temp,  suffix: " °C", max: unit.evap_leaving_temp_max },
-        { label: "EE:", val: unit.evap_entering_temp, suffix: " °C" },
-        { label: "CE:", val: unit.cond_entering_temp, suffix: " °C", max: unit.cond_entering_temp_max },
-        { label: "CL:", val: unit.cond_leaving_temp,  suffix: " °C" }
-    ];
+    if (reason) {
+        const why = document.createElement("p");
+        why.className = "hsc-why";
+        why.textContent = reason;
+        card.appendChild(why);
+    }
 
-    fields.forEach(f => {
-        const item = document.createElement("div");
-        item.className = "metric-item";
+    const chips = document.createElement("div");
+    chips.className = "hsc-chips";
 
-        item.innerHTML =
-            `<span class="m-lbl">${f.label}</span>` +
-            `<span class="m-val">${formatValue(f.val, f.suffix)}</span>`;
+    hvacScMetrics(kind, unit).forEach(m => chips.appendChild(
+        hvacScValueChip(
+            m,
+            hvacScNum(m.value) === null
+                ? "n"
+                : (hvacScIsViolation(m) ? "is-bad" : "")
+        )
+    ));
 
-        applyAlarmClass(item.querySelector(".m-val"), f.val, f.min, f.max);
-
-        metrics.appendChild(item);
-    });
-
-    card.appendChild(metrics);
+    card.appendChild(chips);
 
     return card;
 }
-
-function createCompactHvacCard(prefix, unit) {
-    const card = document.createElement("div");
-    const status = getStatus(unit);
-    card.className = "unit-card hvac-card compact-card status-" + status;
-    card.dataset.status = status;
-
-    const header = document.createElement("div");
-    header.className = "hvac-card-header";
-
-    const title = document.createElement("span");
-    title.className = "hvac-card-title";
-    title.textContent = prefix + " " + unit.name;
-
-    header.appendChild(title);
-    card.appendChild(header);
-
-    const metrics = document.createElement("div");
-    metrics.className = "compact-metrics";
-
-    const formatValue = (value, suffix) => {
-        if (value === null || value === undefined || value === "") {
-            return "--" + suffix;
-        }
-
-        const n = Number(value);
-
-        return Number.isFinite(n)
-            ? n.toFixed(1) + suffix
-            : String(value) + suffix;
-    };
-
-    const fields = [
-        { label: "Freq:", val: unit.frequency, suffix: " Hz" },
-        { label: "Curr:", val: unit.current,   suffix: " A", min: unit.current_min, max: unit.current_max },
-        { label: "Drv Tmp:", val: unit.drive_temperature, suffix: " °C" }
-    ];
-
-    fields.forEach(f => {
-        const item = document.createElement("div");
-        item.className = "metric-item";
-
-        item.innerHTML =
-            `<span class="m-lbl">${f.label}</span>` +
-            `<span class="m-val">${formatValue(f.val, f.suffix)}</span>`;
-
-        applyAlarmClass(item.querySelector(".m-val"), f.val, f.min, f.max);
-
-        metrics.appendChild(item);
-    });
-
-    card.appendChild(metrics);
-
-    return card;
-}
-
 
 
 /* =========================================================
@@ -4096,288 +4060,133 @@ function renderHvacSc() {
 }
 
 /*
- * The "All Units" view: the existing G1-G2 / G3 grouped matrix, unchanged in
- * structure, group labels, membership and card builders. It is built as an
- * element rather than appended to the grid so the issues view and this one can
- * be swapped without either knowing about the other.
+ * The "All Units" view.
  *
- * The two group counts are computed from the units actually present rather
- * than hardcoded, so a group badge can never claim more units than the API
- * returned.
+ * Same inventory as before — the G1-G2 / G3 groups, the four categories, the
+ * per-category name lists and the exact name lookups are unchanged, so the
+ * membership and ordering are identical. What changed is the presentation:
+ * each category is now a full-width block whose unit cards flow into as many
+ * columns as the display has room for, instead of four hand-tuned matrix
+ * columns that wrapped names and values at narrow widths.
+ *
+ * The category name lists are the original ones: chillers/CCP/CHWP are matched
+ * on the bare number, cooling towers on the upper-cased tower name.
  */
+function hvacScGroupElement(title, categories, present) {
+    const group = document.createElement("section");
+    group.className = "hvac-group-card";
+
+    const body = document.createElement("div");
+    body.className = "hvac-group-body";
+
+    let count = 0;
+
+    categories.forEach(cat => {
+        const block = document.createElement("div");
+        block.className = "hvac-cat";
+
+        const head = document.createElement("div");
+        head.className = "hvac-col-header";
+        head.textContent = cat.header;
+        block.appendChild(head);
+
+        const items = document.createElement("div");
+        items.className = "hvac-cat-items";
+
+        cat.names.forEach(name => {
+            const unit = present(cat, name);
+
+            if (unit) {
+                items.appendChild(hvacScUnitCard(unit));
+                count++;
+            }
+        });
+
+        block.appendChild(items);
+        body.appendChild(block);
+    });
+
+    const header = document.createElement("div");
+    header.className = "hvac-group-header";
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "hvac-group-title";
+    titleEl.textContent = title;
+
+    const countEl = document.createElement("span");
+    countEl.className = "hvac-group-count";
+    countEl.textContent = count + " units";
+
+    header.appendChild(titleEl);
+    header.appendChild(countEl);
+    group.appendChild(header);
+    group.appendChild(body);
+
+    return group;
+}
+
 function hvacScMatrixElement() {
     const chiller = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
     const ccp = Array.isArray(allData.CCP) ? allData.CCP : [];
     const chwp = Array.isArray(allData.CHWP) ? allData.CHWP : [];
     const ct = Array.isArray(allData.CT) ? allData.CT : [];
 
+    const seq = (kind, prefix, from, to) => {
+        const names = [];
+
+        for (let n = from; n <= to; n++) {
+            names.push(String(n));
+        }
+
+        return { kind, header: prefix + " (" + from + "-" + to + ")", names };
+    };
+
+    const towers = (header, list) => ({ kind: "CT", header, names: list });
+
+    const lookup = {
+        CHILLER: n => chiller.find(x => String(x.name) === String(n)),
+        CCP: n => ccp.find(x => String(x.name) === String(n)),
+        CHWP: n => chwp.find(x => String(x.name) === String(n)),
+        CT: n => ct.find(x => String(x.name).toUpperCase() === String(n).toUpperCase())
+    };
+
+    const find = (cat, name) => {
+        const unit = lookup[cat.kind](name);
+
+        if (!unit) {
+            return null;
+        }
+
+        return {
+            kind: cat.kind === "CHILLER" ? "chiller" : "compact",
+            prefix: cat.kind === "CHILLER" ? "Chiller" : cat.kind,
+            label: (cat.kind === "CHILLER" ? "Chiller " : cat.kind + " ") + unit.name,
+            unit
+        };
+    };
+
     const container = document.createElement("div");
     container.className = "hvac-sc-container";
 
-
-    // =============================================================
-    // GROUP HVAC G1-G2
-    // =============================================================
-
-    const g12Group = document.createElement("section");
-    g12Group.className = "hvac-group-card";
-
-    const g12Matrix = document.createElement("div");
-    g12Matrix.className = "hvac-matrix";
-
-    let g12Count = 0;
-
-
-    // CHILLER 1-5
-    const ch15Col = document.createElement("div");
-    ch15Col.className = "hvac-col";
-    ch15Col.innerHTML =
-        `<div class="hvac-col-header">CHILLER (1-5)</div>`;
-
-    const ch15Items = document.createElement("div");
-    ch15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = chiller.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ch15Items.appendChild(createChillerCard(unit));
-            g12Count++;
-        }
-    });
-
-    ch15Col.appendChild(ch15Items);
-    g12Matrix.appendChild(ch15Col);
-
-
-    // CCP 1-5
-    const ccp15Col = document.createElement("div");
-    ccp15Col.className = "hvac-col";
-    ccp15Col.innerHTML =
-        `<div class="hvac-col-header">CCP (1-5)</div>`;
-
-    const ccp15Items = document.createElement("div");
-    ccp15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = ccp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ccp15Items.appendChild(
-                createCompactHvacCard("CCP", unit)
-            );
-            g12Count++;
-        }
-    });
-
-    ccp15Col.appendChild(ccp15Items);
-    g12Matrix.appendChild(ccp15Col);
-
-
-    // CHWP 1-5
-    const chwp15Col = document.createElement("div");
-    chwp15Col.className = "hvac-col";
-    chwp15Col.innerHTML =
-        `<div class="hvac-col-header">CHWP (1-5)</div>`;
-
-    const chwp15Items = document.createElement("div");
-    chwp15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = chwp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            chwp15Items.appendChild(
-                createCompactHvacCard("CHWP", unit)
-            );
-            g12Count++;
-        }
-    });
-
-    chwp15Col.appendChild(chwp15Items);
-    g12Matrix.appendChild(chwp15Col);
-
-
-    // CT 1A-6B
-    const ct16Col = document.createElement("div");
-    ct16Col.className = "hvac-col";
-    ct16Col.innerHTML =
-        `<div class="hvac-col-header">COOLING TOWER (1A-6B)</div>`;
-
-    const ct16Items = document.createElement("div");
-    ct16Items.className = "hvac-col-items";
-
-    [
-        ["1A", "1B"],
-        ["2A", "2B"],
-        ["3A", "3B"],
-        ["4A", "4B"],
-        ["5A", "5B"],
-        ["6A", "6B"]
-    ].forEach(pair => {
-        const pairRow = document.createElement("div");
-        pairRow.className = "ct-pair-row";
-
-        pair.forEach(name => {
-            const unit = ct.find(
-                x => String(x.name).toUpperCase() === name
-            );
-
-            if (unit) {
-                pairRow.appendChild(
-                    createCompactHvacCard("CT", unit)
-                );
-                g12Count++;
-            }
-        });
-
-        ct16Items.appendChild(pairRow);
-    });
-
-    ct16Col.appendChild(ct16Items);
-    g12Matrix.appendChild(ct16Col);
-
-    g12Group.innerHTML = `
-        <div class="hvac-group-header">
-            <span class="hvac-group-title">HVAC G1-G2</span>
-            <span class="hvac-group-count">${g12Count} units</span>
-        </div>
-    `;
-
-    g12Group.appendChild(g12Matrix);
-    container.appendChild(g12Group);
-
-
-    // =============================================================
-    // GROUP HVAC G3
-    // =============================================================
-
-    const g3Group = document.createElement("section");
-    g3Group.className = "hvac-group-card";
-
-    const g3Matrix = document.createElement("div");
-    g3Matrix.className = "hvac-matrix";
-
-    let g3Count = 0;
-
-
-    // CHILLER 6-9
-    const ch69Col = document.createElement("div");
-    ch69Col.className = "hvac-col";
-    ch69Col.innerHTML =
-        `<div class="hvac-col-header">CHILLER (6-9)</div>`;
-
-    const ch69Items = document.createElement("div");
-    ch69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = chiller.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ch69Items.appendChild(createChillerCard(unit));
-            g3Count++;
-        }
-    });
-
-    ch69Col.appendChild(ch69Items);
-    g3Matrix.appendChild(ch69Col);
-
-
-    // CCP 6-9
-    const ccp69Col = document.createElement("div");
-    ccp69Col.className = "hvac-col";
-    ccp69Col.innerHTML =
-        `<div class="hvac-col-header">CCP (6-9)</div>`;
-
-    const ccp69Items = document.createElement("div");
-    ccp69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = ccp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ccp69Items.appendChild(
-                createCompactHvacCard("CCP", unit)
-            );
-            g3Count++;
-        }
-    });
-
-    ccp69Col.appendChild(ccp69Items);
-    g3Matrix.appendChild(ccp69Col);
-
-
-    // CHWP 6-9
-    const chwp69Col = document.createElement("div");
-    chwp69Col.className = "hvac-col";
-    chwp69Col.innerHTML =
-        `<div class="hvac-col-header">CHWP (6-9)</div>`;
-
-    const chwp69Items = document.createElement("div");
-    chwp69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = chwp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            chwp69Items.appendChild(
-                createCompactHvacCard("CHWP", unit)
-            );
-            g3Count++;
-        }
-    });
-
-    chwp69Col.appendChild(chwp69Items);
-    g3Matrix.appendChild(chwp69Col);
-
-
-    // CT 9A-13B
-    const ct913Col = document.createElement("div");
-    ct913Col.className = "hvac-col";
-    ct913Col.innerHTML =
-        `<div class="hvac-col-header">COOLING TOWER (9A-13B)</div>`;
-
-    const ct913Items = document.createElement("div");
-    ct913Items.className = "hvac-col-items";
-
-    [
-        ["9A", "9B"],
-        ["10A", "10B"],
-        ["11A", "11B"],
-        ["12A", "12B"],
-        ["13A", "13B"]
-    ].forEach(pair => {
-        const pairRow = document.createElement("div");
-        pairRow.className = "ct-pair-row";
-
-        pair.forEach(name => {
-            const unit = ct.find(
-                x => String(x.name).toUpperCase() === name
-            );
-
-            if (unit) {
-                pairRow.appendChild(
-                    createCompactHvacCard("CT", unit)
-                );
-                g3Count++;
-            }
-        });
-
-        ct913Items.appendChild(pairRow);
-    });
-
-    ct913Col.appendChild(ct913Items);
-    g3Matrix.appendChild(ct913Col);
-
-    g3Group.innerHTML = `
-        <div class="hvac-group-header">
-            <span class="hvac-group-title">HVAC G3</span>
-            <span class="hvac-group-count">${g3Count} units</span>
-        </div>
-    `;
-
-    g3Group.appendChild(g3Matrix);
-    container.appendChild(g3Group);
+    container.appendChild(hvacScGroupElement("HVAC G1-G2", [
+        seq("CHILLER", "CHILLER", 1, 5),
+        seq("CCP", "CCP", 1, 5),
+        seq("CHWP", "CHWP", 1, 5),
+        towers("COOLING TOWER (1A-6B)", [
+            "1A", "1B", "2A", "2B", "3A", "3B",
+            "4A", "4B", "5A", "5B", "6A", "6B"
+        ])
+    ], find));
+
+    container.appendChild(hvacScGroupElement("HVAC G3", [
+        seq("CHILLER", "CHILLER", 6, 9),
+        seq("CCP", "CCP", 6, 9),
+        seq("CHWP", "CHWP", 6, 9),
+        towers("COOLING TOWER (9A-13B)", [
+            "9A", "9B", "10A", "10B", "11A", "11B",
+            "12A", "12B", "13A", "13B"
+        ])
+    ], find));
 
     return container;
 }

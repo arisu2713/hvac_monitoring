@@ -851,18 +851,41 @@ footer {
     border: 1px solid #3a3a3a;
 }
 
-/* 4-Column Horizontal Equipment Matrix */
-.hvac-matrix {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr);
-    gap: 16px;
-    align-items: start;
-}
-
-.hvac-col {
+/*
+ * Category blocks. Each of the four categories (CHILLER / CCP / CHWP /
+ * COOLING TOWER) is a full-width block whose unit cards flow into as many
+ * columns as the group has room for. The old layout put the four categories
+ * in four fixed-fraction columns, which squeezed the cooling-tower column
+ * until its values wrapped mid-word.
+ */
+.hvac-group-body {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 16px;
+}
+
+.hvac-cat {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+/*
+ * auto-fill, so a wide group gets more columns and a narrow one falls back to
+ * a single column, with no per-breakpoint arithmetic. The min() lets a track
+ * shrink below the minimum rather than overflowing the group.
+ *
+ * The 232px floor is measured, not guessed: the widest name+badge pair on the
+ * page is "Chiller 1" beside the "▲ OUT OF RANGE" badge, which needs 222px of
+ * card, so a 200px floor made those three names wrap onto a second line while
+ * every other card stayed on one.
+ */
+.hvac-cat-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(232px, 100%), 1fr));
+    gap: 8px;
+    min-width: 0;
 }
 
 .hvac-col-header {
@@ -886,19 +909,6 @@ footer {
     height: 13px;
     background: #58a6ff;
     border-radius: 2px;
-}
-
-.hvac-col-items {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-/* Cooling Tower Pairs Row */
-.ct-pair-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
 }
 
 /* Unit Card Overrides for HVAC SC */
@@ -937,18 +947,14 @@ footer {
  * have been dead CSS pointing at nothing.
  */
 
-/* Chiller Card (Taller, spacious 6-metric grid) */
-.chiller-card {
-    min-height: 124px;
-}
-
-.chiller-metrics {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 4px 10px;
-    margin-top: 4px;
-    font-size: 11.5px;
-}
+/*
+ * .chiller-card and .chiller-metrics were removed with the HVAC SC All Units
+ * matrix's chiller card. That card is gone, and the classes had no other
+ * emitter, so the rules would have been dead CSS pointing at nothing.
+ *
+ * .compact-card and .compact-metrics below are NOT dead: the AHU / EF G8 page
+ * still builds its cards from them, so they stay.
+ */
 
 /* Compact Card (CCP / CHWP / CT - readable and well-proportioned) */
 .compact-card {
@@ -990,25 +996,12 @@ footer {
         font-size: 21px;
     }
 
-    .hvac-matrix {
-        gap: 20px;
-    }
-
     .hvac-col-header {
         font-size: 14px;
     }
 
     .hvac-card-title {
         font-size: 16px;
-    }
-
-    .chiller-card {
-        min-height: 130px;
-    }
-
-    .chiller-metrics {
-        font-size: 12.5px;
-        gap: 5px 12px;
     }
 
     .compact-card {
@@ -1026,31 +1019,12 @@ footer {
     .hvac-sc-container {
         grid-template-columns: 1fr;
     }
-
-    .hvac-matrix {
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
 }
 
 /* Mobile Responsive */
 @media (max-width: 650px) {
-    .hvac-matrix {
-        grid-template-columns: 1fr;
-        gap: 16px;
-    }
-
-    .ct-pair-row {
-        grid-template-columns: 1fr 1fr;
-        gap: 6px;
-    }
-
     .hvac-group-card {
         padding: 12px 14px 16px;
-    }
-
-    .chiller-card {
-        min-height: 115px;
     }
 
     .compact-card {
@@ -3069,6 +3043,46 @@ html:has(.alarm-page) .alarm-page {
     border: 2px solid #2c3640;
 }
 
+/*
+ * All Units unit card.
+ *
+ * The base .hsc-card carries no surface of its own: in the issues view a card
+ * is only ever one of the three issue bands, so the band rules above are the
+ * only thing that paints it. This view also draws healthy units, which had no
+ * background at all and rendered as bare text on the page.
+ *
+ * Here every unit gets the same dark neutral surface and a restrained left
+ * accent stripe instead of the issues view's full 2px coloured border and
+ * tinted fill — 49 solid red/green cards is exactly what this view is meant
+ * to stop doing.
+ *
+ * The .hsc-card.hsc-u.is-* selectors are deliberately three classes deep so
+ * they beat .hsc-card.is-critical (two classes) on specificity rather than
+ * depending on where in the file this block happens to sit.
+ */
+.hsc-card.hsc-u {
+    background: #151b22;
+    border: 1px solid #222b34;
+    border-left-width: 3px;
+    padding: 10px 12px;
+}
+
+.hsc-card.hsc-u.is-critical { border-left-color: #ff6b63; }
+.hsc-card.hsc-u.is-warning  { border-left-color: #f5b83d; }
+.hsc-card.hsc-u.is-off      { border-left-color: #4a5763; }
+.hsc-card.hsc-u.is-normal   { border-left-color: #4ade80; }
+
+/*
+ * In the issues view the name row is name-on-the-left, badge-on-the-right. A
+ * healthy All Units card has no badge, and with nothing to balance it the name
+ * was being pushed to the right edge. The name takes the free space instead, so
+ * it sits left whether or not a badge follows it.
+ */
+.hsc-card.hsc-u .hsc-card-name {
+    flex: 1;
+    min-width: 0;
+}
+
 .hsc-card-row {
     display: flex;
     align-items: center;
@@ -3210,10 +3224,15 @@ html:has(.alarm-page) .alarm-page {
     font-size: 14px;
 }
 
+/*
+ * The green RUN indicator. 12px rather than the original 6px, which was too
+ * small to read as a status light at wall-display distance. flex:0 0 auto is
+ * what keeps it from being squeezed by the name beside it in a flex row.
+ */
 .hsc-o-dot {
     flex: 0 0 auto;
-    width: 6px;
-    height: 6px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: #4ade80;
 }
