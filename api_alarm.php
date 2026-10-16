@@ -78,6 +78,12 @@ try {
      * row set below, so the summary stays correct when history is truncated.
      * NOW(6) comes from the database so the window and the reported time are
      * measured on the same clock the pollers stamp raised_at with.
+     *
+     * total_events / newest_raised_at are added so the page can distinguish
+     * "no alarms right now" from "this table has never been written to". Both
+     * look identical in the counts above (all zero), and on a deployment whose
+     * poller does not write alarm_events the difference is the whole answer:
+     * a blank alarm page must not read as "the building is alarm-free".
      */
     $counts = $pdo->query("
         SELECT
@@ -87,6 +93,18 @@ try {
             COUNT(*)                                  AS active_total
         FROM alarm_events
         WHERE status = 'ACTIVE'
+    ")->fetch();
+
+    /*
+     * Whole-table coverage, independent of the ACTIVE/window filters.
+     * Read-only: a COUNT and a MAX over the existing rows.
+     */
+    $coverage = $pdo->query("
+        SELECT
+            COUNT(*)       AS total_events,
+            MAX(raised_at) AS newest_raised_at,
+            COUNT(DISTINCT source) AS source_count
+        FROM alarm_events
     ")->fetch();
 
     /*
@@ -165,10 +183,66 @@ try {
         'matched'      => (int) $matched['c'],
         'limit'        => $limit,
         'truncated'    => $returned < (int) $matched['c'],
+        /*
+         * Coverage of the table as a whole. `source_available` is true here
+         * because the queries above succeeded; `total_events` lets the page
+         * tell an empty-but-working feed from one nothing has ever written to.
+         */
+        'source_available' => true,
+        'total_events'     => (int) $coverage['total_events'],
+        'source_count'     => (int) $coverage['source_count'],
+        'newest_raised_at' => $coverage['newest_raised_at'],
         'alarms'       => $alarms,
     ]);
 } catch (Throwable $e) {
-    error_log('[' . basename(__FILE__) . '] ' . $e->getMessage());
+    /*
+     * A missing alarm_events table is not an internal error — it is the
+     * expected state on a database the alarm poller does not write to, and the
+     * page has a specific, actionable thing to say about it. Reporting it as a
+     * generic 500 (or as success with zero alarms) would leave the operator
+     * staring at a blank ALARM tab with no way to tell it apart from a
+     * genuinely alarm-free building.
+     *
+     * Only the missing-table case is special-cased. Every other failure keeps
+     * the existing 500 + generic message, so no error text reaches the client.
+     */
+    $sqlState = $e instanceof PDOException ? $e->getCode() : '';
+    $driverCode = $e instanceof PDOException
+        ? (int) ($e->errorInfo[1] ?? 0)
+        : 0;
+
+    $tableMissing = $sqlState === '42S02' || $driverCode === 1146;
+
+    error_log(
+        '[' . basename(__FILE__) . '] '
+        . ($tableMissing ? 'alarm_events table missing' : $e->getMessage())
+    );
+
+    if ($tableMissing) {
+        http_response_code(200);
+
+        echo json_encode([
+            'success'          => true,
+            'source_available' => false,
+            'counts'           => [
+                'active_alarm'   => 0,
+                'active_warning' => 0,
+                'active_total'   => 0,
+            ],
+            'window_hours'     => $hours,
+            'server_time'      => null,
+            'returned'         => 0,
+            'matched'          => 0,
+            'limit'            => $limit,
+            'truncated'        => false,
+            'total_events'     => 0,
+            'source_count'     => 0,
+            'newest_raised_at' => null,
+            'alarms'           => [],
+        ]);
+
+        exit;
+    }
 
     http_response_code(500);
 

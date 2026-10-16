@@ -486,7 +486,34 @@ try {
         'EC_FAN3_SPEED' => 'fan3_frequency',
     ];
 
-    foreach ($pdo->query($hnxG8Sql)->fetchAll() as $row) {
+    /*
+     * AHU 94-95 source availability.
+     *
+     * hnx_g8_points / hnx_g8_current were created 2026-10-06, AFTER the
+     * one-time schema import the hosting database was built from, so on a
+     * database that predates them this query fails with "table doesn't exist".
+     * Letting that escape would 500 the WHOLE endpoint and blank all 97 AHU
+     * cards in order to report a problem with two of them — the failure of a
+     * two-unit source must not be able to take down the other 95.
+     *
+     * So the failure is caught here and turned into an explicit availability
+     * flag, which the units below carry through to the page.
+     */
+    $hnxG8Available = true;
+    $hnxG8Rows = [];
+
+    try {
+        $hnxG8Rows = $pdo->query($hnxG8Sql)->fetchAll();
+    } catch (Throwable $e) {
+        $hnxG8Available = false;
+
+        error_log(
+            '[' . basename(__FILE__) . '] AHU 94-95 source (hnx_g8) '
+            . 'unavailable: ' . $e->getMessage()
+        );
+    }
+
+    foreach ($hnxG8Rows as $row) {
 
         $unitName = 'AHU ' . (int)$row['equipment_no'];
 
@@ -593,6 +620,59 @@ try {
                     ? (float)$row['value_double']
                     : null;
         }
+    }
+
+    /*
+     * AHU 94-95 are always emitted, even when their source is unreachable.
+     *
+     * The G8 page lays its four AHU cards out by name and skips any name the
+     * API did not send, so a missing unit silently collapses the row and
+     * shifts the page — and the main AHU page, which no longer lists 94/95 as
+     * placeholders, simply drops them. Emitting the unit with run=null (and
+     * `source_available`=false) instead keeps both pages honest: the card is
+     * drawn, greyed as unknown, and says why, rather than disappearing.
+     *
+     * run stays NULL, never 0. "We cannot see this unit" and "this unit is
+     * switched off" are different facts and must not look alike.
+     */
+    foreach (['94', '95'] as $hnxNo) {
+
+        $unitName = 'AHU ' . $hnxNo;
+
+        if (!isset($units[$unitName])) {
+            $units[$unitName] = [
+                'name'        => $unitName,
+                'run'         => null,
+                'alarm'       => null,
+                'temp'        => null,
+                'temp_max'    => $tempMax,
+                'frequency'   => null,
+                'last_update' => null,
+
+                'fan1_status' => null,
+                'fan2_status' => null,
+                'fan3_status' => null,
+
+                'fan1_frequency' => null,
+                'fan2_frequency' => null,
+                'fan3_frequency' => null,
+
+                'duct_rh'     => null,
+
+                'points' => [
+                    'run'   => [],
+                    'alarm' => null,
+                    'temp'  => null
+                ]
+            ];
+        }
+
+        /*
+         * Present in the response either way; false only when the hnx_g8
+         * source could not be read at all, which is what the page reports as
+         * "source unavailable" rather than as an offline unit.
+         */
+        $units[$unitName]['source_available'] = $hnxG8Available;
     }
 
     /*
