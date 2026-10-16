@@ -3025,10 +3025,30 @@ html:has(.alarm-page) .alarm-page {
 .hsc-section.is-off .hsc-section-title      { color: #9aa7b3; }
 .hsc-section.is-normal .hsc-section-title   { color: #4ade80; }
 
-/* --- Issue card: full width, one per row --- */
+/* --- Issue cards: one per row on a phone, columns when the width allows --- */
 
+/*
+ * auto-fill keeps the mockup's single-column stack on a phone and widens to as
+ * many columns as the display has room for, with no per-breakpoint arithmetic.
+ * The min() lets a track shrink below 320px on a very narrow phone instead of
+ * overflowing it, and auto-fill rather than auto-fit is what stops a lone card
+ * from stretching across the whole viewport.
+ */
+.hsc-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+    gap: 10px;
+}
+
+/*
+ * Flex column so the expander can be pushed to the foot of the card: cards in
+ * a row share the tallest one's height, and the Show all values control then
+ * lines up across the row instead of floating mid-card.
+ */
 .hsc-card {
-    margin: 0 0 10px;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
     padding: 12px 14px;
     border-radius: 12px;
     box-sizing: border-box;
@@ -3137,10 +3157,16 @@ html:has(.alarm-page) .alarm-page {
     color: #c9d3dc;
 }
 
+/*
+ * margin-top:auto drops the control to the foot of the card, so it lines up
+ * across a row of cards that are sharing the tallest one's height. The
+ * padding keeps the 8px it used to get from its own margin.
+ */
 .hsc-more {
     display: inline-block;
-    margin-top: 8px;
-    padding: 0;
+    align-self: flex-start;
+    margin-top: auto;
+    padding: 8px 0 0;
     border: 0;
     background: none;
     color: #7fb2ff;
@@ -3153,9 +3179,19 @@ html:has(.alarm-page) .alarm-page {
     text-decoration: underline;
 }
 
-/* --- Normal: compact rows in one container --- */
+/* --- Normal: compact rows, flowed into columns when the width allows --- */
 
+/*
+ * Same auto-fill idiom as the issue cards: one column on a phone, as many as
+ * the display has room for otherwise. Without this a healthy unit's name and
+ * its readings sit at opposite ends of a 1400px row and the pair stops reading
+ * as one line.
+ */
 .hsc-ok {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+    gap: 6px;
+    padding: 6px;
     background: #151b22;
     border: 1px solid #222b34;
     border-radius: 12px;
@@ -3166,14 +3202,12 @@ html:has(.alarm-page) .alarm-page {
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
     min-height: 44px;
-    padding: 6px 14px;
-    border-bottom: 1px solid #222b34;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: #1b222a;
     font-size: 14px;
-}
-
-.hsc-o:last-child {
-    border-bottom: 0;
 }
 
 .hsc-o-dot {

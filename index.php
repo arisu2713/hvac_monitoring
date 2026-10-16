@@ -3933,7 +3933,15 @@ function hvacScBuildSection(band, entries) {
         return section;
     }
 
-    entries.forEach(e => section.appendChild(hvacScIssueCard(e)));
+    /*
+     * The cards get their own grid container so the stylesheet can flow them
+     * into columns on a wide display. On a phone that grid is a single column,
+     * so this is the same stack of full-width cards it has always been.
+     */
+    const cards = document.createElement("div");
+    cards.className = "hsc-cards";
+    entries.forEach(e => cards.appendChild(hvacScIssueCard(e)));
+    section.appendChild(cards);
 
     return section;
 }
