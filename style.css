@@ -503,9 +503,24 @@ footer {
         height: 9px;
     }
 
+    /*
+     * The nav WRAPS on narrow screens; it must never scroll sideways.
+     *
+     * This used to be `overflow-x: auto; flex-wrap: nowrap`, which pushed the
+     * buttons into a horizontal scroller: on a phone the last tab (ENERGY) sat
+     * off-screen with nothing to say it was there, and the strip could be
+     * dragged sideways independently of the page. Wrapping shows every tab at
+     * once and removes the nested horizontal scroller entirely.
+     *
+     * `flex: 0 0 auto` is kept on .nav-button below so buttons size to their
+     * labels and stay touch-friendly rather than being squeezed by flex-basis.
+     * min-width: 0 is deliberately NOT set: the buttons must be able to exceed
+     * a narrow row and wrap, not shrink to unreadable slivers.
+     */
     .equipment-nav {
-        overflow-x: auto;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        overflow-x: visible;
+        row-gap: 5px;
     }
 
     .nav-button {

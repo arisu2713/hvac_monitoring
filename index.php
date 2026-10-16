@@ -899,6 +899,32 @@ function createG8AhuCard(unit) {
 }
 
 /*
+ * Placeholder for a G8 unit the API did not return.
+ *
+ * The card is drawn in its proper slot and names the unit, so a missing unit
+ * reads as "this one is not reporting" rather than as a unit that does not
+ * exist. It carries no numbers at all — not even a zero — because the whole
+ * point is that nothing is known about it. Status is "unknown", which is the
+ * same grey the page already uses for a unit whose state cannot be read.
+ */
+function createG8MissingCard(name) {
+    const card = document.createElement("div");
+    card.className = "unit-card hvac-card compact-card g8-card status-unknown";
+    card.dataset.status = "unknown";
+
+    card.appendChild(g8CardHeader(name));
+
+    const metrics = document.createElement("div");
+    metrics.className = "compact-metrics";
+
+    metrics.appendChild(g8Metric("Status", "NO DATA"));
+
+    card.appendChild(metrics);
+
+    return card;
+}
+
+/*
  * EF 58-61 — Daikin / Niagara, via api_ef.php's EXHAUST_FAN_G8 key.
  *
  * Status, Frequency (Hz) and Motor Current (A). The status colours reuse the
@@ -991,6 +1017,20 @@ function g8Group(title, cards, note) {
 function g8EcFanNote(ahuByName) {
     const metrics = ["trip", "frequency", "temp_motor", "temp_electronic", "temp_module"];
 
+    /*
+     * Units whose whole source could not be read (api_ahu.php sets
+     * source_available=false when the hnx_g8 tables are unreachable). This is
+     * reported FIRST and separately from the uncollected-point cases below: a
+     * source that cannot be read at all is a different fact from a mapped
+     * point nobody has written yet, and conflating them would send someone
+     * looking for a poller that is running fine.
+     */
+    const sourceMissing = G8_AHU_9495.filter(name => {
+        const unit = ahuByName[name];
+
+        return unit && unit.source_available === false;
+    });
+
     const ecFanMissing = G8_AHU_9697.filter(name => {
         const unit = ahuByName[name];
 
@@ -1006,10 +1046,15 @@ function g8EcFanNote(ahuByName) {
         });
     });
 
+    /*
+     * Only units whose source IS readable can be reported as "points mapped
+     * but not written" — for an unreachable source every point is unknown for
+     * a different reason, already stated above.
+     */
     const freqMissing = G8_AHU_9495.filter(name => {
         const unit = ahuByName[name];
 
-        if (!unit) {
+        if (!unit || unit.source_available === false) {
             return false;
         }
 
@@ -1021,6 +1066,12 @@ function g8EcFanNote(ahuByName) {
     });
 
     const parts = [];
+
+    if (sourceMissing.length) {
+        parts.push("The HNX G8 source for " + sourceMissing.join(", ")
+            + " is not reachable from this database, so these units are shown "
+            + "as unknown " + G8_EMPTY + " rather than as stopped or zero.");
+    }
 
     if (freqMissing.length) {
         parts.push("EC fan frequency (" + freqMissing.join(", ")
@@ -1065,13 +1116,27 @@ function renderAhuEfG8() {
         }
     });
 
-    const ahuCards = G8_AHU_NAMES
-        .filter(name => ahuByName[name])
-        .map(name => createG8AhuCard(ahuByName[name]));
+    /*
+     * Walked in the order the constants declare, and a unit the API did not
+     * send becomes an explicit placeholder card rather than being filtered
+     * out. The comment above promises the four cards keep their positions and
+     * a missing unit "leaves a gap instead of shifting its neighbours", but
+     * .filter() did the opposite: it collapsed the row, so AHU 95 slid into
+     * AHU 94's place and the page silently showed three cards where the
+     * reader expects four. The placeholder holds the slot and names the unit,
+     * so the absence is visible instead of disguised.
+     */
+    const ahuCards = G8_AHU_NAMES.map(name => {
+        return ahuByName[name]
+            ? createG8AhuCard(ahuByName[name])
+            : createG8MissingCard(name);
+    });
 
-    const efCards = G8_EF_NAMES
-        .filter(name => efByName[name])
-        .map(name => createG8EfCard(efByName[name]));
+    const efCards = G8_EF_NAMES.map(name => {
+        return efByName[name]
+            ? createG8EfCard(efByName[name])
+            : createG8MissingCard(name);
+    });
 
     unitCount.textContent = (ahuCards.length + efCards.length) + " units";
 
@@ -1838,7 +1903,7 @@ function createAlarmHeaderRow() {
     return row;
 }
 
-function createAlarmGroup(title, alarms, isActive) {
+function createAlarmGroup(title, alarms, isActive, unavailable) {
     const group = document.createElement("div");
 
     group.className = "alarm-group" + (isActive ? " alarm-group-active" : "");
@@ -1861,7 +1926,16 @@ function createAlarmGroup(title, alarms, isActive) {
     if (!alarms.length) {
         const empty = document.createElement("div");
         empty.className = "alarm-empty";
-        empty.textContent = isActive ? "No active alarms" : "No cleared alarms in the window";
+
+        /*
+         * "No active alarms" is a claim about the building. It can only be
+         * made when the source was actually read; otherwise the honest
+         * statement is that nothing is known.
+         */
+        empty.textContent = unavailable
+            ? "No data — the alarm source is unavailable"
+            : (isActive ? "No active alarms" : "No cleared alarms in the window");
+
         group.appendChild(empty);
         return group;
     }
@@ -1954,12 +2028,54 @@ function renderAlarm() {
     summary.appendChild(toolbar);
     page.appendChild(summary);
 
+    /*
+     * Source banner.
+     *
+     * The summary above reads all zeros in three different situations that
+     * mean completely different things:
+     *
+     *   1. the alarm source cannot be read at all (source_available false);
+     *   2. it reads fine but has never held a row (total_events 0);
+     *   3. it holds history and there is simply nothing active right now.
+     *
+     * Only (3) is "the building is fine". Rendering (1) and (2) identically to
+     * (3) is what made the hosted page look like a working feed with nothing to
+     * report. Each case now says which one it is, and the banner disappears
+     * entirely in case (3) so a healthy page is not cluttered by a warning.
+     */
+    const sourceAvailable = data.source_available !== false;
+    const totalEvents = Number(data.total_events || 0);
+
+    let sourceMessage = null;
+
+    if (!sourceAvailable) {
+        sourceMessage = "ALARM SOURCE UNAVAILABLE — this database has no "
+            + "readable alarm_events table, so the counts below are not a "
+            + "statement about the building. No alarm data is being reported.";
+    } else if (totalEvents === 0) {
+        sourceMessage = "NO ALARM DATA — the alarm source is reachable but has "
+            + "never recorded an event, so nothing has been reported yet. "
+            + "This is not the same as a building with no alarms.";
+    }
+
+    if (sourceMessage) {
+        const banner = document.createElement("div");
+        banner.className = "alarm-notice alarm-source-notice";
+        banner.textContent = sourceMessage;
+        page.appendChild(banner);
+    }
+
     /* ---- ACTIVE is the prominent group ---- */
     const shownActive = alarmShowAll
         ? activeAlarms
         : activeAlarms.slice(0, ALARM_ACTIVE_PREVIEW);
 
-    page.appendChild(createAlarmGroup("ACTIVE ALARMS / WARNINGS", shownActive, true));
+    page.appendChild(createAlarmGroup(
+        "ACTIVE ALARMS / WARNINGS",
+        shownActive,
+        true,
+        !sourceAvailable
+    ));
 
     if (shownActive.length < activeAlarms.length) {
         const more = document.createElement("button");
@@ -1983,7 +2099,8 @@ function renderAlarm() {
     page.appendChild(createAlarmGroup(
         "CLEARED — RAISED OR CLEARED IN THE LAST " + windowHours + "h",
         clearedAlarms,
-        false
+        false,
+        !sourceAvailable
     ));
 
     /*
@@ -2785,13 +2902,13 @@ function exportEnergy(data) {
         return row;
     });
 
-    const xml = buildSpreadsheetXml(
+    const bytes = buildXlsxWorkbook(
         "ENERGY " + category,
         columns,
         rows
     );
 
-    downloadSpreadsheet(exportFilename("energy_" + category, data.from, data.to), xml);
+    downloadXlsx(exportFilename("energy_" + category, data.from, data.to), bytes);
 }
 
 /*
@@ -3172,13 +3289,13 @@ function exportTempRh(data) {
         return row;
     });
 
-    const xml = buildSpreadsheetXml(
+    const bytes = buildXlsxWorkbook(
         "TEMP RH " + (data.metric === "rh" ? "HUMIDITY" : "TEMPERATURE"),
         columns,
         rows
     );
 
-    downloadSpreadsheet(exportFilename("temp_rh_" + (data.metric || "temp"), data.from, data.to), xml);
+    downloadXlsx(exportFilename("temp_rh_" + (data.metric || "temp"), data.from, data.to), bytes);
 }
 
 function applyTempRhFilter(inputs, isReset) {
@@ -4701,20 +4818,36 @@ function registerHistoryChartResize(canvases, render) {
 }
 
 /* =========================================================
-   EXCEL EXPORT
+   EXCEL EXPORT (.xlsx)
    =========================================================
 
-   Writes a real SpreadsheetML 2003 workbook (.xls), not CSV renamed: the
-   extension matches the bytes, numbers stay numbers, and a NULL reading stays
-   an empty cell rather than becoming 0. No library, and it opens in Excel /
-   LibreOffice / Google Sheets without a warning.
+   Writes a genuine OOXML workbook — a ZIP container holding the
+   [Content_Types].xml, _rels/.rels, xl/workbook.xml, xl/styles.xml and
+   xl/worksheets/sheet1.xml parts Excel actually reads. Not CSV or HTML
+   renamed, and not the SpreadsheetML 2003 single-file XML this used to emit.
 
-   The `.xls` extension is deliberate — the older .xlsx (ZIP) format cannot be
-   produced honestly without a zip writer or a dependency.
+   Why it changed: SpreadsheetML 2003 is what Excel for Android refuses
+   outright ("file format is not supported"), and desktop Excel only opened it
+   behind a "the file format and extension don't match" warning. `.xlsx` is the
+   format every Excel build opens without a warning, so the bytes now match the
+   extension on Android as well as on desktop.
+
+   The ZIP is STORE (method 0, no deflate): an uncompressed xlsx is valid and
+   opens everywhere, and deflate would need an implementation. That keeps the
+   export dependency-free — no library, no CDN, no build step — which is the
+   constraint that forced SpreadsheetML in the first place.
+
+   Number and NULL handling are unchanged from the SpreadsheetML version, so
+   the exported data still matches the table exactly: numbers stay numbers and
+   a NULL reading stays an EMPTY cell, never a 0. Exporting a gap as 0 would
+   claim a measurement nobody took.
    ========================================================= */
 
 function xmlEscape(value) {
     return String(value)
+        /* XML 1.0 forbids most C0 controls outright; a stray one would make the
+           part unparseable and the workbook unopenable. */
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -4722,53 +4855,281 @@ function xmlEscape(value) {
         .replace(/'/g, "&apos;");
 }
 
-function spreadsheetCell(value) {
+/* ---------- ZIP container (store-only) ---------- */
+
+const CRC32_TABLE = (() => {
+    const table = new Uint32Array(256);
+
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+
+        for (let k = 0; k < 8; k++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+
+        table[n] = c >>> 0;
+    }
+
+    return table;
+})();
+
+function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+
+    for (let i = 0; i < bytes.length; i++) {
+        c = CRC32_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    }
+
+    return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/*
+ * A ZIP archive with every entry stored uncompressed. `files` is a list of
+ * { name, data } where data is a string (UTF-8 encoded here) or a Uint8Array.
+ *
+ * The modification time is the fixed DOS epoch 1980-01-01 rather than "now":
+ * an export has no meaningful mtime, and a constant keeps two exports of the
+ * same data byte-identical, which is what makes the output testable.
+ */
+function zipStore(files) {
+    const encoder = new TextEncoder();
+    const chunks = [];
+    const central = [];
+    let offset = 0;
+
+    const dosTime = 0;
+    const dosDate = 33; /* 1980-01-01 */
+
+    files.forEach(file => {
+        const nameBytes = encoder.encode(file.name);
+        const data = typeof file.data === "string"
+            ? encoder.encode(file.data)
+            : file.data;
+        const crc = crc32(data);
+
+        const local = new Uint8Array(30 + nameBytes.length);
+        const lv = new DataView(local.buffer);
+        lv.setUint32(0, 0x04034B50, true);  /* local file header */
+        lv.setUint16(4, 20, true);          /* version needed */
+        lv.setUint16(6, 0x0800, true);      /* names are UTF-8 */
+        lv.setUint16(8, 0, true);           /* method: store */
+        lv.setUint16(10, dosTime, true);
+        lv.setUint16(12, dosDate, true);
+        lv.setUint32(14, crc, true);
+        lv.setUint32(18, data.length, true);
+        lv.setUint32(22, data.length, true);
+        lv.setUint16(26, nameBytes.length, true);
+        lv.setUint16(28, 0, true);          /* extra field length */
+        local.set(nameBytes, 30);
+
+        chunks.push(local, data);
+
+        const cd = new Uint8Array(46 + nameBytes.length);
+        const cv = new DataView(cd.buffer);
+        cv.setUint32(0, 0x02014B50, true);  /* central directory header */
+        cv.setUint16(4, 20, true);          /* version made by */
+        cv.setUint16(6, 20, true);          /* version needed */
+        cv.setUint16(8, 0x0800, true);
+        cv.setUint16(10, 0, true);
+        cv.setUint16(12, dosTime, true);
+        cv.setUint16(14, dosDate, true);
+        cv.setUint32(16, crc, true);
+        cv.setUint32(20, data.length, true);
+        cv.setUint32(24, data.length, true);
+        cv.setUint16(28, nameBytes.length, true);
+        cv.setUint16(30, 0, true);          /* extra */
+        cv.setUint16(32, 0, true);          /* comment */
+        cv.setUint16(34, 0, true);          /* disk number */
+        cv.setUint16(36, 0, true);          /* internal attributes */
+        cv.setUint32(38, 0, true);          /* external attributes */
+        cv.setUint32(42, offset, true);     /* offset of local header */
+        cd.set(nameBytes, 46);
+
+        central.push(cd);
+        offset += local.length + data.length;
+    });
+
+    const centralSize = central.reduce((n, c) => n + c.length, 0);
+
+    const end = new Uint8Array(22);
+    const ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054B50, true);      /* end of central directory */
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);              /* comment length */
+
+    const out = new Uint8Array(offset + centralSize + end.length);
+    let p = 0;
+
+    chunks.forEach(c => { out.set(c, p); p += c.length; });
+    central.forEach(c => { out.set(c, p); p += c.length; });
+    out.set(end, p);
+
+    return out;
+}
+
+/* ---------- OOXML parts ---------- */
+
+/* A1, B1, ... Z1, AA1 — the reference each <c> must carry. */
+function xlsxColumnName(index) {
+    let name = "";
+    let n = index + 1;
+
+    while (n > 0) {
+        const rem = (n - 1) % 26;
+        name = String.fromCharCode(65 + rem) + name;
+        n = Math.floor((n - 1) / 26);
+    }
+
+    return name;
+}
+
+/*
+ * Excel rejects a sheet name containing []:*?/\ or longer than 31 characters,
+ * so the caller's label is sanitised rather than trusted.
+ */
+function xlsxSheetName(name) {
+    const clean = String(name).replace(/[\[\]:*?\/\\]/g, " ").trim();
+
+    return (clean || "Sheet1").slice(0, 31);
+}
+
+function xlsxCell(ref, value, style) {
+    const s = style ? ' s="' + style + '"' : "";
+
     if (value === null || value === undefined || value === "") {
-        return '<Cell/>';
+        return '<c r="' + ref + '"' + s + '/>';
     }
 
     if (typeof value === "number" && Number.isFinite(value)) {
-        return '<Cell><Data ss:Type="Number">' + value + '</Data></Cell>';
+        return '<c r="' + ref + '"' + s + '><v>' + value + '</v></c>';
     }
 
-    return '<Cell><Data ss:Type="String">' + xmlEscape(value) + '</Data></Cell>';
+    /* Inline strings avoid a sharedStrings part entirely, which is one fewer
+       thing to get wrong, and Excel reads them identically. */
+    return '<c r="' + ref + '"' + s + ' t="inlineStr"><is><t xml:space="preserve">'
+        + xmlEscape(value) + '</t></is></c>';
+}
+
+function xlsxWorksheetXml(columns, rows) {
+    const header = columns
+        .map((v, c) => xlsxCell(xlsxColumnName(c) + "1", v, 1))
+        .join("");
+
+    const body = rows.map((row, r) => {
+        const cells = row
+            .map((v, c) => xlsxCell(xlsxColumnName(c) + (r + 2), v))
+            .join("");
+
+        return '<row r="' + (r + 2) + '">' + cells + '</row>';
+    }).join("");
+
+    const lastCol = xlsxColumnName(Math.max(0, columns.length - 1));
+    const lastRow = rows.length + 1;
+
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        + '<dimension ref="A1:' + lastCol + lastRow + '"/>'
+        + '<sheetData>'
+        + '<row r="1">' + header + '</row>'
+        + body
+        + '</sheetData>'
+        + '</worksheet>';
+}
+
+/*
+ * Minimal but complete styles part. Only one style is used — xf index 1, the
+ * bold header font — but a workbook that references a style must declare it,
+ * and the fills/borders/cellStyleXfs boilerplate is required for Excel to
+ * accept the part at all.
+ */
+function xlsxStylesXml() {
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        + '<fonts count="2">'
+        + '<font><sz val="11"/><name val="Calibri"/></font>'
+        + '<font><b/><sz val="11"/><name val="Calibri"/></font>'
+        + '</fonts>'
+        + '<fills count="2">'
+        + '<fill><patternFill patternType="none"/></fill>'
+        + '<fill><patternFill patternType="gray125"/></fill>'
+        + '</fills>'
+        + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        + '<cellXfs count="2">'
+        + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        + '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+        + '</cellXfs>'
+        + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+        + '</styleSheet>';
 }
 
 /*
  * `columns` is a list of header strings; `rows` is a list of arrays whose
  * entries are string | number | null. Null becomes an empty cell.
  *
- * ExpandedRowCount / ExpandedColumnCount are declared up front: a strict
- * SpreadsheetML reader uses them to size the grid, and leaving them out can
- * make the last column or row unreachable in some versions of Excel.
+ * Returns the workbook as bytes, ready for a Blob.
  */
-function buildSpreadsheetXml(sheetName, columns, rows) {
-    const head = "<Row>" + columns.map(spreadsheetCell).join("") + "</Row>";
-    const body = rows.map(r => "<Row>" + r.map(spreadsheetCell).join("") + "</Row>").join("");
+function buildXlsxWorkbook(sheetName, columns, rows) {
+    const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<sheets><sheet name="' + xmlEscape(xlsxSheetName(sheetName))
+        + '" sheetId="1" r:id="rId1"/></sheets>'
+        + '</workbook>';
 
-    const rowCount = rows.length + 1;
-    const colCount = columns.length;
+    const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        + '<Default Extension="xml" ContentType="application/xml"/>'
+        + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        + '</Types>';
 
-    return '<?xml version="1.0" encoding="UTF-8"?>\n'
-        + '<?mso-application progid="Excel.Sheet"?>\n'
-        + '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n'
-        + ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n'
-        + ' xmlns:x="urn:schemas-microsoft-com:office:excel">\n'
-        + '<Worksheet ss:Name="' + xmlEscape(sheetName).slice(0, 31) + '">\n'
-        + '<Table ss:ExpandedColumnCount="' + colCount + '"'
-        + ' ss:ExpandedRowCount="' + rowCount + '" x:FullColumns="1" x:FullRows="1">\n'
-        + head + body + '</Table>\n'
-        + '</Worksheet>\n'
-        + '</Workbook>\n';
+    const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + '<Relationship Id="rId1"'
+        + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"'
+        + ' Target="xl/workbook.xml"/>'
+        + '</Relationships>';
+
+    const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + '<Relationship Id="rId1"'
+        + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+        + ' Target="worksheets/sheet1.xml"/>'
+        + '<Relationship Id="rId2"'
+        + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"'
+        + ' Target="styles.xml"/>'
+        + '</Relationships>';
+
+    /*
+     * Order matters only for readability; OOXML resolves parts through the
+     * relationship graph, not through archive order.
+     */
+    return zipStore([
+        { name: "[Content_Types].xml", data: contentTypes },
+        { name: "_rels/.rels", data: rootRels },
+        { name: "xl/workbook.xml", data: workbook },
+        { name: "xl/_rels/workbook.xml.rels", data: workbookRels },
+        { name: "xl/styles.xml", data: xlsxStylesXml() },
+        { name: "xl/worksheets/sheet1.xml", data: xlsxWorksheetXml(columns, rows) }
+    ]);
 }
 
 /*
- * A UTF-8 blob. The BOM is what makes Excel read the degree sign and the
- * ellipsis correctly instead of as mojibake.
+ * The MIME type is the one Excel for Android matches on before it even looks
+ * inside, so it has to be the real xlsx type — not the generic
+ * application/vnd.ms-excel the SpreadsheetML version used.
  */
-function downloadSpreadsheet(filename, xml) {
-    const blob = new Blob(["﻿", xml], {
-        type: "application/vnd.ms-excel;charset=utf-8"
+function downloadXlsx(filename, bytes) {
+    const blob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     });
 
     const url = URL.createObjectURL(blob);
@@ -4787,7 +5148,7 @@ function exportFilename(prefix, from, to) {
     const f = from || "all";
     const t = to || "all";
 
-    return prefix + "_" + f + "_to_" + t + ".xls";
+    return prefix + "_" + f + "_to_" + t + ".xlsx";
 }
 
 /* =========================================================
