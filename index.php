@@ -337,275 +337,6 @@ function createCompactHvacCard(prefix, unit) {
     return card;
 }
 
-function renderHvacSc() {
-    sectionTitle.textContent = "HVAC SC";
-
-    const chiller = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
-    const ccp = Array.isArray(allData.CCP) ? allData.CCP : [];
-    const chwp = Array.isArray(allData.CHWP) ? allData.CHWP : [];
-    const ct = Array.isArray(allData.CT) ? allData.CT : [];
-
-    unitCount.textContent =
-        (chiller.length + ccp.length + chwp.length + ct.length) + " units";
-
-    const container = document.createElement("div");
-    container.className = "hvac-sc-container";
-
-
-    // =============================================================
-    // GROUP HVAC G1-G2
-    // =============================================================
-
-    const g12Group = document.createElement("section");
-    g12Group.className = "hvac-group-card";
-
-    g12Group.innerHTML = `
-        <div class="hvac-group-header">
-            <span class="hvac-group-title">HVAC G1-G2</span>
-            <span class="hvac-group-count">27 units</span>
-        </div>
-    `;
-
-    const g12Matrix = document.createElement("div");
-    g12Matrix.className = "hvac-matrix";
-
-
-    // CHILLER 1-5
-    const ch15Col = document.createElement("div");
-    ch15Col.className = "hvac-col";
-    ch15Col.innerHTML =
-        `<div class="hvac-col-header">CHILLER (1-5)</div>`;
-
-    const ch15Items = document.createElement("div");
-    ch15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = chiller.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ch15Items.appendChild(createChillerCard(unit));
-        }
-    });
-
-    ch15Col.appendChild(ch15Items);
-    g12Matrix.appendChild(ch15Col);
-
-
-    // CCP 1-5
-    const ccp15Col = document.createElement("div");
-    ccp15Col.className = "hvac-col";
-    ccp15Col.innerHTML =
-        `<div class="hvac-col-header">CCP (1-5)</div>`;
-
-    const ccp15Items = document.createElement("div");
-    ccp15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = ccp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ccp15Items.appendChild(
-                createCompactHvacCard("CCP", unit)
-            );
-        }
-    });
-
-    ccp15Col.appendChild(ccp15Items);
-    g12Matrix.appendChild(ccp15Col);
-
-
-    // CHWP 1-5
-    const chwp15Col = document.createElement("div");
-    chwp15Col.className = "hvac-col";
-    chwp15Col.innerHTML =
-        `<div class="hvac-col-header">CHWP (1-5)</div>`;
-
-    const chwp15Items = document.createElement("div");
-    chwp15Items.className = "hvac-col-items";
-
-    [1, 2, 3, 4, 5].forEach(num => {
-        const unit = chwp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            chwp15Items.appendChild(
-                createCompactHvacCard("CHWP", unit)
-            );
-        }
-    });
-
-    chwp15Col.appendChild(chwp15Items);
-    g12Matrix.appendChild(chwp15Col);
-
-
-    // CT 1A-6B
-    const ct16Col = document.createElement("div");
-    ct16Col.className = "hvac-col";
-    ct16Col.innerHTML =
-        `<div class="hvac-col-header">COOLING TOWER (1A-6B)</div>`;
-
-    const ct16Items = document.createElement("div");
-    ct16Items.className = "hvac-col-items";
-
-    [
-        ["1A", "1B"],
-        ["2A", "2B"],
-        ["3A", "3B"],
-        ["4A", "4B"],
-        ["5A", "5B"],
-        ["6A", "6B"]
-    ].forEach(pair => {
-        const pairRow = document.createElement("div");
-        pairRow.className = "ct-pair-row";
-
-        pair.forEach(name => {
-            const unit = ct.find(
-                x => String(x.name).toUpperCase() === name
-            );
-
-            if (unit) {
-                pairRow.appendChild(
-                    createCompactHvacCard("CT", unit)
-                );
-            }
-        });
-
-        ct16Items.appendChild(pairRow);
-    });
-
-    ct16Col.appendChild(ct16Items);
-    g12Matrix.appendChild(ct16Col);
-
-    g12Group.appendChild(g12Matrix);
-    container.appendChild(g12Group);
-
-
-    // =============================================================
-    // GROUP HVAC G3
-    // =============================================================
-
-    const g3Group = document.createElement("section");
-    g3Group.className = "hvac-group-card";
-
-    g3Group.innerHTML = `
-        <div class="hvac-group-header">
-            <span class="hvac-group-title">HVAC G3</span>
-            <span class="hvac-group-count">22 units</span>
-        </div>
-    `;
-
-    const g3Matrix = document.createElement("div");
-    g3Matrix.className = "hvac-matrix";
-
-
-    // CHILLER 6-9
-    const ch69Col = document.createElement("div");
-    ch69Col.className = "hvac-col";
-    ch69Col.innerHTML =
-        `<div class="hvac-col-header">CHILLER (6-9)</div>`;
-
-    const ch69Items = document.createElement("div");
-    ch69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = chiller.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ch69Items.appendChild(createChillerCard(unit));
-        }
-    });
-
-    ch69Col.appendChild(ch69Items);
-    g3Matrix.appendChild(ch69Col);
-
-
-    // CCP 6-9
-    const ccp69Col = document.createElement("div");
-    ccp69Col.className = "hvac-col";
-    ccp69Col.innerHTML =
-        `<div class="hvac-col-header">CCP (6-9)</div>`;
-
-    const ccp69Items = document.createElement("div");
-    ccp69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = ccp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            ccp69Items.appendChild(
-                createCompactHvacCard("CCP", unit)
-            );
-        }
-    });
-
-    ccp69Col.appendChild(ccp69Items);
-    g3Matrix.appendChild(ccp69Col);
-
-
-    // CHWP 6-9
-    const chwp69Col = document.createElement("div");
-    chwp69Col.className = "hvac-col";
-    chwp69Col.innerHTML =
-        `<div class="hvac-col-header">CHWP (6-9)</div>`;
-
-    const chwp69Items = document.createElement("div");
-    chwp69Items.className = "hvac-col-items";
-
-    [6, 7, 8, 9].forEach(num => {
-        const unit = chwp.find(x => String(x.name) === String(num));
-
-        if (unit) {
-            chwp69Items.appendChild(
-                createCompactHvacCard("CHWP", unit)
-            );
-        }
-    });
-
-    chwp69Col.appendChild(chwp69Items);
-    g3Matrix.appendChild(chwp69Col);
-
-
-    // CT 9A-13B
-    const ct913Col = document.createElement("div");
-    ct913Col.className = "hvac-col";
-    ct913Col.innerHTML =
-        `<div class="hvac-col-header">COOLING TOWER (9A-13B)</div>`;
-
-    const ct913Items = document.createElement("div");
-    ct913Items.className = "hvac-col-items";
-
-    [
-        ["9A", "9B"],
-        ["10A", "10B"],
-        ["11A", "11B"],
-        ["12A", "12B"],
-        ["13A", "13B"]
-    ].forEach(pair => {
-        const pairRow = document.createElement("div");
-        pairRow.className = "ct-pair-row";
-
-        pair.forEach(name => {
-            const unit = ct.find(
-                x => String(x.name).toUpperCase() === name
-            );
-
-            if (unit) {
-                pairRow.appendChild(
-                    createCompactHvacCard("CT", unit)
-                );
-            }
-        });
-
-        ct913Items.appendChild(pairRow);
-    });
-
-    ct913Col.appendChild(ct913Items);
-    g3Matrix.appendChild(ct913Col);
-
-    g3Group.appendChild(g3Matrix);
-    container.appendChild(g3Group);
-
-    grid.appendChild(container);
-}
 
 
 /* =========================================================
@@ -3753,6 +3484,896 @@ function renderAhuDashboard(units) {
     }
 }
 
+/* =========================================================
+   HVAC SC SEVERITY DASHBOARD
+   ========================================================= */
+
+const HVAC_SC_VIEW_ISSUES = "issues";
+const HVAC_SC_VIEW_ALL = "all";
+
+/*
+ * View state lives outside the DOM, like ahuView, so the 10s poll's re-render
+ * cannot silently reset the reader's sort, search, or open cards.
+ */
+const hvacScView = {
+    mode: HVAC_SC_VIEW_ISSUES,
+    /* Exactly what the reader typed, so the box redraws unchanged. */
+    searchRaw: "",
+    /* Normalised once here; matching never re-derives it. */
+    search: "",
+    /*
+     * Whether the search box held focus at the last render. Captured by
+     * reading document.activeElement at the TOP of renderEquipment(), before
+     * the grid is cleared — clearing detaches the input without firing blur.
+     */
+    searchFocused: false,
+    /* Which issue cards the reader opened, keyed by unit label, so the poll's
+     * full re-render does not collapse them mid-read. */
+    expanded: {}
+};
+
+let hvacScSectionsHost = null;
+
+const HVAC_SC_BANDS = [
+    { key: "critical", title: "CRITICAL", note: "alarm from the system" },
+    { key: "warning",  title: "WARNING",  note: "value outside its configured limit" },
+    { key: "off",      title: "OFF / UNKNOWN", note: "not running, or not readable" },
+    { key: "normal",   title: "NORMAL",   note: "running, values within limits" }
+];
+
+/*
+ * Read a numeric field WITHOUT letting a missing value become a number.
+ *
+ * Number(null) is 0 and Number("") is 0, so a plain Number() turns "nobody
+ * measured this" into a measured zero — which on this page would report an
+ * unread chiller as 0.0 °C and as stopped. api_hvac_sc.php leaves every field
+ * null when its point is absent, so this is a reachable state, not a
+ * hypothetical. Kept separate from the AHU dashboard's reader so neither
+ * page's behaviour can drift when the other changes.
+ */
+function hvacScNum(value) {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+
+    const n = Number(value);
+
+    return Number.isFinite(n) ? n : null;
+}
+
+/*
+ * The metrics shown per unit, with exactly the bounds the existing cards
+ * already use — no new threshold is introduced here. Chiller EL/CE carry the
+ * API's evap_leaving_temp_max / cond_entering_temp_max; CCP/CHWP/CT current
+ * carries current_min/current_max. SP, RLA, EE, CL, Freq and Drv Tmp have no
+ * bound in the data, so they can never raise a WARNING.
+ */
+function hvacScMetrics(kind, unit) {
+    if (kind === "chiller") {
+        return [
+            { label: "SP",  value: unit.setpoint,           suffix: " °C" },
+            { label: "RLA", value: unit.rla,                suffix: " %" },
+            { label: "EL",  value: unit.evap_leaving_temp,  suffix: " °C", max: unit.evap_leaving_temp_max },
+            { label: "EE",  value: unit.evap_entering_temp, suffix: " °C" },
+            { label: "CE",  value: unit.cond_entering_temp, suffix: " °C", max: unit.cond_entering_temp_max },
+            { label: "CL",  value: unit.cond_leaving_temp,  suffix: " °C" }
+        ];
+    }
+
+    return [
+        { label: "Freq",    value: unit.frequency,         suffix: " Hz" },
+        { label: "Curr",    value: unit.current,           suffix: " A", min: unit.current_min, max: unit.current_max },
+        { label: "Drv Tmp", value: unit.drive_temperature, suffix: " °C" }
+    ];
+}
+
+function hvacScFormat(value, suffix) {
+    const n = hvacScNum(value);
+
+    return n === null ? "--" + suffix : n.toFixed(1) + suffix;
+}
+
+/* Is this one metric outside its own configured bound? */
+function hvacScIsViolation(metric) {
+    return isOutOfRange(metric.value, metric.min, metric.max);
+}
+
+/* Metrics currently outside their own configured bound. Empty when none are. */
+function hvacScViolations(kind, unit) {
+    return hvacScMetrics(kind, unit).filter(hvacScIsViolation);
+}
+
+/*
+ * Band a unit using only data the API already sends. No threshold is invented:
+ * `alarm` is the unit's native alarm point and the bounds are the unit's own.
+ *
+ * Precedence is alarm > out-of-range value > not-running, so a measured
+ * violation is never hidden behind an OFF badge.
+ */
+function hvacScBandOf(kind, unit) {
+    if (hvacScNum(unit.alarm) === 1) {
+        return "critical";
+    }
+
+    if (hvacScViolations(kind, unit).length > 0) {
+        return "warning";
+    }
+
+    if (hvacScNum(unit.run) !== 1) {
+        return "off";
+    }
+
+    return "normal";
+}
+
+/*
+ * "We cannot see this unit" and "this unit is switched off" are different
+ * facts, so they get different words rather than both reading as OFF.
+ */
+function hvacScRunTag(unit) {
+    const run = hvacScNum(unit.run);
+
+    if (run === 0) {
+        return "OFF";
+    }
+
+    return run === 1 ? "" : "UNKNOWN";
+}
+
+function hvacScBadge(kind, unit, band) {
+    if (band === "critical") {
+        return "ALARM";
+    }
+
+    if (band === "warning") {
+        const v = hvacScViolations(kind, unit)[0];
+
+        if (!v) {
+            return "OUT OF RANGE";
+        }
+
+        const n = hvacScNum(v.value);
+        const max = hvacScNum(v.max);
+        const min = hvacScNum(v.min);
+
+        if (max !== null && n !== null && n > max) {
+            return "▲ OUT OF RANGE";
+        }
+
+        if (min !== null && n !== null && n < min) {
+            return "▼ OUT OF RANGE";
+        }
+
+        return "OUT OF RANGE";
+    }
+
+    if (band === "off") {
+        return hvacScRunTag(unit);
+    }
+
+    return "";
+}
+
+/*
+ * One line saying why this unit is in this band, in the reader's terms. Only
+ * claims what the data supports: for an alarm it says the cause is not in this
+ * data source rather than guessing one, and for a violation it names the
+ * metric and the limit it crossed.
+ */
+function hvacScReason(kind, unit, band) {
+    if (band === "critical") {
+        return "Alarm reported by the system. The cause is not included in this data source.";
+    }
+
+    if (band === "warning") {
+        return hvacScViolations(kind, unit).map(m => {
+            const n = hvacScNum(m.value);
+            const max = hvacScNum(m.max);
+            const min = hvacScNum(m.min);
+
+            if (max !== null && n !== null && n > max) {
+                return m.label + " " + hvacScFormat(m.value, m.suffix)
+                    + " is above its limit of " + max + m.suffix + ".";
+            }
+
+            if (min !== null && n !== null && n < min) {
+                return m.label + " " + hvacScFormat(m.value, m.suffix)
+                    + " is below its limit of " + min + m.suffix + ".";
+            }
+
+            return m.label + " is outside its configured limit.";
+        }).join(" ");
+    }
+
+    if (band === "off") {
+        return hvacScNum(unit.run) === 0
+            ? "Not running (run = 0)."
+            : "Run status is not reported by this data source.";
+    }
+
+    return "";
+}
+
+/* Compact one-line summary for a healthy row, e.g. "SP 9.0 °C · RLA 55.9 %". */
+function hvacScSummary(kind, unit) {
+    const picks = kind === "chiller"
+        ? [["SP", unit.setpoint, " °C"], ["RLA", unit.rla, " %"]]
+        : [["Freq", unit.frequency, " Hz"], ["Curr", unit.current, " A"]];
+
+    return picks
+        .filter(p => hvacScNum(p[1]) !== null)
+        .map(p => p[0] + " " + hvacScFormat(p[1], p[2]))
+        .join(" · ");
+}
+
+function hvacScAllUnits() {
+    const chiller = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
+    const ccp = Array.isArray(allData.CCP) ? allData.CCP : [];
+    const chwp = Array.isArray(allData.CHWP) ? allData.CHWP : [];
+    const ct = Array.isArray(allData.CT) ? allData.CT : [];
+
+    const out = [];
+
+    chiller.forEach(u => out.push({ kind: "chiller", prefix: "Chiller", label: "Chiller " + u.name, unit: u }));
+    ccp.forEach(u => out.push({ kind: "compact", prefix: "CCP", label: "CCP " + u.name, unit: u }));
+    chwp.forEach(u => out.push({ kind: "compact", prefix: "CHWP", label: "CHWP " + u.name, unit: u }));
+    ct.forEach(u => out.push({ kind: "compact", prefix: "CT", label: "CT " + u.name, unit: u }));
+
+    return out;
+}
+
+const HVAC_SC_PREFIX_ORDER = { "Chiller": 0, "CCP": 1, "CHWP": 2, "CT": 3 };
+
+function hvacScCompare(a, b) {
+    const pa = HVAC_SC_PREFIX_ORDER[a.prefix] ?? 9;
+    const pb = HVAC_SC_PREFIX_ORDER[b.prefix] ?? 9;
+
+    if (pa !== pb) {
+        return pa - pb;
+    }
+
+    const na = hvacScNum(String(a.unit.name).match(/\d+/)?.[0]);
+    const nb = hvacScNum(String(b.unit.name).match(/\d+/)?.[0]);
+
+    if (na !== nb) {
+        return (na ?? 0) - (nb ?? 0);
+    }
+
+    return String(a.unit.name).localeCompare(String(b.unit.name));
+}
+
+function hvacScMatchesSearch(label) {
+    if (!hvacScView.search) {
+        return true;
+    }
+
+    return String(label).toLowerCase().includes(hvacScView.search);
+}
+
+/*
+ * The chips and the search box, built once per render and left in place when
+ * only the sections are redrawn — that is what keeps the caret in the box
+ * across keystrokes and across the 10s poll.
+ */
+function hvacScValueChip(metric, state) {
+    const chip = document.createElement("span");
+    chip.className = "hsc-v" + (state ? " " + state : "");
+
+    const small = document.createElement("small");
+    small.textContent = metric.label;
+    chip.appendChild(small);
+
+    chip.appendChild(document.createTextNode(hvacScFormat(metric.value, metric.suffix)));
+
+    return chip;
+}
+
+/*
+ * An issue card: name, badge, one line of reason, the values that matter, and
+ * an expander for the rest. Open state is remembered per unit in hvacScView.
+ */
+function hvacScIssueCard(entry) {
+    const { kind, label, unit } = entry;
+    const band = hvacScBandOf(kind, unit);
+    const metrics = hvacScMetrics(kind, unit);
+
+    const card = document.createElement("div");
+    card.className = "hsc-card is-" + band;
+    card.dataset.band = band;
+
+    const row = document.createElement("div");
+    row.className = "hsc-card-row";
+
+    const name = document.createElement("span");
+    name.className = "hsc-card-name";
+    name.textContent = label;
+    row.appendChild(name);
+
+    const badgeText = hvacScBadge(kind, unit, band);
+
+    if (badgeText) {
+        const badge = document.createElement("span");
+        badge.className = "hsc-badge";
+        badge.textContent = badgeText;
+        row.appendChild(badge);
+    }
+
+    card.appendChild(row);
+
+    const reason = hvacScReason(kind, unit, band);
+
+    if (reason) {
+        const why = document.createElement("p");
+        why.className = "hsc-why";
+        why.textContent = reason;
+        card.appendChild(why);
+    }
+
+    const isOpen = hvacScView.expanded[label] === true;
+
+    /*
+     * Collapsed: the violated metrics if there are any (they are the point),
+     * otherwise the first few metrics that actually have a reading. Missing
+     * readings are never dressed up as values.
+     *
+     * The test is applied to each metric directly. Comparing against
+     * hvacScViolations() by identity would never match — it returns a new
+     * array of newly built objects — and the card would then fall through to
+     * the first three readings, hiding the very value that put the unit here.
+     */
+    let shown = metrics.filter(hvacScIsViolation);
+
+    if (shown.length === 0) {
+        shown = metrics.filter(m => hvacScNum(m.value) !== null).slice(0, 3);
+    }
+
+    const chips = document.createElement("div");
+    chips.className = "hsc-chips";
+
+    if (shown.length === 0) {
+        const none = document.createElement("span");
+        none.className = "hsc-v n";
+        none.textContent = "no readings";
+        chips.appendChild(none);
+    } else {
+        shown.forEach(m => chips.appendChild(
+            hvacScValueChip(m, isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
+        ));
+    }
+
+    card.appendChild(chips);
+
+    /*
+     * Expanded: every metric, including the ones with no reading, so the
+     * absence is visible rather than hidden by the collapse.
+     */
+    if (isOpen) {
+        const all = document.createElement("div");
+        all.className = "hsc-chips is-all";
+
+        metrics.forEach(m => all.appendChild(
+            hvacScValueChip(
+                m,
+                hvacScNum(m.value) === null
+                    ? "n"
+                    : (isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
+            )
+        ));
+
+        card.appendChild(all);
+    }
+
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "hsc-more";
+    more.textContent = isOpen ? "Hide values ▴" : "Show all values ▾";
+    more.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    more.addEventListener("click", () => {
+        if (isOpen) {
+            delete hvacScView.expanded[label];
+        } else {
+            hvacScView.expanded[label] = true;
+        }
+
+        hvacScRenderSections();
+    });
+
+    card.appendChild(more);
+
+    return card;
+}
+
+function hvacScNormalRow(entry) {
+    const { kind, label, unit } = entry;
+
+    const row = document.createElement("div");
+    row.className = "hsc-o";
+
+    const dot = document.createElement("span");
+    dot.className = "hsc-o-dot";
+    dot.title = "RUN";
+    row.appendChild(dot);
+
+    const name = document.createElement("b");
+    name.textContent = label;
+    row.appendChild(name);
+
+    const summary = document.createElement("i");
+    summary.textContent = hvacScSummary(kind, unit) || "--";
+    row.appendChild(summary);
+
+    return row;
+}
+
+function hvacScBuildSection(band, entries) {
+    const section = document.createElement("section");
+    section.className = "hsc-section is-" + band.key;
+
+    const head = document.createElement("div");
+    head.className = "hsc-section-head";
+
+    const title = document.createElement("h2");
+    title.className = "hsc-section-title";
+    title.textContent = band.title;
+    head.appendChild(title);
+
+    const note = document.createElement("span");
+    note.className = "hsc-section-note";
+    note.textContent = entries.length + (entries.length === 1 ? " unit" : " units");
+    head.appendChild(note);
+
+    section.appendChild(head);
+
+    if (band.key === "normal") {
+        /* Healthy units are one compact container of rows, not full cards. */
+        const box = document.createElement("div");
+        box.className = "hsc-ok";
+        entries.forEach(e => box.appendChild(hvacScNormalRow(e)));
+        section.appendChild(box);
+        return section;
+    }
+
+    entries.forEach(e => section.appendChild(hvacScIssueCard(e)));
+
+    return section;
+}
+
+/*
+ * Rebuilds only the band sections, leaving the controls (and therefore the
+ * search input's focus and caret) untouched.
+ */
+function hvacScRenderSections() {
+    if (!hvacScSectionsHost) {
+        return;
+    }
+
+    /*
+     * Mark which view is on screen so the stylesheet can hand the All Units
+     * matrix its original grid padding back. Without this the issues view's
+     * padding rule (same specificity, later in the file) would silently
+     * shrink the matrix's bottom and mobile gutters.
+     */
+    const page = hvacScSectionsHost.closest(".hvac-sc-dashboard");
+
+    if (page) {
+        page.classList.toggle("is-all", hvacScView.mode === HVAC_SC_VIEW_ALL);
+    }
+
+    hvacScSectionsHost.innerHTML = "";
+
+    if (hvacScView.mode === HVAC_SC_VIEW_ALL) {
+        hvacScSectionsHost.appendChild(hvacScMatrixElement());
+        return;
+    }
+
+    const visible = hvacScAllUnits().filter(e => hvacScMatchesSearch(e.label));
+
+    if (visible.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "hsc-empty";
+        empty.textContent = hvacScView.search
+            ? "No units match your search."
+            : "No HVAC SC units to display.";
+        hvacScSectionsHost.appendChild(empty);
+        return;
+    }
+
+    HVAC_SC_BANDS.forEach(band => {
+        const members = visible.filter(e => hvacScBandOf(e.kind, e.unit) === band.key);
+
+        if (members.length === 0) {
+            return;
+        }
+
+        members.sort(hvacScCompare);
+
+        hvacScSectionsHost.appendChild(hvacScBuildSection(band, members));
+    });
+}
+
+function hvacScBuildTile(label, value, modifier) {
+    const tile = document.createElement("div");
+    tile.className = "hsc-tile " + modifier;
+
+    const number = document.createElement("b");
+    number.textContent = value;
+
+    const text = document.createElement("span");
+    text.textContent = label;
+
+    tile.appendChild(number);
+    tile.appendChild(text);
+
+    return tile;
+}
+
+function renderHvacSc() {
+    sectionTitle.textContent = "HVAC SC";
+
+    const units = hvacScAllUnits();
+
+    unitCount.textContent = units.length + " units";
+
+    const counts = { critical: 0, warning: 0, off: 0, normal: 0 };
+
+    units.forEach(e => {
+        counts[hvacScBandOf(e.kind, e.unit)] += 1;
+    });
+
+    const page = document.createElement("div");
+    page.className = "hvac-sc-dashboard";
+
+    /* ---- Summary: CRITICAL / WARNING / TOTAL UNIT ---- */
+    const summary = document.createElement("div");
+    summary.className = "hsc-summary";
+    summary.appendChild(hvacScBuildTile("CRITICAL", counts.critical, "is-critical"));
+    summary.appendChild(hvacScBuildTile("WARNING", counts.warning, "is-warning"));
+    summary.appendChild(hvacScBuildTile("TOTAL UNIT", units.length, "is-total"));
+    page.appendChild(summary);
+
+    /* ---- Sort chips + search ---- */
+    const controls = document.createElement("div");
+    controls.className = "hsc-controls";
+
+    [
+        { mode: HVAC_SC_VIEW_ISSUES, label: "Issues First" },
+        { mode: HVAC_SC_VIEW_ALL, label: "All Units" }
+    ].forEach(chip => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "hsc-chip" + (hvacScView.mode === chip.mode ? " is-on" : "");
+        button.textContent = chip.label;
+        button.addEventListener("click", () => {
+            if (hvacScView.mode === chip.mode) {
+                return;
+            }
+
+            hvacScView.mode = chip.mode;
+            controls.querySelectorAll(".hsc-chip").forEach(other => {
+                other.classList.toggle("is-on", other === button);
+            });
+            hvacScRenderSections();
+        });
+        controls.appendChild(button);
+    });
+
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "hsc-search";
+    search.placeholder = "Search…";
+    search.value = hvacScView.searchRaw;
+    search.setAttribute("aria-label", "Search HVAC SC units");
+    search.addEventListener("input", () => {
+        hvacScView.searchRaw = search.value;
+        hvacScView.search = search.value.trim().toLowerCase();
+        hvacScRenderSections();
+    });
+    controls.appendChild(search);
+
+    page.appendChild(controls);
+
+    const host = document.createElement("div");
+    hvacScSectionsHost = host;
+    page.appendChild(host);
+
+    grid.appendChild(page);
+
+    hvacScRenderSections();
+
+    /* The poll rebuilds this subtree; hand the caret back if it was ours. */
+    if (hvacScView.searchFocused) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
+    }
+}
+
+/*
+ * The "All Units" view: the existing G1-G2 / G3 grouped matrix, unchanged in
+ * structure, group labels, membership and card builders. It is built as an
+ * element rather than appended to the grid so the issues view and this one can
+ * be swapped without either knowing about the other.
+ *
+ * The two group counts are computed from the units actually present rather
+ * than hardcoded, so a group badge can never claim more units than the API
+ * returned.
+ */
+function hvacScMatrixElement() {
+    const chiller = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
+    const ccp = Array.isArray(allData.CCP) ? allData.CCP : [];
+    const chwp = Array.isArray(allData.CHWP) ? allData.CHWP : [];
+    const ct = Array.isArray(allData.CT) ? allData.CT : [];
+
+    const container = document.createElement("div");
+    container.className = "hvac-sc-container";
+
+
+    // =============================================================
+    // GROUP HVAC G1-G2
+    // =============================================================
+
+    const g12Group = document.createElement("section");
+    g12Group.className = "hvac-group-card";
+
+    const g12Matrix = document.createElement("div");
+    g12Matrix.className = "hvac-matrix";
+
+    let g12Count = 0;
+
+
+    // CHILLER 1-5
+    const ch15Col = document.createElement("div");
+    ch15Col.className = "hvac-col";
+    ch15Col.innerHTML =
+        `<div class="hvac-col-header">CHILLER (1-5)</div>`;
+
+    const ch15Items = document.createElement("div");
+    ch15Items.className = "hvac-col-items";
+
+    [1, 2, 3, 4, 5].forEach(num => {
+        const unit = chiller.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            ch15Items.appendChild(createChillerCard(unit));
+            g12Count++;
+        }
+    });
+
+    ch15Col.appendChild(ch15Items);
+    g12Matrix.appendChild(ch15Col);
+
+
+    // CCP 1-5
+    const ccp15Col = document.createElement("div");
+    ccp15Col.className = "hvac-col";
+    ccp15Col.innerHTML =
+        `<div class="hvac-col-header">CCP (1-5)</div>`;
+
+    const ccp15Items = document.createElement("div");
+    ccp15Items.className = "hvac-col-items";
+
+    [1, 2, 3, 4, 5].forEach(num => {
+        const unit = ccp.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            ccp15Items.appendChild(
+                createCompactHvacCard("CCP", unit)
+            );
+            g12Count++;
+        }
+    });
+
+    ccp15Col.appendChild(ccp15Items);
+    g12Matrix.appendChild(ccp15Col);
+
+
+    // CHWP 1-5
+    const chwp15Col = document.createElement("div");
+    chwp15Col.className = "hvac-col";
+    chwp15Col.innerHTML =
+        `<div class="hvac-col-header">CHWP (1-5)</div>`;
+
+    const chwp15Items = document.createElement("div");
+    chwp15Items.className = "hvac-col-items";
+
+    [1, 2, 3, 4, 5].forEach(num => {
+        const unit = chwp.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            chwp15Items.appendChild(
+                createCompactHvacCard("CHWP", unit)
+            );
+            g12Count++;
+        }
+    });
+
+    chwp15Col.appendChild(chwp15Items);
+    g12Matrix.appendChild(chwp15Col);
+
+
+    // CT 1A-6B
+    const ct16Col = document.createElement("div");
+    ct16Col.className = "hvac-col";
+    ct16Col.innerHTML =
+        `<div class="hvac-col-header">COOLING TOWER (1A-6B)</div>`;
+
+    const ct16Items = document.createElement("div");
+    ct16Items.className = "hvac-col-items";
+
+    [
+        ["1A", "1B"],
+        ["2A", "2B"],
+        ["3A", "3B"],
+        ["4A", "4B"],
+        ["5A", "5B"],
+        ["6A", "6B"]
+    ].forEach(pair => {
+        const pairRow = document.createElement("div");
+        pairRow.className = "ct-pair-row";
+
+        pair.forEach(name => {
+            const unit = ct.find(
+                x => String(x.name).toUpperCase() === name
+            );
+
+            if (unit) {
+                pairRow.appendChild(
+                    createCompactHvacCard("CT", unit)
+                );
+                g12Count++;
+            }
+        });
+
+        ct16Items.appendChild(pairRow);
+    });
+
+    ct16Col.appendChild(ct16Items);
+    g12Matrix.appendChild(ct16Col);
+
+    g12Group.innerHTML = `
+        <div class="hvac-group-header">
+            <span class="hvac-group-title">HVAC G1-G2</span>
+            <span class="hvac-group-count">${g12Count} units</span>
+        </div>
+    `;
+
+    g12Group.appendChild(g12Matrix);
+    container.appendChild(g12Group);
+
+
+    // =============================================================
+    // GROUP HVAC G3
+    // =============================================================
+
+    const g3Group = document.createElement("section");
+    g3Group.className = "hvac-group-card";
+
+    const g3Matrix = document.createElement("div");
+    g3Matrix.className = "hvac-matrix";
+
+    let g3Count = 0;
+
+
+    // CHILLER 6-9
+    const ch69Col = document.createElement("div");
+    ch69Col.className = "hvac-col";
+    ch69Col.innerHTML =
+        `<div class="hvac-col-header">CHILLER (6-9)</div>`;
+
+    const ch69Items = document.createElement("div");
+    ch69Items.className = "hvac-col-items";
+
+    [6, 7, 8, 9].forEach(num => {
+        const unit = chiller.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            ch69Items.appendChild(createChillerCard(unit));
+            g3Count++;
+        }
+    });
+
+    ch69Col.appendChild(ch69Items);
+    g3Matrix.appendChild(ch69Col);
+
+
+    // CCP 6-9
+    const ccp69Col = document.createElement("div");
+    ccp69Col.className = "hvac-col";
+    ccp69Col.innerHTML =
+        `<div class="hvac-col-header">CCP (6-9)</div>`;
+
+    const ccp69Items = document.createElement("div");
+    ccp69Items.className = "hvac-col-items";
+
+    [6, 7, 8, 9].forEach(num => {
+        const unit = ccp.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            ccp69Items.appendChild(
+                createCompactHvacCard("CCP", unit)
+            );
+            g3Count++;
+        }
+    });
+
+    ccp69Col.appendChild(ccp69Items);
+    g3Matrix.appendChild(ccp69Col);
+
+
+    // CHWP 6-9
+    const chwp69Col = document.createElement("div");
+    chwp69Col.className = "hvac-col";
+    chwp69Col.innerHTML =
+        `<div class="hvac-col-header">CHWP (6-9)</div>`;
+
+    const chwp69Items = document.createElement("div");
+    chwp69Items.className = "hvac-col-items";
+
+    [6, 7, 8, 9].forEach(num => {
+        const unit = chwp.find(x => String(x.name) === String(num));
+
+        if (unit) {
+            chwp69Items.appendChild(
+                createCompactHvacCard("CHWP", unit)
+            );
+            g3Count++;
+        }
+    });
+
+    chwp69Col.appendChild(chwp69Items);
+    g3Matrix.appendChild(chwp69Col);
+
+
+    // CT 9A-13B
+    const ct913Col = document.createElement("div");
+    ct913Col.className = "hvac-col";
+    ct913Col.innerHTML =
+        `<div class="hvac-col-header">COOLING TOWER (9A-13B)</div>`;
+
+    const ct913Items = document.createElement("div");
+    ct913Items.className = "hvac-col-items";
+
+    [
+        ["9A", "9B"],
+        ["10A", "10B"],
+        ["11A", "11B"],
+        ["12A", "12B"],
+        ["13A", "13B"]
+    ].forEach(pair => {
+        const pairRow = document.createElement("div");
+        pairRow.className = "ct-pair-row";
+
+        pair.forEach(name => {
+            const unit = ct.find(
+                x => String(x.name).toUpperCase() === name
+            );
+
+            if (unit) {
+                pairRow.appendChild(
+                    createCompactHvacCard("CT", unit)
+                );
+                g3Count++;
+            }
+        });
+
+        ct913Items.appendChild(pairRow);
+    });
+
+    ct913Col.appendChild(ct913Items);
+    g3Matrix.appendChild(ct913Col);
+
+    g3Group.innerHTML = `
+        <div class="hvac-group-header">
+            <span class="hvac-group-title">HVAC G3</span>
+            <span class="hvac-group-count">${g3Count} units</span>
+        </div>
+    `;
+
+    g3Group.appendChild(g3Matrix);
+    container.appendChild(g3Group);
+
+    return container;
+}
+
 function renderEquipment() {
     /*
      * Read focus BEFORE the grid is cleared. Clearing detaches the search
@@ -3763,6 +4384,8 @@ function renderEquipment() {
     const active = document.activeElement;
     ahuView.searchFocused = !!(active && active.classList
         && active.classList.contains("ahu-search"));
+    hvacScView.searchFocused = !!(active && active.classList
+        && active.classList.contains("hsc-search"));
 
     grid.innerHTML = "";
 

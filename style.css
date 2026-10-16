@@ -708,6 +708,30 @@ footer {
         height: auto;
     }
 
+    /*
+     * HVAC SC severity dashboard: same clip, same escape hatch again.
+     *
+     * The issues view is 49 full-width stacked cards plus a summary row and a
+     * controls row, which is far taller than one screen. The old matrix it
+     * replaces was a two-column block that also exceeded the viewport, but it
+     * was reachable because this media query's clip only bites when the content
+     * is shorter than nothing to scroll — measured at 1600x900 with the real
+     * 49-unit payload, html scrollHeight === clientHeight === 900 with
+     * overflow-y:hidden, so the tail of the list could not be reached at all.
+     *
+     * Scoped to .hvac-sc-dashboard, which only the HVAC SC tab's issues view
+     * emits — the "All Units" matrix and every other page keep the wall
+     * display's never-scroll behaviour exactly as it was.
+     */
+    html:has(.hvac-sc-dashboard) {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    body:has(.hvac-sc-dashboard) {
+        height: auto;
+    }
+
     .topbar {
         height: 50px;
         padding: 6px 20px;
@@ -2822,5 +2846,424 @@ html:has(.alarm-page) .alarm-page {
 
     .ahu-cards {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* =========================================================
+   HVAC SC SEVERITY DASHBOARD
+   Scoped entirely under .hvac-sc-dashboard, which only the
+   HVAC SC tab's issues view emits. The existing G1-G2 / G3
+   matrix (.hvac-sc-container, .hvac-group-card, .unit-card
+   .hvac-card, .status-*) is untouched and still renders in
+   the "All Units" view and everywhere else it is used.
+
+   Design values follow the HVAC SC reference mockup:
+     header 14px 16px / title 15px 700 .08em
+     tiles  radius 10px, mono 22px, critical #D32F2F
+     chips  radius 22px, min-height 44px, active #E6EBF0
+     cards  radius 12px, padding 12px 14px, full width
+            critical bg #2A1316 border #FF6B63
+            warning  bg #2B230F border #F5B83D
+     rows   min-height 44px, 6px green dot, one container
+
+   Bands come from data the API already sends — never from a
+   new threshold:
+     CRITICAL  unit.alarm === 1        (native device alarm)
+     WARNING   a metric outside its own configured bound
+               (chiller EL/CE max, CCP/CHWP/CT current min/max)
+     OFF       run !== 1               (stopped, or unreadable)
+     NORMAL    running, nothing out of range
+   ========================================================= */
+
+.equipment-grid:has(.hvac-sc-dashboard) {
+    display: block;
+    padding: 0 20px 20px;
+}
+
+/*
+ * The All Units matrix is the page as it was: keep its own grid padding
+ * rather than the issues view's. Same specificity as the rule above, so this
+ * has to come after it.
+ */
+.equipment-grid:has(.hvac-sc-dashboard.is-all) {
+    padding: 0 20px 30px;
+}
+
+/* --- Summary: CRITICAL / WARNING / TOTAL UNIT --- */
+
+.hsc-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.hsc-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid #222b34;
+    border-radius: 10px;
+    background: #151b22;
+}
+
+.hsc-tile b {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.hsc-tile span {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+}
+
+.hsc-tile.is-critical {
+    background: #d32f2f;
+    border-color: #d32f2f;
+    color: #fff;
+}
+
+.hsc-tile.is-warning {
+    background: #f5b83d;
+    border-color: #f5b83d;
+    color: #1a1300;
+}
+
+.hsc-tile.is-total span {
+    color: #9aa7b3;
+}
+
+/* --- Sort chips + search --- */
+
+.hsc-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.hsc-chip {
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid #2c3640;
+    border-radius: 22px;
+    background: #151b22;
+    color: #c9d3dc;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.hsc-chip:hover {
+    border-color: #4a5763;
+}
+
+.hsc-chip.is-on {
+    background: #e6ebf0;
+    border-color: #e6ebf0;
+    color: #0e1318;
+    font-weight: 600;
+}
+
+.hsc-search {
+    flex: 1 1 170px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid #2c3640;
+    border-radius: 22px;
+    background: #151b22;
+    color: #e6ebf0;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.hsc-search::placeholder {
+    color: #6f7c88;
+}
+
+.hsc-search:focus {
+    outline: none;
+    border-color: #5a6875;
+}
+
+/* --- Band sections --- */
+
+.hsc-section {
+    margin-bottom: 16px;
+}
+
+.hsc-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 2px 8px;
+}
+
+.hsc-section-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.hsc-section-note {
+    font-size: 12px;
+    color: #9aa7b3;
+    text-align: right;
+}
+
+.hsc-section.is-critical .hsc-section-title { color: #ff9a92; }
+.hsc-section.is-warning .hsc-section-title  { color: #f5b83d; }
+.hsc-section.is-off .hsc-section-title      { color: #9aa7b3; }
+.hsc-section.is-normal .hsc-section-title   { color: #4ade80; }
+
+/* --- Issue card: full width, one per row --- */
+
+.hsc-card {
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    box-sizing: border-box;
+}
+
+.hsc-card.is-critical {
+    background: #2a1316;
+    border: 2px solid #ff6b63;
+}
+
+.hsc-card.is-warning {
+    background: #2b230f;
+    border: 2px solid #f5b83d;
+}
+
+.hsc-card.is-off {
+    background: #1b222a;
+    border: 2px solid #2c3640;
+}
+
+.hsc-card-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.hsc-card-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #e6ebf0;
+}
+
+.hsc-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    border-radius: 6px;
+    padding: 3px 8px;
+    white-space: nowrap;
+}
+
+.hsc-card.is-critical .hsc-badge {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.hsc-card.is-warning .hsc-badge {
+    background: #f5b83d;
+    color: #1a1300;
+}
+
+.hsc-card.is-off .hsc-badge {
+    background: #2c3640;
+    color: #c9d3dc;
+}
+
+.hsc-why {
+    margin: 6px 0 8px;
+    font-size: 13px;
+    color: #d5dde5;
+    line-height: 1.35;
+}
+
+.hsc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.hsc-chips.is-all {
+    margin-top: 8px;
+}
+
+.hsc-v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: #c9d3dc;
+}
+
+.hsc-v small {
+    font-family: inherit;
+    font-weight: 500;
+    font-size: 11px;
+    margin-right: 5px;
+}
+
+/* A metric that crossed its own configured bound. */
+.hsc-v.is-bad {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.hsc-card.is-warning .hsc-v.is-bad {
+    background: #f5b83d;
+    color: #1a1300;
+}
+
+/* No reading — dashed, never dressed up as a number. */
+.hsc-v.n {
+    background: transparent;
+    border: 1px dashed #7b8794;
+    color: #c9d3dc;
+}
+
+.hsc-more {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #7fb2ff;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.hsc-more:hover {
+    text-decoration: underline;
+}
+
+/* --- Normal: compact rows in one container --- */
+
+.hsc-ok {
+    background: #151b22;
+    border: 1px solid #222b34;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.hsc-o {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 6px 14px;
+    border-bottom: 1px solid #222b34;
+    font-size: 14px;
+}
+
+.hsc-o:last-child {
+    border-bottom: 0;
+}
+
+.hsc-o-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+}
+
+.hsc-o b {
+    flex: 1;
+    min-width: 0;
+    font-weight: 500;
+    color: #e6ebf0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hsc-o i {
+    flex: 0 0 auto;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: #c9d3dc;
+}
+
+/* --- Empty / unavailable notice --- */
+
+.hsc-empty {
+    padding: 14px 2px;
+    color: #9aa7b3;
+    font-size: 13px;
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 900px) {
+    .equipment-grid:has(.hvac-sc-dashboard) {
+        padding: 0 10px 16px;
+    }
+
+    /* The matrix keeps the gutters it always had. */
+    .equipment-grid:has(.hvac-sc-dashboard.is-all) {
+        padding: 0 20px 30px;
+    }
+}
+
+@media (max-width: 600px) {
+    .equipment-grid:has(.hvac-sc-dashboard) {
+        padding: 0 8px 12px;
+    }
+
+    /* The matrix keeps the gutters it always had. */
+    .equipment-grid:has(.hvac-sc-dashboard.is-all) {
+        padding: 0 20px 30px;
+    }
+
+    .hsc-tile b {
+        font-size: 20px;
+    }
+
+    .hsc-card-name {
+        font-size: 15px;
+    }
+
+    .hsc-o {
+        font-size: 13px;
+    }
+
+    /*
+     * The summary value and label sit side by side on a phone so the three
+     * tiles stay one row without the mono digits wrapping.
+     */
+    .hsc-tile {
+        padding: 8px 10px;
+    }
+}
+
+@media (max-width: 380px) {
+    .hsc-tile b {
+        font-size: 18px;
+    }
+
+    .hsc-tile span {
+        font-size: 10px;
+    }
+
+    .hsc-o i {
+        font-size: 12px;
     }
 }
