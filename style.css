@@ -1276,8 +1276,54 @@ footer {
     white-space: nowrap;
 }
 
+/*
+ * DB update and the deployed version share one wrapped row, so the topbar keeps
+ * its existing fixed heights at every breakpoint. The version takes the next
+ * line only when the row is too narrow for both.
+ */
+.connection-meta {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 2px 10px;
+    min-width: 0;
+}
+
+.connection-meta .last-update {
+    flex-basis: auto;
+}
+
+/*
+ * This band pins the page to the viewport (see the wall-display block above),
+ * so the topbar must not grow by even one line: the version stays on the
+ * DB-update row here rather than wrapping under it.
+ */
+@media (min-width: 1600px) and (max-width: 2499px) {
+    .connection-meta {
+        flex-wrap: nowrap;
+    }
+}
+
+.app-version {
+    white-space: nowrap;
+    color: #999;
+    font-size: 11px;
+    font-weight: 400;
+    text-align: right;
+}
+
+/* The commit time is the first thing to go when space is short. */
+@media (max-width: 899px) {
+    .app-version .av-time {
+        display: none;
+    }
+}
+
 @media (max-width: 600px) {
-    .connection .last-update {
+    .connection .last-update,
+    .app-version {
         font-size: 9px;
     }
 }

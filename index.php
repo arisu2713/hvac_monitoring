@@ -3,6 +3,109 @@
 require_once __DIR__ . '/auth.php';
 require_login();
 
+/**
+ * Version shown in the header.
+ *
+ * The deployed checkout's own Git metadata is the only honest source: there is
+ * no build step, so a hardcoded SHA would drift from the files actually being
+ * served. Reads are filesystem-only and nothing is written; when the metadata
+ * cannot be read the header says "unknown" instead of guessing.
+ *
+ * Git deploy keeps `.git` beside the files, so HEAD is usually a loose ref. A
+ * fresh clone packs its objects, which this reader cannot inflate without a
+ * pack parser; in that case only the SHA and branch are shown, and the commit
+ * time is left out rather than approximated.
+ */
+function app_version_info(): ?array
+{
+    $dir = __DIR__ . '/.git';
+
+    if (is_file($dir)) {
+        $pointer = @file_get_contents($dir);
+
+        if ($pointer !== false && preg_match('/^gitdir:\s*(.+)$/m', $pointer, $m)) {
+            $dir = trim($m[1]);
+            if (!preg_match('#^([A-Za-z]:)?[\\\\/]#', $dir)) {
+                $dir = __DIR__ . '/' . $dir;
+            }
+        }
+    }
+
+    if (!is_dir($dir)) {
+        return null;
+    }
+
+    $head = @file_get_contents($dir . '/HEAD');
+    if ($head === false) {
+        return null;
+    }
+
+    $head = trim($head);
+    $sha = null;
+    $branch = null;
+
+    if (preg_match('/^ref:\s*(.+)$/', $head, $m)) {
+        $ref = trim($m[1]);
+        $branch = preg_replace('#^refs/heads/#', '', $ref);
+
+        $refFile = $dir . '/' . $ref;
+        if (is_file($refFile)) {
+            $sha = trim((string)@file_get_contents($refFile));
+        } else {
+            $packed = @file_get_contents($dir . '/packed-refs');
+            if ($packed !== false
+                && preg_match('/^([0-9a-f]{40})\s+' . preg_quote($ref, '/') . '$/m', $packed, $pm)) {
+                $sha = $pm[1];
+            }
+        }
+    } elseif (preg_match('/^[0-9a-f]{40}$/i', $head)) {
+        $sha = $head;
+    }
+
+    if ($sha === null || !preg_match('/^[0-9a-f]{40}$/i', $sha)) {
+        return null;
+    }
+
+    $info = [
+        'sha' => strtolower($sha),
+        'short' => substr(strtolower($sha), 0, 7),
+        'branch' => $branch,
+        'time' => null,
+    ];
+
+    /* Commit time and subject, only from a loose object. */
+    $raw = @file_get_contents($dir . '/objects/' . substr($info['sha'], 0, 2) . '/' . substr($info['sha'], 2));
+    if ($raw !== false) {
+        $body = @gzuncompress($raw);
+        if ($body === false) {
+            $body = @zlib_decode($raw);
+        }
+
+        if ($body !== false && strncmp($body, 'commit ', 7) === 0) {
+            $split = strpos($body, "\n\n");
+            $header = $split === false ? $body : substr($body, 0, $split);
+
+            if (preg_match('/^committer\s+.*?>\s*(\d+)\s+([+-]\d{4})$/m', $header, $cm)) {
+                $stamp = (int)$cm[1];
+                $offset = $cm[2];
+
+                $tz = new DateTimeZone(
+                    ($offset[0] === '-' ? '-' : '+')
+                    . substr($offset, 1, 2) . ':' . substr($offset, 3, 2)
+                );
+
+                $info['time'] = (new DateTimeImmutable('@' . $stamp))
+                    ->setTimezone($tz)
+                    ->format('Y-m-d H:i');
+            }
+        }
+    }
+
+    return $info;
+}
+
+$appVersion = app_version_info();
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -25,7 +128,25 @@ require_login();
     <div class="connection">
         <span id="connectionDot" class="connection-dot offline"></span>
         <span id="connectionText">OFFLINE</span>
-        <span id="lastUpdate" class="last-update">DB update: --</span>
+        <span class="connection-meta">
+            <span id="lastUpdate" class="last-update">DB update: --</span>
+            <span class="app-version"
+                  title="<?= $appVersion
+                      ? 'Deployed from Git commit ' . htmlspecialchars($appVersion['sha'], ENT_QUOTES, 'UTF-8')
+                      : 'Git metadata unavailable on this deployment' ?>"
+            ><span class="av-sha">Version: <?= $appVersion
+                    ? htmlspecialchars($appVersion['short'], ENT_QUOTES, 'UTF-8')
+                    : 'unknown' ?></span><?php
+                if ($appVersion && $appVersion['branch'] !== null && $appVersion['branch'] !== '') {
+                    echo '<span class="av-branch"> &middot; '
+                        . htmlspecialchars($appVersion['branch'], ENT_QUOTES, 'UTF-8') . '</span>';
+                }
+                if ($appVersion && $appVersion['time'] !== null) {
+                    echo '<span class="av-time"> &middot; '
+                        . htmlspecialchars($appVersion['time'], ENT_QUOTES, 'UTF-8') . '</span>';
+                }
+            ?></span>
+        </span>
     </div>
 </header>
 
