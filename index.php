@@ -3977,7 +3977,23 @@ function hvacScValueChip(metric, state) {
     small.textContent = metric.label;
     chip.appendChild(small);
 
-    chip.appendChild(document.createTextNode(hvacScFormat(metric.value, metric.suffix)));
+    const val = document.createElement("b");
+    val.textContent = hvacScFormat(metric.value, metric.suffix);
+    chip.appendChild(val);
+
+    if (state === "is-bad") {
+        const n = hvacScNum(metric.value);
+        const mx = hvacScNum(metric.max);
+        const mn = hvacScNum(metric.min);
+        const lim = (mx !== null && n > mx) ? "max " + mx
+                  : (mn !== null && n < mn) ? "min " + mn : "";
+
+        if (lim) {
+            const em = document.createElement("em");
+            em.textContent = lim;
+            chip.appendChild(em);
+        }
+    }
 
     return chip;
 }
@@ -4051,6 +4067,7 @@ function hvacScIssueCard(entry) {
 
     const chips = document.createElement("div");
     chips.className = "hsc-chips";
+    chips.dataset.n = shown.length;
 
     if (shown.length === 0) {
         const none = document.createElement("span");
@@ -4072,6 +4089,7 @@ function hvacScIssueCard(entry) {
     if (isOpen) {
         const all = document.createElement("div");
         all.className = "hsc-chips is-all";
+        all.dataset.n = metrics.length;
 
         metrics.forEach(m => all.appendChild(
             hvacScValueChip(
@@ -4105,22 +4123,52 @@ function hvacScIssueCard(entry) {
     return card;
 }
 
+function hvacScSummaryParts(kind, unit) {
+    const picks = kind === "chiller"
+        ? [["SP", unit.setpoint, " \u00b0C"], ["RLA", unit.rla, " %"]]
+        : [["Freq", unit.frequency, " Hz"], ["Curr", unit.current, " A"]];
+
+    return picks.map(p => [p[0], hvacScFormat(p[1], p[2])]);
+}
+
 function hvacScNormalRow(entry) {
     const { kind, label, unit } = entry;
+    const run = hvacScRunState(unit);
 
     const row = document.createElement("div");
     row.className = "hsc-o";
-    row.dataset.run = hvacScRunState(unit);
+    row.dataset.run = run;
 
-    row.appendChild(hvacScRunDot(unit));
+    const head = document.createElement("div");
+    head.className = "hsc-o-head";
+    head.appendChild(hvacScRunDot(unit));
 
     const name = document.createElement("b");
     name.textContent = label;
-    row.appendChild(name);
 
-    const summary = document.createElement("i");
-    summary.textContent = hvacScSummary(kind, unit) || "--";
-    row.appendChild(summary);
+    const st = document.createElement("small");
+    st.textContent = run === "on" ? "Running" : (run === "off" ? "Stopped" : "Unknown");
+    name.appendChild(st);
+    head.appendChild(name);
+    row.appendChild(head);
+
+    /* Every unit shows every parameter, same as the All Units tab. */
+    const metrics = hvacScMetrics(kind, unit);
+
+    const chips = document.createElement("div");
+    chips.className = "hsc-chips";
+    chips.dataset.n = metrics.length;
+
+    metrics.forEach(m => chips.appendChild(
+        hvacScValueChip(
+            m,
+            hvacScNum(m.value) === null
+                ? "n"
+                : (isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
+        )
+    ));
+
+    row.appendChild(chips);
 
     return row;
 }

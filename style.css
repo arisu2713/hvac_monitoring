@@ -3543,3 +3543,40 @@ html:has(.alarm-page) .alarm-page {
         font-size: 12px;
     }
 }
+
+
+/* ---- HVAC SC Issues First: tidy cards ---- */
+.hvac-sc-dashboard:not(.is-all) .hsc-cards {
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 420px));
+    justify-content: start;
+    gap: 12px;
+}
+.hvac-sc-dashboard:not(.is-all) .hsc-card { padding: 14px; border-radius: 18px; }
+.hvac-sc-dashboard:not(.is-all) .hsc-card.is-warning { background: #171d26; border: 1px solid rgba(245,184,61,.45); }
+.hvac-sc-dashboard:not(.is-all) .hsc-card.is-critical { background: #1f1719; border: 1px solid rgba(255,107,99,.6); }
+
+.hsc-card-row { flex-wrap: nowrap; gap: 10px; }
+.hsc-card-name { flex: 1; text-align: left; font-size: 17px; }
+.hsc-badge { border-radius: 999px; padding: 5px 10px; }
+.hsc-why { margin: 8px 0 12px; }
+
+.hsc-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+.hsc-chips[data-n="2"], .hsc-chips[data-n="4"] { grid-template-columns: repeat(2, 1fr); }
+.hsc-chips[data-n="5"], .hsc-chips[data-n="6"] { grid-template-columns: repeat(3, 1fr); }
+
+.hsc-v { display: block; background: #0f151c; border-radius: 12px; padding: 8px 10px; }
+.hsc-v small { display: block; margin: 0 0 2px; font-size: 11px; color: #8b98a8; }
+.hsc-v b { font-size: 15px; font-weight: 600; color: #e6ecf3; white-space: nowrap; }
+.hsc-v em { display: block; font-style: normal; font-size: 10px; margin-top: 1px; }
+.hsc-v.is-bad, .hsc-card.is-warning .hsc-v.is-bad { background: #f5b83d; }
+.hsc-v.is-bad small, .hsc-v.is-bad b, .hsc-v.is-bad em { color: #1a1300; }
+.hsc-card.is-critical .hsc-v.is-bad { background: #d32f2f; }
+.hsc-card.is-critical .hsc-v.is-bad small, .hsc-card.is-critical .hsc-v.is-bad b, .hsc-card.is-critical .hsc-v.is-bad em { color: #fff; }
+
+/* Normal units: full-parameter mini-cards */
+.hsc-ok { padding: 10px; gap: 10px; background: #141a22; border-radius: 18px; }
+.hsc-o { display: block; padding: 12px 14px; min-height: 0; background: #1b222a; border-radius: 14px; box-shadow: none; }
+.hsc-o-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.hsc-o-head b { flex: 1; min-width: 0; }
+.hsc-o b small { display: block; font-size: 11px; font-weight: 400; color: #8b98a8; }
+.hsc-o[data-run="off"] .hsc-o-head b, .hsc-o[data-run="off"] .hsc-v b { opacity: .55; }
