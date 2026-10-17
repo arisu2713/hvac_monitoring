@@ -873,19 +873,35 @@ footer {
 
 /*
  * auto-fill, so a wide group gets more columns and a narrow one falls back to
- * a single column, with no per-breakpoint arithmetic. The min() lets a track
- * shrink below the minimum rather than overflowing the group.
+ * fewer, with no per-breakpoint arithmetic. The min() lets a track shrink below
+ * the minimum rather than overflowing the group.
  *
- * The 232px floor is measured, not guessed: the widest name+badge pair on the
- * page is "Chiller 1" beside the "▲ OUT OF RANGE" badge, which needs 222px of
- * card, so a 200px floor made those three names wrap onto a second line while
- * every other card stayed on one.
+ * The floor is per equipment kind, because the two kinds need very different
+ * widths and one shared number forced both to the wider one's size:
+ *
+ *   chiller — six two-part chips (widest "CE 32.6 °C" = 83px, so two per row
+ *             need ~285px with padding) and a name row of dot + "Chiller 1" +
+ *             the 122px "▲ OUT OF RANGE" badge, which needs ~315px. At 280px
+ *             the badge wraps to its own line (see .hsc-card-row below) and the
+ *             chips flow three-up; below that the card is a single column.
+ *
+ *   compact — three short chips (widest "Drv Tmp 51.9 °C" = 113px) and no
+ *             badge on a healthy card. 150px fits two chips per row, which is
+ *             what lets pumps, CCPs and tower cells sit two-up on a 390px
+ *             phone instead of one full-width card each.
+ *
+ * Neither floor is below the width at which the card stops being readable: no
+ * font is shrunk to make this fit.
  */
 .hvac-cat-items {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(232px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
     gap: 8px;
     min-width: 0;
+}
+
+.hvac-cat.is-chiller .hvac-cat-items {
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
 }
 
 .hvac-col-header {
@@ -3218,17 +3234,26 @@ html:has(.alarm-page) .alarm-page {
     min-width: 0;
 }
 
+/*
+ * flex-wrap is what makes a narrow track safe. The badge is 122px wide and
+ * nowrap ("▲ OUT OF RANGE"), so on a 150px compact card the name row cannot
+ * hold dot + name + badge on one line. Without wrapping the row would exceed
+ * the card and produce horizontal overflow; with it the badge drops to a
+ * second line inside the card instead.
+ */
 .hsc-card-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
 }
 
 .hsc-card-name {
     font-size: 16px;
     font-weight: 600;
     color: #e6ebf0;
+    min-width: 0;
 }
 
 .hsc-badge {

@@ -3613,11 +3613,24 @@ function hvacScMetrics(kind, unit) {
         ];
     }
 
-    return [
+    const metrics = [
         { label: "Freq",    value: unit.frequency,         suffix: " Hz" },
         { label: "Curr",    value: unit.current,           suffix: " A", min: unit.current_min, max: unit.current_max },
         { label: "Drv Tmp", value: unit.drive_temperature, suffix: " °C" }
     ];
+
+    /*
+     * return_temp is a CT-only reading: the API fills it from the cell's own
+     * "Return Temp" point and leaves the key absent on CCP / CHWP. Testing for
+     * the key rather than for the type keeps this honest if a CCP ever gains
+     * the point — and stops a permanently "-- °C" chip appearing on every
+     * pump that can never have one.
+     */
+    if (Object.prototype.hasOwnProperty.call(unit, "return_temp")) {
+        metrics.push({ label: "Ret Tmp", value: unit.return_temp, suffix: " °C" });
+    }
+
+    return metrics;
 }
 
 function hvacScFormat(value, suffix) {
@@ -3900,20 +3913,20 @@ function hvacScIssueCard(entry) {
     const isOpen = hvacScView.expanded[label] === true;
 
     /*
-     * Collapsed: the violated metrics if there are any (they are the point),
-     * otherwise the first few metrics that actually have a reading. Missing
-     * readings are never dressed up as values.
+     * Collapsed: every metric that actually has a reading.
      *
-     * The test is applied to each metric directly. Comparing against
-     * hvacScViolations() by identity would never match — it returns a new
-     * array of newly built objects — and the card would then fall through to
-     * the first three readings, hiding the very value that put the unit here.
+     * It used to show only the violated metrics, which meant a chiller whose CE
+     * had crossed its limit rendered as a single CE chip — the other five
+     * parameters it was reporting (SP, RLA, EL, EE, CL) were invisible until
+     * the reader knew to press "Show all values". The violation is still the
+     * thing that stands out, because hvacScValueChip paints it with is-bad and
+     * the card itself carries the warning band, but it no longer hides the rest
+     * of the unit's state.
+     *
+     * Missing readings are still never dressed up as values: they stay in the
+     * expanded view as "--", where their absence is visible but not implied.
      */
-    let shown = metrics.filter(hvacScIsViolation);
-
-    if (shown.length === 0) {
-        shown = metrics.filter(m => hvacScNum(m.value) !== null).slice(0, 3);
-    }
+    const shown = metrics.filter(m => hvacScNum(m.value) !== null);
 
     const chips = document.createElement("div");
     chips.className = "hsc-chips";
@@ -4237,7 +4250,14 @@ function hvacScGroupElement(title, categories, present) {
 
     categories.forEach(cat => {
         const block = document.createElement("div");
-        block.className = "hvac-cat";
+        /*
+         * The category kind drives the card grid's minimum track width. A
+         * chiller card carries six two-part chips plus a name row that must
+         * hold "▲ OUT OF RANGE", so it needs far more width than a pump card
+         * with three short chips. Without this marker both got the same floor,
+         * which forced pumps and towers onto one full-width column on a phone.
+         */
+        block.className = "hvac-cat is-" + String(cat.kind).toLowerCase();
 
         const head = document.createElement("div");
         head.className = "hvac-col-header";
