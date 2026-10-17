@@ -225,6 +225,26 @@ function createAhuPlaceholderCard(number) {
 }
 
 /*
+ * The operating dot, drawn in every health band.
+ *
+ * It used to be drawn only on healthy units, on the theory that a green dot
+ * beside a red ALARM badge would read as "fine". The result was worse: a
+ * stopped unit in alarm showed no operating state at all, so the one fact an
+ * operator most needs — is this thing running? — disappeared exactly where it
+ * mattered. The dot is now its own axis and carries its own colour, so it
+ * cannot be mistaken for a health verdict.
+ */
+function hvacScRunDot(unit) {
+    const state = hvacScRunState(unit);
+
+    const dot = document.createElement("span");
+    dot.className = "hsc-run-dot is-" + state;
+    dot.title = state === "on" ? "RUN" : (state === "off" ? "OFF" : "Operating status unknown");
+
+    return dot;
+}
+
+/*
  * One card per unit in the All Units view.
  *
  * The presentation is the Issues First design language — a dark neutral card
@@ -244,21 +264,12 @@ function hvacScUnitCard(entry) {
     const card = document.createElement("div");
     card.className = "hsc-card hsc-u is-" + band;
     card.dataset.band = band;
+    card.dataset.run = hvacScRunState(unit);
 
     const row = document.createElement("div");
     row.className = "hsc-card-row";
 
-    /*
-     * The green RUN dot belongs to the healthy units only. A unit in an issue
-     * band already carries a badge saying what is wrong, and a green dot
-     * beside it would read as "fine".
-     */
-    if (band === "normal") {
-        const dot = document.createElement("span");
-        dot.className = "hsc-o-dot";
-        dot.title = "RUN";
-        row.appendChild(dot);
-    }
+    row.appendChild(hvacScRunDot(unit));
 
     const name = document.createElement("span");
     name.className = "hsc-card-name";
@@ -3071,11 +3082,17 @@ const ahuView = {
 let ahuSectionsHost = null;
 let ahuUnits = [];
 
+/*
+ * HEALTH bands only. Whether a unit is running is a separate axis and is
+ * drawn as the RUN dot on every card (see ahuRunState / ahuCreateCard), so a
+ * stopped unit no longer disappears from NORMAL and an unread run point no
+ * longer counts as OFF.
+ */
 const AHU_BANDS = [
     { key: "critical", title: "CRITICAL", note: "action required" },
     { key: "warning",  title: "WARNING", note: "outside normal range" },
-    { key: "off",      title: "OFF / UNKNOWN", note: "not running" },
-    { key: "normal",   title: "NORMAL", note: "running normally" }
+    { key: "normal",   title: "NORMAL", note: "within limits" },
+    { key: "unknown",  title: "UNKNOWN", note: "no health reading" }
 ];
 
 function ahuUnitNumber(name) {
@@ -3109,13 +3126,23 @@ function ahuCompareName(a, b) {
 }
 
 /*
- * Band a unit using only data the API already sends. No threshold is invented
- * here: temp_max / temp_min are the unit's own configured bounds (null when it
- * has none, in which case isOutOfRange never fires) and `alarm` is the unit's
- * native alarm point.
+ * HEALTH band: what the unit's own readings say about its condition.
  *
- * Precedence is alarm > temperature > not-running. A measured temperature
- * violation is a real fault, so it must not be hidden behind an OFF badge.
+ * This deliberately does NOT look at `run`. "Not running" and "not healthy"
+ * are different questions, and folding them together is what made a unit
+ * whose run point never reported look switched off. Operating state is a
+ * second, independent axis drawn as the RUN dot on every card (see
+ * ahuRunState / ahuCreateCard) and in the operating-status line under the
+ * summary.
+ *
+ * Precedence is alarm > out-of-range temperature > no health reading. A
+ * measured violation is a real fault, so it must not be hidden by a missing
+ * alarm point.
+ *
+ * UNKNOWN means there is no health evidence at all: no alarm point and no
+ * temperature. AHU 96/97 are exactly this case — api_ahu.php sends them with
+ * alarm=null and temp=null (status_only), so calling them NORMAL would claim
+ * a healthy reading nobody took.
  */
 function ahuBandOf(unit) {
     if (ahuNum(unit.alarm) === 1) {
@@ -3126,17 +3153,35 @@ function ahuBandOf(unit) {
         return "warning";
     }
 
-    /*
-     * Anything that is not demonstrably running — run=0, or run absent because
-     * no point reported — is reported as not-running. "We cannot see it" and
-     * "it is switched off" are different facts, which is why the card carries
-     * the run dot and an explicit tag rather than only the band colour.
-     */
-    if (ahuNum(unit.run) !== 1) {
-        return "off";
+    if (ahuNum(unit.alarm) === null && ahuNum(unit.temp) === null) {
+        return "unknown";
     }
 
     return "normal";
+}
+
+/*
+ * OPERATING state: what the unit's run point says.
+ *
+ * run=1 is running, run=0 is stopped, and anything else — null, absent, or
+ * non-numeric — is UNKNOWN. It is never inferred from temperature, and it is
+ * never collapsed into "off": Number(null) === 0 would turn "nobody could
+ * look" into "switched off", which is the one claim the data cannot support.
+ * api_ahu.php emits run=null for AHU 94/95 when its hnx_g8 source cannot be
+ * read, so this is a reachable state.
+ */
+function ahuRunState(unit) {
+    const run = ahuNum(unit.run);
+
+    if (run === 1) {
+        return "on";
+    }
+
+    if (run === 0) {
+        return "off";
+    }
+
+    return "unknown";
 }
 
 /* Signed distance outside the configured bounds, or null when inside them. */
@@ -3168,6 +3213,11 @@ function ahuFormatTemp(value) {
     return t === null ? "-- °C" : t.toFixed(1) + " °C";
 }
 
+/*
+ * The health tag. It describes the HEALTH band only — operating state has its
+ * own dot and label, so a stopped unit that is otherwise within limits keeps
+ * its health reading instead of having the word OFF written over it.
+ */
 function ahuTagFor(unit, band) {
     if (band === "critical") {
         return "ALARM";
@@ -3183,8 +3233,8 @@ function ahuTagFor(unit, band) {
         return (d > 0 ? "▲ +" : "▼ ") + d.toFixed(1);
     }
 
-    if (band === "off") {
-        return ahuNum(unit.run) === 0 ? "OFF" : "UNKNOWN";
+    if (band === "unknown") {
+        return "NO DATA";
     }
 
     return "";
@@ -3192,27 +3242,28 @@ function ahuTagFor(unit, band) {
 
 function ahuCreateCard(unit) {
     const band = ahuBandOf(unit);
+    const state = ahuRunState(unit);
 
     const card = document.createElement("div");
     card.className = "ahu-card is-" + band;
     card.dataset.band = band;
+    card.dataset.run = state;
 
     /*
-     * RUN indicator. Green when running, red when off, grey when no run point
-     * reported. Sits on every card so run state is readable at a glance in
-     * every band, including the amber and red ones.
+     * RUN indicator: the OPERATING axis, drawn on every card in every health
+     * band. Green when running, red when stopped, grey when no run point
+     * reported. It is a separate element from the health band on purpose —
+     * "this unit is stopped" and "this unit is in alarm" can both be true, and
+     * neither may overwrite the other.
      *
      * The grey case is a real state, not a fallback: api_ahu.php emits
      * run=null for AHU 94/95 when its hnx_g8 source cannot be read, and
      * Number(null) === 0 would paint those red — "off" — when the truth is
      * that nobody could look.
      */
-    const run = ahuNum(unit.run);
-
     const dot = document.createElement("span");
-    dot.className = "ahu-run-dot "
-        + (run === 1 ? "is-run" : (run === 0 ? "is-off" : "is-unknown"));
-    dot.title = run === 1 ? "RUN" : (run === 0 ? "OFF" : "Status unknown");
+    dot.className = "ahu-run-dot is-" + (state === "on" ? "run" : state);
+    dot.title = state === "on" ? "RUN" : (state === "off" ? "OFF" : "Operating status unknown");
     card.appendChild(dot);
 
     const tagText = ahuTagFor(unit, band);
@@ -3233,6 +3284,18 @@ function ahuCreateCard(unit) {
     value.className = "ahu-card-value";
     value.textContent = ahuFormatTemp(unit.temp);
     card.appendChild(value);
+
+    /*
+     * Explicit operating label when the unit is not running. A green dot alone
+     * is unambiguous; a grey one is not, so "UNKNOWN" has to be written out
+     * rather than left to a colour nobody can interpret.
+     */
+    if (state !== "on") {
+        const label = document.createElement("span");
+        label.className = "ahu-run-label is-" + state;
+        label.textContent = state === "off" ? "OFF" : "UNKNOWN";
+        card.appendChild(label);
+    }
 
     return card;
 }
@@ -3361,29 +3424,55 @@ function renderAhuDashboard(units) {
     sectionTitle.textContent = "AHU";
     unitCount.textContent = ahuUnits.length + " units";
 
-    const counts = { critical: 0, warning: 0, off: 0, normal: 0 };
+    /* Health counts, plus the independent operating counts. */
+    const counts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const ops = { on: 0, off: 0, unknown: 0 };
 
     ahuUnits.forEach(unit => {
         counts[ahuBandOf(unit)] += 1;
+        ops[ahuRunState(unit)] += 1;
     });
 
     const page = document.createElement("div");
     page.className = "ahu-dashboard";
 
-    /* ---- Summary tiles ---- */
+    /* ---- Summary tiles: HEALTH ---- */
     const summary = document.createElement("div");
     summary.className = "ahu-summary";
     summary.appendChild(ahuBuildTile("CRITICAL", counts.critical, "is-critical"));
     summary.appendChild(ahuBuildTile("WARNING", counts.warning, "is-warning"));
     summary.appendChild(ahuBuildTile("NORMAL", counts.normal, "is-normal"));
-    /*
-     * Labelled to match the band heading it counts. The tile total includes
-     * units whose run point reported nothing (UNKNOWN), so calling it plain
-     * "OFF" would claim they are switched off when nobody could look — the
-     * same distinction the run dot and the card tag exist to preserve.
-     */
-    summary.appendChild(ahuBuildTile("OFF / UNKNOWN", counts.off, "is-off"));
+    summary.appendChild(ahuBuildTile("UNKNOWN", counts.unknown, "is-unknown"));
     page.appendChild(summary);
+
+    /*
+     * Operating status is its own row, not a fifth health tile. A unit can be
+     * stopped and healthy at the same time, so summing these into the health
+     * tiles would make the two rows disagree with the sections below.
+     */
+    const opRow = document.createElement("div");
+    opRow.className = "ahu-ops";
+
+    [
+        { key: "on",      label: "RUNNING", count: ops.on },
+        { key: "off",     label: "STOPPED", count: ops.off },
+        { key: "unknown", label: "OP UNKNOWN", count: ops.unknown }
+    ].forEach(item => {
+        const el = document.createElement("span");
+        el.className = "ahu-op is-" + item.key;
+
+        const dot = document.createElement("span");
+        dot.className = "ahu-op-dot";
+        el.appendChild(dot);
+
+        const text = document.createElement("span");
+        text.textContent = item.label + " " + item.count;
+        el.appendChild(text);
+
+        opRow.appendChild(el);
+    });
+
+    page.appendChild(opRow);
 
     /* ---- Sort chips + search ---- */
     const controls = document.createElement("div");
@@ -3481,8 +3570,8 @@ let hvacScSectionsHost = null;
 const HVAC_SC_BANDS = [
     { key: "critical", title: "CRITICAL", note: "alarm from the system" },
     { key: "warning",  title: "WARNING",  note: "value outside its configured limit" },
-    { key: "off",      title: "OFF / UNKNOWN", note: "not running, or not readable" },
-    { key: "normal",   title: "NORMAL",   note: "running, values within limits" }
+    { key: "normal",   title: "NORMAL",   note: "values within limits" },
+    { key: "unknown",  title: "UNKNOWN",  note: "no health reading" }
 ];
 
 /*
@@ -3548,11 +3637,14 @@ function hvacScViolations(kind, unit) {
 }
 
 /*
- * Band a unit using only data the API already sends. No threshold is invented:
- * `alarm` is the unit's native alarm point and the bounds are the unit's own.
+ * HEALTH band for HVAC SC: what the unit's own readings say.
  *
- * Precedence is alarm > out-of-range value > not-running, so a measured
- * violation is never hidden behind an OFF badge.
+ * `run` is deliberately NOT part of this decision. A stopped unit is not
+ * necessarily unhealthy, and a unit whose status point never reported is not
+ * stopped. Operating state is the separate hvacScRunState axis, drawn as the
+ * dot on every card and counted in its own summary tile.
+ *
+ * Precedence is alarm > out-of-range value > no health reading.
  */
 function hvacScBandOf(kind, unit) {
     if (hvacScNum(unit.alarm) === 1) {
@@ -3563,11 +3655,37 @@ function hvacScBandOf(kind, unit) {
         return "warning";
     }
 
-    if (hvacScNum(unit.run) !== 1) {
-        return "off";
+    /*
+     * No alarm point AND no readings at all: nothing was measured, so there is
+     * no basis for calling the unit healthy. This is the same UNKNOWN band the
+     * AHU page uses.
+     */
+    if (hvacScNum(unit.alarm) === null &&
+        !hvacScMetrics(kind, unit).some(m => hvacScNum(m.value) !== null)) {
+        return "unknown";
     }
 
     return "normal";
+}
+
+/*
+ * OPERATING state: what the unit's status point says. run=1 on, run=0 off,
+ * anything else UNKNOWN. Never inferred from current, frequency, temperature
+ * or the health bounds — a CHWP reporting 0.0 Hz is only known to be stopped
+ * if its own status point says so.
+ */
+function hvacScRunState(unit) {
+    const run = hvacScNum(unit.run);
+
+    if (run === 1) {
+        return "on";
+    }
+
+    if (run === 0) {
+        return "off";
+    }
+
+    return "unknown";
 }
 
 /*
@@ -3575,13 +3693,13 @@ function hvacScBandOf(kind, unit) {
  * facts, so they get different words rather than both reading as OFF.
  */
 function hvacScRunTag(unit) {
-    const run = hvacScNum(unit.run);
+    const state = hvacScRunState(unit);
 
-    if (run === 0) {
+    if (state === "off") {
         return "OFF";
     }
 
-    return run === 1 ? "" : "UNKNOWN";
+    return state === "on" ? "" : "UNKNOWN";
 }
 
 function hvacScBadge(kind, unit, band) {
@@ -3611,8 +3729,8 @@ function hvacScBadge(kind, unit, band) {
         return "OUT OF RANGE";
     }
 
-    if (band === "off") {
-        return hvacScRunTag(unit);
+    if (band === "unknown") {
+        return "NO DATA";
     }
 
     return "";
@@ -3649,10 +3767,8 @@ function hvacScReason(kind, unit, band) {
         }).join(" ");
     }
 
-    if (band === "off") {
-        return hvacScNum(unit.run) === 0
-            ? "Not running (run = 0)."
-            : "Run status is not reported by this data source.";
+    if (band === "unknown") {
+        return "Neither an alarm point nor any reading was reported by this data source.";
     }
 
     return "";
@@ -3733,8 +3849,13 @@ function hvacScValueChip(metric, state) {
 }
 
 /*
- * An issue card: name, badge, one line of reason, the values that matter, and
- * an expander for the rest. Open state is remembered per unit in hvacScView.
+ * An issue card: operating dot, name, health badge, one line of reason, the
+ * values that matter, and an expander for the rest. Open state is remembered
+ * per unit in hvacScView.
+ *
+ * The badge states the HEALTH finding and the dot states the OPERATING state,
+ * so "OUT OF RANGE while stopped" is readable as exactly that instead of one
+ * of the two facts overwriting the other.
  */
 function hvacScIssueCard(entry) {
     const { kind, label, unit } = entry;
@@ -3744,9 +3865,12 @@ function hvacScIssueCard(entry) {
     const card = document.createElement("div");
     card.className = "hsc-card is-" + band;
     card.dataset.band = band;
+    card.dataset.run = hvacScRunState(unit);
 
     const row = document.createElement("div");
     row.className = "hsc-card-row";
+
+    row.appendChild(hvacScRunDot(unit));
 
     const name = document.createElement("span");
     name.className = "hsc-card-name";
@@ -3852,11 +3976,9 @@ function hvacScNormalRow(entry) {
 
     const row = document.createElement("div");
     row.className = "hsc-o";
+    row.dataset.run = hvacScRunState(unit);
 
-    const dot = document.createElement("span");
-    dot.className = "hsc-o-dot";
-    dot.title = "RUN";
-    row.appendChild(dot);
+    row.appendChild(hvacScRunDot(unit));
 
     const name = document.createElement("b");
     name.textContent = label;
@@ -3986,22 +4108,54 @@ function renderHvacSc() {
 
     unitCount.textContent = units.length + " units";
 
-    const counts = { critical: 0, warning: 0, off: 0, normal: 0 };
+    /* Health counts, plus the independent operating counts. */
+    const counts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const ops = { on: 0, off: 0, unknown: 0 };
 
     units.forEach(e => {
         counts[hvacScBandOf(e.kind, e.unit)] += 1;
+        ops[hvacScRunState(e.unit)] += 1;
     });
 
     const page = document.createElement("div");
     page.className = "hvac-sc-dashboard";
 
-    /* ---- Summary: CRITICAL / WARNING / TOTAL UNIT ---- */
+    /* ---- Summary: health tiles ---- */
     const summary = document.createElement("div");
     summary.className = "hsc-summary";
     summary.appendChild(hvacScBuildTile("CRITICAL", counts.critical, "is-critical"));
     summary.appendChild(hvacScBuildTile("WARNING", counts.warning, "is-warning"));
     summary.appendChild(hvacScBuildTile("TOTAL UNIT", units.length, "is-total"));
     page.appendChild(summary);
+
+    /*
+     * Operating status is a separate strip, not more health tiles: a stopped
+     * unit can be perfectly healthy, so the two counts are not partitions of
+     * the same total.
+     */
+    const opRow = document.createElement("div");
+    opRow.className = "hsc-ops";
+
+    [
+        { key: "on",      label: "RUNNING", count: ops.on },
+        { key: "off",     label: "STOPPED", count: ops.off },
+        { key: "unknown", label: "OP UNKNOWN", count: ops.unknown }
+    ].forEach(item => {
+        const el = document.createElement("span");
+        el.className = "hsc-op is-" + item.key;
+
+        const dot = document.createElement("span");
+        dot.className = "hsc-op-dot";
+        el.appendChild(dot);
+
+        const text = document.createElement("span");
+        text.textContent = item.label + " " + item.count;
+        el.appendChild(text);
+
+        opRow.appendChild(el);
+    });
+
+    page.appendChild(opRow);
 
     /* ---- Sort chips + search ---- */
     const controls = document.createElement("div");

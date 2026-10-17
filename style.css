@@ -1180,6 +1180,43 @@ footer {
     }
 }
 
+/*
+ * At 320px the fan-name column plus five numeric columns no longer fit: "38.0
+ * Hz" needed 36px in a 32px track and "Module T" needed 46px, so both clipped.
+ * Shrinking the type to fit six columns put the table at 8px, which is below a
+ * readable size, so below 380px the name becomes its own row and the five
+ * measurements stack under it. Every value then has a 38px track at the
+ * original 10.5px type — no clipping, nothing hidden, and the columns still
+ * line up because the header row uses the same five tracks.
+ */
+@media (max-width: 380px) {
+    .g8-fan-table {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 3px 4px;
+    }
+
+    .g8-fan-name {
+        grid-column: 1 / -1;
+    }
+
+    /* The header row's leading cell is intentionally blank; it must not take a row. */
+    .g8-fan-name:empty {
+        display: none;
+    }
+
+    .g8-fan-head {
+        white-space: normal;
+        line-height: 1.15;
+        /*
+         * "Module T" is the only label that needs two lines at this width. All
+         * the headers share one grid row, so bottom-aligning them puts the
+         * second line of "Module T" on the same baseline as the one-line labels
+         * instead of leaving them floating at the top of a taller row.
+         */
+        align-self: end;
+    }
+}
+
 
 /* ROOM TEMP & RH - teal theme */
 .unit-card.room-card {
@@ -2550,13 +2587,47 @@ html:has(.alarm-page) .alarm-page {
 }
 
 .ahu-tile.is-normal .ahu-tile-label,
-.ahu-tile.is-off .ahu-tile-label {
+.ahu-tile.is-unknown .ahu-tile-label {
     color: #9aa7b3;
 }
 
-.ahu-tile.is-off .ahu-tile-value {
+.ahu-tile.is-unknown .ahu-tile-value {
     color: #9aa7b3;
 }
+
+/* --- Operating status strip: RUNNING / STOPPED / OP UNKNOWN --- */
+
+/*
+ * A separate row under the health tiles, because operating state is a second
+ * axis: a unit can be stopped and perfectly healthy, or running while in
+ * alarm. Counting it into the health tiles would make the summary contradict
+ * the sections underneath it.
+ */
+.ahu-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: -4px 0 12px;
+    padding: 0 2px;
+    font-size: 12px;
+    color: #9aa7b3;
+}
+
+.ahu-op {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ahu-op-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+}
+
+.ahu-op.is-on .ahu-op-dot      { background: #4ade80; }
+.ahu-op.is-off .ahu-op-dot     { background: #ed3c3c; }
+.ahu-op.is-unknown .ahu-op-dot { background: #777; }
 
 /* --- Sort chips + search --- */
 
@@ -2643,7 +2714,7 @@ html:has(.alarm-page) .alarm-page {
 .ahu-section.is-critical .ahu-section-title { color: #ff9a92; }
 .ahu-section.is-warning .ahu-section-title  { color: #f5b83d; }
 .ahu-section.is-normal .ahu-section-title   { color: #4ade80; }
-.ahu-section.is-off .ahu-section-title      { color: #9aa7b3; }
+.ahu-section.is-unknown .ahu-section-title  { color: #9aa7b3; }
 
 /*
  * auto-fill keeps the mockup's 3-up rhythm on a phone (3 x 104px + gaps
@@ -2719,17 +2790,22 @@ html:has(.alarm-page) .alarm-page {
     color: #fff;
 }
 
-.ahu-card.is-off {
+/*
+ * The UNKNOWN health band: a real band, not a fallback. A unit whose source
+ * sends neither an alarm point nor a temperature has no health evidence at
+ * all, so it gets the neutral surface rather than being called NORMAL.
+ */
+.ahu-card.is-unknown {
     background: #1b222a;
-    border: 1px solid #2c3640;
+    border: 1px dashed #2c3640;
 }
 
-.ahu-card.is-off .ahu-card-name {
+.ahu-card.is-unknown .ahu-card-name {
     color: #9aa7b3;
     font-weight: 500;
 }
 
-.ahu-card.is-off .ahu-card-value {
+.ahu-card.is-unknown .ahu-card-value {
     color: #9aa7b3;
     font-size: 18px;
     font-weight: 500;
@@ -2739,6 +2815,9 @@ html:has(.alarm-page) .alarm-page {
  * RUN indicator. 13px per the design brief (was a 6px dot), so the green
  * is legible from across a control room. The dark ring keeps it readable
  * on the amber and red band backgrounds as well as the dark ones.
+ *
+ * It is the OPERATING axis and is drawn in every health band: a stopped unit
+ * shows its red dot even when the card is amber or red for a health reason.
  */
 .ahu-run-dot {
     position: absolute;
@@ -2753,6 +2832,24 @@ html:has(.alarm-page) .alarm-page {
 .ahu-run-dot.is-run     { background: #4ade80; }
 .ahu-run-dot.is-off     { background: #ed3c3c; }
 .ahu-run-dot.is-unknown { background: #777; }
+
+/*
+ * Written operating label, shown only when the unit is not running. A green
+ * dot needs no word beside it; a red or grey one does, and "UNKNOWN" must
+ * never be left to a colour that also means "no data".
+ */
+.ahu-run-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .38);
+}
+
+.ahu-run-label.is-off     { color: #ff9a92; }
+.ahu-run-label.is-unknown { color: #b6c1cb; }
 
 /* --- Empty / unavailable notice --- */
 
@@ -2804,7 +2901,7 @@ html:has(.alarm-page) .alarm-page {
     }
 
     .ahu-card.is-normal .ahu-card-value,
-    .ahu-card.is-off .ahu-card-value {
+    .ahu-card.is-unknown .ahu-card-value {
         font-size: 16px;
     }
 
@@ -2912,6 +3009,39 @@ html:has(.alarm-page) .alarm-page {
     color: #9aa7b3;
 }
 
+/* --- Operating status strip: RUNNING / STOPPED / OP UNKNOWN --- */
+
+/*
+ * Its own row, separate from the health tiles. Operating state is not a health
+ * band: a stopped unit can be healthy, so folding it into the tiles would make
+ * the summary disagree with the sections below.
+ */
+.hsc-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: -4px 0 12px;
+    padding: 0 2px;
+    font-size: 12px;
+    color: #9aa7b3;
+}
+
+.hsc-op {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.hsc-op-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+}
+
+.hsc-op.is-on .hsc-op-dot      { background: #4ade80; }
+.hsc-op.is-off .hsc-op-dot     { background: #ed3c3c; }
+.hsc-op.is-unknown .hsc-op-dot { background: #777; }
+
 /* --- Sort chips + search --- */
 
 .hsc-controls {
@@ -2996,8 +3126,8 @@ html:has(.alarm-page) .alarm-page {
 
 .hsc-section.is-critical .hsc-section-title { color: #ff9a92; }
 .hsc-section.is-warning .hsc-section-title  { color: #f5b83d; }
-.hsc-section.is-off .hsc-section-title      { color: #9aa7b3; }
 .hsc-section.is-normal .hsc-section-title   { color: #4ade80; }
+.hsc-section.is-unknown .hsc-section-title  { color: #9aa7b3; }
 
 /* --- Issue cards: one per row on a phone, columns when the width allows --- */
 
@@ -3038,9 +3168,14 @@ html:has(.alarm-page) .alarm-page {
     border: 2px solid #f5b83d;
 }
 
-.hsc-card.is-off {
+/*
+ * The UNKNOWN health band: no alarm point and no readings, so there is no
+ * evidence for calling the unit healthy. Dashed border, neutral surface —
+ * visibly "not measured", never green.
+ */
+.hsc-card.is-unknown {
     background: #1b222a;
-    border: 2px solid #2c3640;
+    border: 2px dashed #2c3640;
 }
 
 /*
@@ -3069,8 +3204,8 @@ html:has(.alarm-page) .alarm-page {
 
 .hsc-card.hsc-u.is-critical { border-left-color: #ff6b63; }
 .hsc-card.hsc-u.is-warning  { border-left-color: #f5b83d; }
-.hsc-card.hsc-u.is-off      { border-left-color: #4a5763; }
 .hsc-card.hsc-u.is-normal   { border-left-color: #4ade80; }
+.hsc-card.hsc-u.is-unknown  { border-left-color: #4a5763; }
 
 /*
  * In the issues view the name row is name-on-the-left, badge-on-the-right. A
@@ -3115,10 +3250,33 @@ html:has(.alarm-page) .alarm-page {
     color: #1a1300;
 }
 
-.hsc-card.is-off .hsc-badge {
+.hsc-card.is-unknown .hsc-badge {
     background: #2c3640;
     color: #c9d3dc;
 }
+
+/*
+ * The OPERATING dot, drawn in every health band and every view.
+ *
+ * 12px, circular, flex:0 0 auto so a long name beside it cannot squeeze it.
+ * The dark ring keeps the colour legible on the amber and red card fills.
+ *
+ * Red for stopped is deliberate and is the point of the exercise: an operator
+ * must be able to see "this unit is OFF" on a card that is also amber or red
+ * for a health reason. Grey means the status point never reported — it is not
+ * a quieter red, and it is never used for a unit known to be stopped.
+ */
+.hsc-run-dot {
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, .38);
+}
+
+.hsc-run-dot.is-on      { background: #4ade80; }
+.hsc-run-dot.is-off     { background: #ed3c3c; }
+.hsc-run-dot.is-unknown { background: #777; }
 
 .hsc-why {
     margin: 6px 0 8px;
@@ -3225,17 +3383,11 @@ html:has(.alarm-page) .alarm-page {
 }
 
 /*
- * The green RUN indicator. 12px rather than the original 6px, which was too
- * small to read as a status light at wall-display distance. flex:0 0 auto is
- * what keeps it from being squeezed by the name beside it in a flex row.
+ * The healthy row's dot is .hsc-run-dot now (see above), shared with the
+ * issue cards and the All Units cards so every operating indicator on the
+ * page is one component with one set of colours. The old .hsc-o-dot was
+ * always green, which made it unable to express a stopped or unknown unit.
  */
-.hsc-o-dot {
-    flex: 0 0 auto;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #4ade80;
-}
 
 .hsc-o b {
     flex: 1;
