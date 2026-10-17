@@ -4050,48 +4050,30 @@ function hvacScIssueCard(entry) {
     const isOpen = hvacScView.expanded[label] === true;
 
     /*
-     * Collapsed: every metric that actually has a reading.
+     * One set of chips, never two.
      *
-     * It used to show only the violated metrics, which meant a chiller whose CE
-     * had crossed its limit rendered as a single CE chip — the other five
-     * parameters it was reporting (SP, RLA, EL, EE, CL) were invisible until
-     * the reader knew to press "Show all values". The violation is still the
-     * thing that stands out, because hvacScValueChip paints it with is-bad and
-     * the card itself carries the warning band, but it no longer hides the rest
-     * of the unit's state.
-     *
-     * Missing readings are still never dressed up as values: they stay in the
-     * expanded view as "--", where their absence is visible but not implied.
+     * Expanded shows every metric, including the ones with no reading, so the
+     * absence is visible rather than hidden by the collapse. Collapsed shows
+     * only the metrics that actually have a reading. The two lists were
+     * previously appended one after the other, so an open card drew every
+     * reading twice — the values once in the collapsed row and again in the
+     * expanded row right below it.
      */
-    const shown = metrics.filter(m => hvacScNum(m.value) !== null);
+    const visible = isOpen
+        ? metrics
+        : metrics.filter(m => hvacScNum(m.value) !== null);
 
     const chips = document.createElement("div");
-    chips.className = "hsc-chips";
-    chips.dataset.n = shown.length;
+    chips.className = "hsc-chips" + (isOpen ? " is-all" : "");
+    chips.dataset.n = visible.length;
 
-    if (shown.length === 0) {
+    if (visible.length === 0) {
         const none = document.createElement("span");
         none.className = "hsc-v n";
         none.textContent = "no readings";
         chips.appendChild(none);
     } else {
-        shown.forEach(m => chips.appendChild(
-            hvacScValueChip(m, isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
-        ));
-    }
-
-    card.appendChild(chips);
-
-    /*
-     * Expanded: every metric, including the ones with no reading, so the
-     * absence is visible rather than hidden by the collapse.
-     */
-    if (isOpen) {
-        const all = document.createElement("div");
-        all.className = "hsc-chips is-all";
-        all.dataset.n = metrics.length;
-
-        metrics.forEach(m => all.appendChild(
+        visible.forEach(m => chips.appendChild(
             hvacScValueChip(
                 m,
                 hvacScNum(m.value) === null
@@ -4099,9 +4081,9 @@ function hvacScIssueCard(entry) {
                     : (isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
             )
         ));
-
-        card.appendChild(all);
     }
+
+    card.appendChild(chips);
 
     const more = document.createElement("button");
     more.type = "button";
