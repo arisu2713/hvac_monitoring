@@ -2418,10 +2418,19 @@ function renderEnergy() {
      * are available regardless of how many units the category has: with a
      * single unit, Overview and Combined simply draw the same one line.
      */
-    buildPageSwitch([
-        { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ONE PANEL EACH" },
-        { value: ENERGY_VIEW_COMBINED, label: "COMBINED — ONE CHART" }
-    ], historyFilters.ENERGY.view, setEnergyView);
+    /*
+     * The view switch only means something while the chart is open, so it is
+     * built only then and cleared otherwise. The combined button is named after
+     * the category that is selected: CT COMBINED, CCP COMBINED or CHWP COMBINED.
+     */
+    if (showChart) {
+        buildPageSwitch([
+            { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ONE PANEL EACH" },
+            { value: ENERGY_VIEW_COMBINED, label: category + " COMBINED" }
+        ], historyFilters.ENERGY.view, setEnergyView);
+    } else {
+        clearPageSwitch();
+    }
 
     const page = document.createElement("div");
     page.className = "history-page";
