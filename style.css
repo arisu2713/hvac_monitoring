@@ -2825,37 +2825,6 @@ html:has(.alarm-page) .alarm-page {
     letter-spacing: .06em;
 }
 
-/*
- * The sensor a non-standard reading came from (AHU 96-97 print a ROOM
- * temperature because they have no duct probe). Deliberately quiet and
- * small: it qualifies the number above it, it does not compete with it.
- */
-.ahu-card-source {
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: .04em;
-    line-height: 1.1;
-    color: #9aa7b3;
-    text-transform: uppercase;
-}
-
-/* Room RH, shown only alongside a room reading. */
-.ahu-card-rh {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.15;
-    color: #b6c1cb;
-}
-
-.ahu-card.is-warning .ahu-card-source,
-.ahu-card.is-critical .ahu-card-source,
-.ahu-card.is-warning .ahu-card-rh,
-.ahu-card.is-critical .ahu-card-rh {
-    color: inherit;
-    opacity: .82;
-}
-
 .ahu-card.is-normal {
     background: #151b22;
     border: 1px solid #222b34;

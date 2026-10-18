@@ -3597,33 +3597,23 @@ function ahuFormatTemp(value) {
 }
 
 /*
- * The reading a card prints, with its own suffix.
+ * The value line a card prints, or null when it prints none.
  *
- * Duct temperature is the normal case. AHU 96-97 have no duct sensor, so the
- * card prints their room temperature instead — the reading the unit really
- * publishes — rather than the "-- °C" that claimed nothing was measured.
- * The unit is written explicitly so a room reading can never be mistaken for
- * a duct one; the label under the number says which sensor it came from.
+ * Duct temperature is the normal case, and "-- °C" when a duct unit has no
+ * reading — the behaviour every other AHU already had.
  *
- * Room RH travels with the room reading for the same reason: those units
- * publish SensorHumidityROOM and nothing else in its place. It is returned
- * only when the card is already showing a room reading, so no duct unit
- * grows a second line.
+ * AHU 96-97 have no duct sensor. Their room temperature and RH are monitored
+ * on the Room Temp & RH page, so their card here carries operating status
+ * only: no value line, no RH line. Returning null means "draw no reading".
  */
 function ahuCardReading(unit) {
     const health = ahuHealth(unit);
 
-    if (health.value === null) {
-        return { text: "-- °C", label: "", rh: null };
+    if (health.room) {
+        return null;
     }
 
-    const rh = health.room ? ahuNum(unit.room_rh) : null;
-
-    return {
-        text: ahuFormatTemp(health.value),
-        label: health.room ? "Room Temp" : "",
-        rh: rh === null ? null : rh.toFixed(1) + " % RH"
-    };
+    return ahuFormatTemp(health.value);
 }
 
 /*
@@ -3637,6 +3627,16 @@ function ahuTagFor(unit, band) {
     }
 
     if (band === "warning") {
+        /*
+         * Room-only units (AHU 96-97) print no temperature on this card, so a
+         * signed "▲ +1.0" would be a bare number with nothing to compare it
+         * to. They still get the warning band — the room reading is real
+         * evidence — but the tag names the condition instead of a delta.
+         */
+        if (ahuHealth(unit).room) {
+            return "OUT OF RANGE";
+        }
+
         const d = ahuDeviation(unit);
 
         if (d === null) {
@@ -3695,28 +3695,16 @@ function ahuCreateCard(unit) {
 
     const reading = ahuCardReading(unit);
 
-    const value = document.createElement("span");
-    value.className = "ahu-card-value";
-    value.textContent = reading.text;
-    card.appendChild(value);
-
     /*
-     * Name the sensor when it is not the usual duct probe. Without this a
-     * 29.0 °C room reading would be read as a 29.0 °C duct reading, which is
-     * a different measurement of a different thing.
+     * Null for AHU 96-97: those units report no duct temperature, and their
+     * room readings live on the Room Temp & RH page, so their card shows
+     * operating status only.
      */
-    if (reading.label) {
-        const source = document.createElement("span");
-        source.className = "ahu-card-source";
-        source.textContent = reading.label;
-        card.appendChild(source);
-    }
-
-    if (reading.rh) {
-        const rh = document.createElement("span");
-        rh.className = "ahu-card-rh";
-        rh.textContent = reading.rh;
-        card.appendChild(rh);
+    if (reading !== null) {
+        const value = document.createElement("span");
+        value.className = "ahu-card-value";
+        value.textContent = reading;
+        card.appendChild(value);
     }
 
     /*
