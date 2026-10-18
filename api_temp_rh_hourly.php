@@ -111,11 +111,16 @@ try {
      * Room list comes from the range but NOT from the metric, so the column
      * set is identical for temp and rh over the same dates — switching the
      * metric must not move the columns.
+     *
+     * The device id travels with each room so the page can group by area.
+     * temp_rh_hourly already stores it per row, so no join is needed; MIN()
+     * picks one when a room's rows ever disagree.
      */
     $roomStmt = $pdo->prepare("
-        SELECT DISTINCT room_type, room_name
+        SELECT room_type, room_name, MIN(device_id) AS device_id
         FROM temp_rh_hourly
         WHERE recorded_at BETWEEN :from AND :to
+        GROUP BY room_type, room_name
         ORDER BY room_type, room_name
     ");
     $roomStmt->execute([':from' => $fromAt, ':to' => $toAt]);
@@ -123,12 +128,21 @@ try {
     $rooms = [];
 
     foreach ($roomStmt as $row) {
+        $device = $row['device_id'] !== null ? (int) $row['device_id'] : null;
+
         $rooms[] = [
             'key'       => $row['room_type'] . '|' . $row['room_name'],
             'room_type' => $row['room_type'],
             'room_name' => $row['room_name'],
             /* Same display rule as api_room.php: "<room_type> <room_name>". */
             'label'     => $row['room_type'] . ' ' . $row['room_name'],
+            /*
+             * Device identity. The device -> area mapping lives in the page,
+             * the same way the ENERGY page maps its units, so the API only
+             * reports the fact it can read.
+             */
+            'device'    => $device,
+            'source'    => 'azbil',
         ];
     }
 
@@ -156,6 +170,7 @@ try {
             $hours[$at] = [
                 'recorded_at'  => $at,
                 'values'       => [],
+                'read_at'      => [],
                 'read_at_min'  => null,
                 'read_at_max'  => null,
             ];
@@ -165,6 +180,15 @@ try {
         $hours[$at]['values'][$key] = $row['value'] === null ? null : (float) $row['value'];
 
         $readAt = $row['read_at'];
+
+        /*
+         * Per-room read time as well as the hour's spread. The page filters
+         * rooms client-side, and a spread taken over rooms that are no longer
+         * on screen would state something about the wrong set.
+         */
+        if ($readAt !== null) {
+            $hours[$at]['read_at'][$key] = $readAt;
+        }
 
         if ($readAt !== null) {
             if ($hours[$at]['read_at_min'] === null || $readAt < $hours[$at]['read_at_min']) {
@@ -176,6 +200,120 @@ try {
             }
         }
     }
+
+    /*
+     * Daikin AHU 96-97 (G8 building) as additional ROOM sources.
+     *
+     * Their room temperature and RH are RoomTemp1 / SensorHumidityROOM, which
+     * live in daikin_current — NOT in points/ai_current, and therefore never in
+     * temp_rh_hourly. The Azbil poller that fills temp_rh_hourly only snapshots
+     * points/ai_current, so these two rooms have no hourly rows there.
+     *
+     * The Daikin poller's own history write (hvac_monitoring.daikin_readings)
+     * was disabled when that database was deleted, so there is no Daikin
+     * history table to read. The only surviving historical fact is the current
+     * row's value together with the timestamp it was taken at. That single
+     * sample is what is reported here, at its real timestamp — it is NOT
+     * presented as an hourly series, and the page labels it as last-known.
+     *
+     * Read-only: SELECT only.
+     */
+    $daikinMetricByPoint = [
+        'RoomTemp1'            => 'temp',
+        'SensorHumidityROOM'   => 'rh',
+    ];
+
+    $daikinStmt = $pdo->prepare("
+        SELECT equipment_no, point_name, value_double, last_update
+        FROM daikin_current
+        WHERE equipment_type = 'AHU'
+          AND equipment_no IN ('96', '97')
+          AND point_name IN ('RoomTemp1', 'SensorHumidityROOM')
+    ");
+    $daikinStmt->execute();
+
+    $daikinRooms = [];
+
+    foreach ($daikinStmt as $row) {
+        $name = 'AHU ' . (int) $row['equipment_no'];
+        $key  = 'ROOM|' . $name;
+
+        /*
+         * Snap the sample to its hour so it lands on the same grid as the
+         * hourly rows, and keep the exact time as the reading time.
+         */
+        $hourAt = $row['last_update'] !== null
+            ? substr($row['last_update'], 0, 13) . ':00:00'
+            : null;
+
+        /*
+         * A room is listed only when its sample falls inside the window. The
+         * test is on the timestamp, never on the metric, so the temp and rh
+         * column sets stay identical for the same dates.
+         */
+        if ($hourAt === null || $hourAt < $fromAt || $hourAt > $toAt) {
+            continue;
+        }
+
+        if (!isset($daikinRooms[$key])) {
+            $daikinRooms[$key] = [
+                'key'       => $key,
+                'room_type' => 'ROOM',
+                'room_name' => $name,
+                'label'     => $name,
+                'device'    => null,
+                'source'    => 'daikin',
+                'last_update' => null,
+            ];
+        }
+
+        if ($daikinRooms[$key]['last_update'] === null
+            || $row['last_update'] > $daikinRooms[$key]['last_update']) {
+            $daikinRooms[$key]['last_update'] = $row['last_update'];
+        }
+
+        $rowMetric = $daikinMetricByPoint[$row['point_name']] ?? null;
+
+        if ($rowMetric === null || $rowMetric !== $metricKey) {
+            continue;
+        }
+
+        if (!isset($hours[$hourAt])) {
+            $hours[$hourAt] = [
+                'recorded_at'  => $hourAt,
+                'values'       => [],
+                'read_at'      => [],
+                'read_at_min'  => null,
+                'read_at_max'  => null,
+            ];
+        }
+
+        $hours[$hourAt]['values'][$key] = $row['value_double'] === null
+            ? null
+            : (float) $row['value_double'];
+
+        $readAt = substr($row['last_update'], 0, 19);
+        $hours[$hourAt]['read_at'][$key] = $readAt;
+
+        if ($hours[$hourAt]['read_at_min'] === null || $readAt < $hours[$hourAt]['read_at_min']) {
+            $hours[$hourAt]['read_at_min'] = $readAt;
+        }
+
+        if ($hours[$hourAt]['read_at_max'] === null || $readAt > $hours[$hourAt]['read_at_max']) {
+            $hours[$hourAt]['read_at_max'] = $readAt;
+        }
+    }
+
+    ksort($daikinRooms);
+
+    foreach ($daikinRooms as $room) {
+        $rooms[] = $room;
+    }
+
+    /*
+     * Newest hour first, matching the ORDER BY the Azbil query used.
+     */
+    krsort($hours);
 
     echo json_encode([
         'success'   => true,

@@ -2152,6 +2152,65 @@ const ENERGY_DEVICE_AREA = {
 
 const ENERGY_AREA_ORDER = ["G1-G2", "G3"];
 
+/*
+ * ROOM TEMP & RH equipment scope: one area/equipment selector.
+ *
+ * Areas are keyed by the ACC device id the hourly rows already carry (10202 =
+ * G3, 10203 = G1-G2). AHU 96-97 are deliberately a separate area, G8: their
+ * readings come from the Daikin poller, not from the Azbil devices, and
+ * folding them into either Azbil area would state a device identity they do
+ * not have.
+ *
+ * The selector's values are the area names themselves, plus two sentinels:
+ * "all" and the Individual Point mode, which reveals a second selector.
+ */
+const ROOM_AREA_ALL = "all";
+const ROOM_AREA_POINT = "__point__";
+const ROOM_ALL_POINTS = "__all__";
+
+const ROOM_DEVICE_AREA = {
+    10202: "G3",
+    10203: "G1-G2"
+};
+
+/* Areas that are not a device: they are named by their own source. */
+const ROOM_SOURCE_AREA = {
+    daikin: "G8"
+};
+
+const ROOM_AREA_ORDER = ["G8", "G1-G2", "G3"];
+
+/*
+ * How each area is named in the selector. The area value stays the bare name
+ * so the mapping above remains the single source of truth; only the text the
+ * operator reads is spelled out, because "G3" alone does not say which
+ * polled device it came from.
+ */
+const ROOM_AREA_LABEL = {
+    "G8": "G8: AHU 96–97 (Daikin poller)",
+    "G3": "G3: device ID 10202",
+    "G1-G2": "G1-G2: device ID 10203"
+};
+
+/* Area of one room, or null when neither its device nor source is known. */
+function roomPointArea(room) {
+    if (!room) {
+        return null;
+    }
+
+    if (room.source && ROOM_SOURCE_AREA[room.source]) {
+        return ROOM_SOURCE_AREA[room.source];
+    }
+
+    const device = Number(room.device);
+
+    if (!Number.isFinite(device) || device === 0) {
+        return null;
+    }
+
+    return ROOM_DEVICE_AREA[device] ?? null;
+}
+
 /* Area of one unit, or null when its device is unknown/outside the map. */
 function energyUnitArea(unit) {
     const device = Number(unit && unit.device);
@@ -2174,7 +2233,13 @@ const historyFilters = {
         unit: ENERGY_ALL_UNITS,
         view: ENERGY_VIEW_OVERVIEW
     },
-    TEMP_RH_HOURLY: { metric: "temp", from: "", to: "" }
+    TEMP_RH_HOURLY: {
+        metric: "temp",
+        from: "",
+        to: "",
+        area: ROOM_AREA_ALL,
+        point: ROOM_ALL_POINTS
+    }
 };
 
 function clearPageFilters() {
@@ -3031,10 +3096,24 @@ function renderRoomHourly() {
         return;
     }
 
-    const rooms = data.rooms || [];
-    const hours = data.hours || [];
+    const allRooms = data.rooms || [];
 
-    unitCount.textContent = hours.length + (hours.length === 1 ? " hour" : " hours");
+    /*
+     * A selection can stop being valid (a room drops out of the response
+     * after a range change). Fall back to All Units rather than showing an
+     * empty frame that reads as "this filter has no data".
+     */
+    if (historyFilters.TEMP_RH_HOURLY.area !== ROOM_AREA_ALL
+        && historyFilters.TEMP_RH_HOURLY.area !== ROOM_AREA_POINT
+        && !roomScopeAreaRooms(allRooms, historyFilters.TEMP_RH_HOURLY.area).length) {
+        historyFilters.TEMP_RH_HOURLY.area = ROOM_AREA_ALL;
+    }
+
+    if (historyFilters.TEMP_RH_HOURLY.area === ROOM_AREA_POINT
+        && !allRooms.some(r => r.key === historyFilters.TEMP_RH_HOURLY.point)) {
+        historyFilters.TEMP_RH_HOURLY.area = ROOM_AREA_ALL;
+        historyFilters.TEMP_RH_HOURLY.point = ROOM_ALL_POINTS;
+    }
 
     const bar = buildFilterBar([
         {
@@ -3046,6 +3125,20 @@ function renderRoomHourly() {
                 text: m === "rh" ? "HUMIDITY (%RH)" : "TEMPERATURE (C)"
             }))
         },
+        {
+            type: "select",
+            name: "area",
+            label: "Equipment scope",
+            options: roomAreaOptions(allRooms),
+            onChange: (value, inputs) => syncRoomScopeInputs(inputs, value)
+        },
+        {
+            type: "select",
+            name: "point",
+            label: "Point",
+            options: roomPointOptions(allRooms),
+            hidden: historyFilters.TEMP_RH_HOURLY.area !== ROOM_AREA_POINT
+        },
         { type: "date", name: "from", label: "From" },
         { type: "date", name: "to", label: "To" }
     ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
@@ -3055,6 +3148,15 @@ function renderRoomHourly() {
         onExport: () => exportTempRh(data)
     });
 
+    /*
+     * Everything below reads from the scoped set, so the table, the charts and
+     * the export are three views of the same rooms and hours.
+     */
+    const rooms = roomScopeRooms(allRooms);
+    const hours = data.hours || [];
+
+    unitCount.textContent = hours.length + (hours.length === 1 ? " hour" : " hours");
+
     const page = document.createElement("div");
     page.className = "history-page is-room-history";
 
@@ -3063,7 +3165,8 @@ function renderRoomHourly() {
     notice.textContent = filterNotice(data.available)
         + " Showing " + (data.from || "--") + " to " + (data.to || "--")
         + " — hourly " + (data.metric === "rh" ? "humidity" : "temperature")
-        + " in " + (data.unit || "") + ".";
+        + " in " + (data.unit || "") + "."
+        + " " + roomScopeLabel(allRooms) + ".";
     page.appendChild(notice);
 
     if (!rooms.length || !hours.length) {
@@ -3106,16 +3209,12 @@ function renderRoomHourly() {
          * read_at is the poller's own timestamp. If it differs across the
          * hour's points the spread is shown, because a frozen point is a
          * real condition and hiding it would make stale data look live.
+         *
+         * The spread is taken over the rooms IN SCOPE, not over every room in
+         * the response: a spread across rooms that are no longer on screen
+         * would describe a different set of points than the columns do.
          */
-        const min = hour.read_at_min;
-        const max = hour.read_at_max;
-        let readAt = "--";
-
-        if (min && max) {
-            readAt = min === max
-                ? formatHour(min)
-                : formatHour(min) + " … " + formatHour(max);
-        }
+        const readAt = roomReadAtLabel(hour, rooms) || "--";
 
         cells.push({ label: "Reading at", value: readAt, className: "history-cell-time" });
 
@@ -3145,121 +3244,187 @@ function renderRoomHourly() {
  * the baseline and read as a genuine measurement.
  */
 /*
- * Which points (rooms) the ROOM charts draw. null = all of them. Kept at
- * module level so the choice survives the periodic re-render.
+ * The chart-local chip filter (buildPointFilter / roomChartSel) is gone. It
+ * selected chart series only, so the table and the export could disagree with
+ * what was on screen. The equipment scope in the filter bar replaces it and
+ * drives all three.
  */
-let roomChartSel = null;
 
-/*
- * Point filter shared by the ROOM and ENERGY charts. `items` are
- * { key, label, color }. The selection lives with the caller (getSel/setSel):
- * null means every point; otherwise a Set of keys. From "all", a tap isolates
- * that point; after that taps add or remove it. Emptying the set, or selecting
- * every point, goes back to null.
- */
-function buildPointFilter(items, getSel, setSel, onChange, title) {
-    const keys = items.map(it => it.key);
+/* =========================================================
+   ROOM TEMP & RH — EQUIPMENT SCOPE
+   =========================================================
 
-    const bar = document.createElement("div");
-    bar.className = "room-filter";
+   One selector narrows the whole view — the table, both charts and the
+   export — to a set of points:
 
-    const head = document.createElement("div");
-    head.className = "room-filter-head";
+     All Units          every room the API reports
+     G8                 AHU 96-97 (Daikin poller)
+     G1-G2              rooms on device 10203
+     G3                 rooms on device 10202
+     Individual Point   exactly one room
 
-    const label = document.createElement("span");
-    label.className = "room-filter-label";
-    label.textContent = title || "POINTS";
-    head.appendChild(label);
+   The filtering is client-side: the API already sends every room with the
+   device id it was read from, and the export is built from the same arrays
+   the table is built from, so the two cannot disagree.
+   ========================================================= */
 
-    const count = document.createElement("span");
-    count.className = "room-filter-count";
-    head.appendChild(count);
+/* Rooms in one area, in the order the API sent them. */
+function roomScopeAreaRooms(rooms, area) {
+    if (!area || area === ROOM_AREA_ALL || area === ROOM_AREA_POINT) {
+        return [];
+    }
 
-    const all = document.createElement("button");
-    all.type = "button";
-    all.className = "room-filter-all";
-    all.textContent = "Show all";
-    head.appendChild(all);
-    bar.appendChild(head);
-
-    const chips = document.createElement("div");
-    chips.className = "room-filter-chips";
-    const buttons = [];
-
-    const sync = () => {
-        const sel = getSel();
-
-        buttons.forEach(entry => {
-            const on = sel === null || sel.has(entry.key);
-            entry.el.classList.toggle("is-on", on);
-            entry.el.setAttribute("aria-pressed", on ? "true" : "false");
-        });
-
-        all.disabled = sel === null;
-        count.textContent = sel === null
-            ? "All " + keys.length
-            : sel.size + " of " + keys.length;
-    };
-
-    items.forEach(it => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "room-chip";
-
-        const sw = document.createElement("span");
-        sw.className = "room-chip-swatch";
-        sw.style.background = it.color;
-        b.appendChild(sw);
-        b.appendChild(document.createTextNode(it.label));
-
-        b.addEventListener("click", () => {
-            let sel = getSel();
-
-            if (sel === null) {
-                sel = new Set([it.key]);
-            } else if (sel.has(it.key)) {
-                sel.delete(it.key);
-                if (sel.size === 0) sel = null;
-            } else {
-                sel.add(it.key);
-            }
-
-            if (sel && sel.size === keys.length) sel = null;
-
-            setSel(sel);
-            sync();
-            onChange();
-        });
-
-        chips.appendChild(b);
-        buttons.push({ key: it.key, el: b });
-    });
-
-    all.addEventListener("click", () => {
-        setSel(null);
-        sync();
-        onChange();
-    });
-
-    bar.appendChild(chips);
-    sync();
-
-    return bar;
+    return rooms.filter(r => roomPointArea(r) === area);
 }
 
-function buildRoomChartFilter(rooms, onChange) {
-    return buildPointFilter(
-        rooms.map(r => ({ key: r.key, label: r.label, color: roomChartColor(r.key) })),
-        () => roomChartSel,
-        v => { roomChartSel = v; },
-        onChange
-    );
+/* Areas present in this response, in the project's usual order. */
+function roomAreaOptions(rooms) {
+    const present = new Set();
+
+    rooms.forEach(r => {
+        const area = roomPointArea(r);
+        if (area) present.add(area);
+    });
+
+    const ordered = ROOM_AREA_ORDER.filter(a => present.has(a));
+
+    /* Anything outside the known map still gets an option, never dropped. */
+    Array.from(present).forEach(a => {
+        if (ordered.indexOf(a) < 0) ordered.push(a);
+    });
+
+    return [{ value: ROOM_AREA_ALL, text: "All Units" }]
+        .concat(ordered.map(a => ({ value: a, text: ROOM_AREA_LABEL[a] || a })))
+        .concat([{ value: ROOM_AREA_POINT, text: "Individual Point" }]);
+}
+
+function roomPointOptions(rooms) {
+    return rooms.map(r => ({
+        value: r.key,
+        text: r.label
+    }));
+}
+
+/* The rooms the current scope selects. */
+function roomScopeRooms(rooms) {
+    const f = historyFilters.TEMP_RH_HOURLY;
+
+    if (f.area === ROOM_AREA_POINT) {
+        const one = rooms.filter(r => r.key === f.point);
+        return one.length ? one : rooms;
+    }
+
+    if (f.area && f.area !== ROOM_AREA_ALL) {
+        const area = roomScopeAreaRooms(rooms, f.area);
+        return area.length ? area : rooms;
+    }
+
+    return rooms;
+}
+
+/* Short description of what the table and charts are currently showing. */
+function roomScopeLabel(rooms) {
+    const f = historyFilters.TEMP_RH_HOURLY;
+    const count = roomScopeRooms(rooms).length;
+
+    if (f.area === ROOM_AREA_POINT) {
+        const one = rooms.find(r => r.key === f.point);
+        return "Scope: " + (one ? one.label : "one point");
+    }
+
+    if (f.area && f.area !== ROOM_AREA_ALL) {
+        return "Scope: " + f.area + " (" + count + (count === 1 ? " point)" : " points)");
+    }
+
+    return "Scope: All points (" + rooms.length + ")";
+}
+
+/* Show only the selector the current mode uses; both stay in the DOM. */
+function syncRoomScopeInputs(inputs, area) {
+    if (!inputs || !inputs.point) {
+        return;
+    }
+
+    inputs.point.closest(".filter-field").hidden = area !== ROOM_AREA_POINT;
+}
+
+/*
+ * Re-render from the data already in hand — no request needed.
+ *
+ * Goes through renderRoomTempRh() rather than renderRoomHourly() directly:
+ * the page's grid is cleared there, so the new table replaces the old one
+ * instead of being appended below it.
+ */
+function redrawRoomHourly() {
+    renderRoomTempRh();
+}
+
+/*
+ * Earliest/latest read_at across the rooms in scope for one hour.
+ *
+ * The API's own read_at_min/read_at_max cover every room in the response, so
+ * they cannot be used once the scope narrows the columns. The fallback to
+ * them is for a response that predates per-room read times (no read_at map at
+ * all); once the map exists, a room missing from it has no reading that hour
+ * and must report none — falling back then would print another room's
+ * timestamp beside an empty cell.
+ */
+function roomReadAtExtreme(hour, rooms, which) {
+    const byRoom = hour.read_at || {};
+    const hasMap = Object.keys(byRoom).length > 0;
+    let best = null;
+
+    rooms.forEach(room => {
+        const at = byRoom[room.key];
+
+        if (!at) {
+            return;
+        }
+
+        if (best === null
+            || (which === "min" ? at < best : at > best)) {
+            best = at;
+        }
+    });
+
+    if (best !== null || hasMap) {
+        return best;
+    }
+
+    return which === "min" ? hour.read_at_min : hour.read_at_max;
+}
+
+/*
+ * The "Reading at" text for one hour, over the rooms in scope.
+ *
+ * The spread is compared AFTER formatting: two readings taken seconds apart
+ * (the Daikin samples are 07:38:28 and 07:38:38) format to the same minute,
+ * and "07:38 … 07:38" would read as a bug rather than as the spread it is.
+ */
+function roomReadAtLabel(hour, rooms) {
+    const min = roomReadAtExtreme(hour, rooms, "min");
+    const max = roomReadAtExtreme(hour, rooms, "max");
+
+    if (!min || !max) {
+        return "";
+    }
+
+    const lo = formatHour(min);
+    const hi = formatHour(max);
+
+    return lo === hi ? lo : lo + " … " + hi;
 }
 
 function buildRoomChartPanel(data, metricKey, panelId) {
     const allRooms = data.rooms || [];
-    const picked = roomChartSel ? allRooms.filter(r => roomChartSel.has(r.key)) : allRooms;
-    const rooms = picked.length ? picked : allRooms;
+
+    /*
+     * The equipment scope decides which rooms are drawn; the table uses the
+     * same helper, so the chart and the table always describe the same set.
+     * `roomChartSel` (the old chip filter) is gone — one selector, one answer.
+     */
+    const rooms = roomScopeRooms(allRooms);
+
     const hours = (data.hours || []).slice().reverse();
     const isRh = metricKey === "rh";
     /*
@@ -3383,10 +3548,11 @@ function buildRoomCharts(primary, peer) {
         panels.appendChild(warn);
     };
 
-    if (rooms.length > 1) {
-        wrap.appendChild(buildRoomChartFilter(rooms, render));
-    }
-
+    /*
+     * No chip filter here any more: the equipment scope in the filter bar is
+     * the one control, and it drives the table and the export too, which a
+     * chart-local chip set never did.
+     */
     wrap.appendChild(panels);
     render();
 
@@ -3398,9 +3564,13 @@ function buildRoomCharts(primary, peer) {
  * newest-first order, same timestamp rendering. "Reading at" is written with
  * the same formatter the table uses (a spread is shown as "min … max" rather
  * than silently collapsed), so every cell in the file matches the screen.
+ *
+ * The room list comes through the same scope helper the table uses, so the
+ * equipment filter applies to the file exactly as it applies to the screen.
  */
 function exportTempRh(data) {
-    const rooms = data.rooms || [];
+    const allRooms = data.rooms || [];
+    const rooms = roomScopeRooms(allRooms);
     const hours = data.hours || [];
     const unit = data.unit || (data.metric === "rh" ? "%RH" : "C");
 
@@ -3418,17 +3588,7 @@ function exportTempRh(data) {
             row.push(isMissingValue(v) ? null : Number(v));
         });
 
-        const min = hour.read_at_min;
-        const max = hour.read_at_max;
-        let readAt = "";
-
-        if (min && max) {
-            readAt = min === max
-                ? formatHour(min)
-                : formatHour(min) + " … " + formatHour(max);
-        }
-
-        row.push(readAt);
+        row.push(roomReadAtLabel(hour, rooms));
 
         return row;
     });
@@ -3442,10 +3602,43 @@ function exportTempRh(data) {
     downloadXlsx(exportFilename("temp_rh_" + (data.metric || "temp"), data.from, data.to), bytes);
 }
 
+/*
+ * APPLY and RESET both come through here.
+ *
+ * Only the metric and the dates need a request: the equipment scope selects a
+ * subset of rows already in hand, so it re-renders from cache instead of
+ * flashing the page empty for a response that would carry the same numbers.
+ *
+ * RESET clears the dates — the only thing it has ever cleared here — and
+ * leaves the scope and the metric alone, so one button does not silently do
+ * three jobs and lose the reader's place.
+ */
 function applyTempRhFilter(inputs, isReset) {
-    historyFilters.TEMP_RH_HOURLY.metric = inputs.metric.value;
-    historyFilters.TEMP_RH_HOURLY.from = isReset ? "" : inputs.from.value;
-    historyFilters.TEMP_RH_HOURLY.to = isReset ? "" : inputs.to.value;
+    const f = historyFilters.TEMP_RH_HOURLY;
+    const prevMetric = f.metric;
+    const prevFrom = f.from;
+    const prevTo = f.to;
+
+    f.metric = inputs.metric.value;
+    f.area = inputs.area ? inputs.area.value : ROOM_AREA_ALL;
+    f.point = inputs.point ? inputs.point.value : ROOM_ALL_POINTS;
+    f.from = isReset ? "" : inputs.from.value;
+    f.to = isReset ? "" : inputs.to.value;
+
+    if (f.area !== ROOM_AREA_POINT) {
+        f.point = ROOM_ALL_POINTS;
+    }
+
+    /*
+     * Nothing the API serves has changed, so redraw rather than refetch. The
+     * date inputs still hold what the reader typed, and renderRoomHourly()
+     * rebuilds the bar from the stored values, so no state is lost.
+     */
+    if (f.metric === prevMetric && f.from === prevFrom && f.to === prevTo) {
+        redrawRoomHourly();
+        return;
+    }
+
     safeLoadData();
 }
 
