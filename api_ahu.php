@@ -111,6 +111,33 @@ try {
             : null;
     }
 
+    /*
+     * Room temperature limit, for the Daikin units that have no duct sensor.
+     *
+     * AHU 96-97 publish RoomTemp1 instead of a duct temperature. Judging that
+     * reading against the AHU duct limit above (25 °C) would report a fault
+     * for a room that is inside its own limit, so the room reading is judged
+     * against the ROOM limit — the same one api_room.php already applies to
+     * these two points when it lists them as ROOM sources.
+     *
+     * Read only. threshold_direct is a reference table maintained outside
+     * this app.
+     */
+    $roomTempMax = null;
+
+    $roomThresholdSql = "
+        SELECT min_value, max_value
+        FROM threshold_direct
+        WHERE equip_type = 'ROOM'
+          AND metric = 'temp'
+    ";
+
+    foreach ($pdo->query($roomThresholdSql)->fetchAll() as $threshold) {
+        $roomTempMax = $threshold['max_value'] !== null
+            ? (float)$threshold['max_value']
+            : null;
+    }
+
     $units = [];
 
     foreach ($rows as $row) {
@@ -259,6 +286,15 @@ try {
 
                 'room_temp'   => null,
                 'room_rh'     => null,
+
+                /*
+                 * The limit that belongs to the reading these units actually
+                 * publish. RoomTemp1 is a ROOM reading, so it is judged
+                 * against the ROOM limit, never the AHU duct limit. Kept as a
+                 * separate field so `temp` and its own `temp_max` stay
+                 * untouched for every other AHU.
+                 */
+                'room_temp_max' => $roomTempMax,
 
                 /*
                  * EC Fan 1-5 structure, seeded from the point master below.

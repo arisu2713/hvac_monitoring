@@ -3455,6 +3455,55 @@ function ahuCompareName(a, b) {
 }
 
 /*
+ * The reading that represents this unit's HEALTH, with the limit that
+ * belongs to it.
+ *
+ * Most AHUs publish a duct temperature (temp / temp_min / temp_max). The
+ * Daikin units in the G8 building (AHU 96-97) have no duct sensor at all —
+ * that is the installed design, not a failed sensor — and publish a ROOM
+ * temperature instead (RoomTemp1, surfaced as room_temp with the ROOM limit
+ * as room_temp_max).
+ *
+ * Judging those two units on `temp` alone made them permanently UNKNOWN: the
+ * reading existed and was valid, but it was not the field the band looked at,
+ * so the page called them "NO DATA" and printed "-- °C". The absence of a
+ * duct sensor was being reported as the absence of every reading.
+ *
+ * Precedence is duct first, room second, so a unit that has both is judged on
+ * its duct reading exactly as before. Only units with no duct reading but a
+ * valid room reading change behaviour, which is AHU 96-97.
+ *
+ * The limits travel WITH the value. A room reading must never be judged
+ * against the AHU duct limit (25 °C): 29 °C of room air is inside the ROOM
+ * limit (30 °C) and would otherwise be reported as a duct fault.
+ */
+function ahuHealth(unit) {
+    const temp = ahuNum(unit.temp);
+
+    if (temp !== null) {
+        return {
+            value: temp,
+            min: ahuNum(unit.temp_min),
+            max: ahuNum(unit.temp_max),
+            room: false
+        };
+    }
+
+    const room = ahuNum(unit.room_temp);
+
+    if (room !== null) {
+        return {
+            value: room,
+            min: null,
+            max: ahuNum(unit.room_temp_max),
+            room: true
+        };
+    }
+
+    return { value: null, min: null, max: null, room: false };
+}
+
+/*
  * HEALTH band: what the unit's own readings say about its condition.
  *
  * This deliberately does NOT look at `run`. "Not running" and "not healthy"
@@ -3469,20 +3518,24 @@ function ahuCompareName(a, b) {
  * alarm point.
  *
  * UNKNOWN means there is no health evidence at all: no alarm point and no
- * temperature. AHU 96/97 are exactly this case — api_ahu.php sends them with
- * alarm=null and temp=null (status_only), so calling them NORMAL would claim
- * a healthy reading nobody took.
+ * temperature of either kind (see ahuHealth). AHU 96-97 are NOT this case —
+ * they have no duct sensor, but they do publish a room temperature, so they
+ * carry a real health reading and are banded on it. Calling them NORMAL would
+ * be wrong only if that reading did not exist; calling them UNKNOWN while it
+ * does is what this function used to do.
  */
 function ahuBandOf(unit) {
     if (ahuNum(unit.alarm) === 1) {
         return "critical";
     }
 
-    if (isOutOfRange(unit.temp, unit.temp_min, unit.temp_max)) {
+    const health = ahuHealth(unit);
+
+    if (isOutOfRange(health.value, health.min, health.max)) {
         return "warning";
     }
 
-    if (ahuNum(unit.alarm) === null && ahuNum(unit.temp) === null) {
+    if (ahuNum(unit.alarm) === null && health.value === null) {
         return "unknown";
     }
 
@@ -3515,19 +3568,20 @@ function ahuRunState(unit) {
 
 /* Signed distance outside the configured bounds, or null when inside them. */
 function ahuDeviation(unit) {
-    const t = ahuNum(unit.temp);
+    const health = ahuHealth(unit);
+    const t = health.value;
 
     if (t === null) {
         return null;
     }
 
-    const max = ahuNum(unit.temp_max);
+    const max = health.max;
 
     if (max !== null && t > max) {
         return t - max;
     }
 
-    const min = ahuNum(unit.temp_min);
+    const min = health.min;
 
     if (min !== null && t < min) {
         return t - min;
@@ -3540,6 +3594,36 @@ function ahuFormatTemp(value) {
     const t = ahuNum(value);
 
     return t === null ? "-- °C" : t.toFixed(1) + " °C";
+}
+
+/*
+ * The reading a card prints, with its own suffix.
+ *
+ * Duct temperature is the normal case. AHU 96-97 have no duct sensor, so the
+ * card prints their room temperature instead — the reading the unit really
+ * publishes — rather than the "-- °C" that claimed nothing was measured.
+ * The unit is written explicitly so a room reading can never be mistaken for
+ * a duct one; the label under the number says which sensor it came from.
+ *
+ * Room RH travels with the room reading for the same reason: those units
+ * publish SensorHumidityROOM and nothing else in its place. It is returned
+ * only when the card is already showing a room reading, so no duct unit
+ * grows a second line.
+ */
+function ahuCardReading(unit) {
+    const health = ahuHealth(unit);
+
+    if (health.value === null) {
+        return { text: "-- °C", label: "", rh: null };
+    }
+
+    const rh = health.room ? ahuNum(unit.room_rh) : null;
+
+    return {
+        text: ahuFormatTemp(health.value),
+        label: health.room ? "Room Temp" : "",
+        rh: rh === null ? null : rh.toFixed(1) + " % RH"
+    };
 }
 
 /*
@@ -3609,10 +3693,31 @@ function ahuCreateCard(unit) {
     name.textContent = unit.name ?? "";
     card.appendChild(name);
 
+    const reading = ahuCardReading(unit);
+
     const value = document.createElement("span");
     value.className = "ahu-card-value";
-    value.textContent = ahuFormatTemp(unit.temp);
+    value.textContent = reading.text;
     card.appendChild(value);
+
+    /*
+     * Name the sensor when it is not the usual duct probe. Without this a
+     * 29.0 °C room reading would be read as a 29.0 °C duct reading, which is
+     * a different measurement of a different thing.
+     */
+    if (reading.label) {
+        const source = document.createElement("span");
+        source.className = "ahu-card-source";
+        source.textContent = reading.label;
+        card.appendChild(source);
+    }
+
+    if (reading.rh) {
+        const rh = document.createElement("span");
+        rh.className = "ahu-card-rh";
+        rh.textContent = reading.rh;
+        card.appendChild(rh);
+    }
 
     /*
      * Explicit operating label when the unit is not running. A green dot alone
