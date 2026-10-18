@@ -3580,3 +3580,120 @@ html:has(.alarm-page) .alarm-page {
 .hsc-o-head b { flex: 1; min-width: 0; }
 .hsc-o b small { display: block; font-size: 11px; font-weight: 400; color: #8b98a8; }
 .hsc-o[data-run="off"] .hsc-o-head b, .hsc-o[data-run="off"] .hsc-v b { opacity: .55; }
+
+/* =========================================================
+   ROOM TEMP & RH redesign (Current / Hourly / Chart)
+   ========================================================= */
+
+/* ---- Current / Hourly History: segmented switch ---- */
+.page-switch { gap: 0; padding-top: 4px; }
+.switch-button {
+    flex: 1 1 0;
+    padding: 11px 12px;
+    background: #141a22;
+    border: 1px solid #2a3644;
+    color: #8b98a8;
+    border-radius: 0;
+    min-height: 44px;
+}
+.switch-button:first-child { border-radius: 12px 0 0 12px; }
+.switch-button:last-child { border-radius: 0 12px 12px 0; border-left: 0; }
+.switch-button.is-active { background: #e6ecf3; color: #0e1319; border-color: #e6ecf3; }
+
+/* ---- Current: room cards ---- */
+.equipment-grid:has(.room-card) .unit-card.room-card {
+    align-items: flex-start;
+    text-align: left;
+    justify-content: flex-start;
+    background: #151b22;
+    border: 1px solid #232d38;
+    border-radius: 16px;
+    padding: 14px;
+    min-height: 0;
+}
+.equipment-grid:has(.room-card) .unit-card.room-card:hover {
+    background: #19212a;
+    border-color: #35506b;
+    transform: none;
+    box-shadow: none;
+}
+.equipment-grid:has(.room-card) .unit-card.room-card.room-outdoor {
+    background: #171a2a;
+    border-color: #2d3358;
+}
+.room-card .unit-name {
+    color: #8b98a8;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    border-bottom: 0;
+    padding: 0;
+    margin: 0 0 8px;
+}
+.room-card.room-outdoor .unit-name { color: #a5b4fc; }
+.room-card .room-temp { color: #e6ecf3; margin: 0; line-height: 1.1; }
+.room-card .room-rh { color: #79b8ff; margin-top: 8px; line-height: 1.1; }
+.room-card.room-outdoor .room-rh { color: #a9b6ff; }
+.room-card .rv-num {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+}
+.room-card .room-temp .rv-num { font-size: 28px; }
+.room-card .room-rh .rv-num { font-size: 18px; }
+.room-card .rv-unit { font-size: 12px; font-weight: 500; color: #8b98a8; }
+
+/* ---- Hourly history: compact table with a sticky Hour column ---- */
+.history-page.is-room-history .history-table-wrap { border-color: #232d38; border-radius: 16px; background: #141a22; }
+.history-page.is-room-history .history-row {
+    grid-template-columns: 92px repeat(calc(var(--history-cols) - 2), minmax(92px, 1fr)) minmax(150px, 1fr);
+    border-bottom-color: #1f2833;
+}
+.history-page.is-room-history .history-head { background: #19212a; }
+.history-page.is-room-history .history-head .history-cell { color: #8b98a8; border-right-color: #232d38; }
+.history-page.is-room-history .history-head .history-cell:first-child {
+    position: sticky; left: 0; z-index: 3; background: #19212a;
+}
+.history-page.is-room-history .history-row:not(.history-head):nth-child(even) .history-cell:not(.history-cell-key) { background: #171e27; }
+.history-page.is-room-history .history-cell { border-right-color: #1f2833; color: #dbe3ec; }
+.history-page.is-room-history .history-cell-key {
+    background: #19212a; text-align: left; white-space: pre-line; line-height: 1.25;
+    position: sticky; left: 0; z-index: 2;
+}
+.history-page.is-room-history .history-cell-null { color: #5d6b7c; }
+@media (max-width: 600px) {
+    .history-page.is-room-history .history-cell-key { position: sticky; }
+}
+
+/* ---- Chart: point (room) filter ---- */
+.room-filter {
+    background: #141a22;
+    border: 1px solid #232d38;
+    border-radius: 16px;
+    padding: 12px 14px;
+}
+.room-filter-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.room-filter-label { font-size: 11px; font-weight: 700; letter-spacing: .1em; color: #8b98a8; }
+.room-filter-all {
+    background: none; border: 0; color: #6db3ff; font-size: 13px; font-weight: 500;
+    min-height: 36px; padding: 0 4px; cursor: pointer;
+}
+.room-filter-all:disabled { color: #5d6b7c; cursor: default; }
+.room-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.room-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 40px; padding: 0 14px;
+    background: transparent; color: #8b98a8;
+    border: 1px solid #2a3644; border-radius: 999px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.room-chip .room-chip-swatch { width: 10px; height: 10px; border-radius: 50%; opacity: .45; }
+.room-chip.is-on { color: #e6ecf3; background: #1b242f; border-color: #3a4a5c; }
+.room-chip.is-on .room-chip-swatch { opacity: 1; }
+.history-chart-panels { display: flex; flex-direction: column; gap: 12px; }
+.history-chart-panel { border-color: #232d38; border-radius: 16px; background: #141a22; }
+
+/* Room Temp & RH: keep the Current / Hourly switch compact on wide screens */
+.page-switch { max-width: 420px; }
+
+/* Room hourly table: header must stay above the sticky Hour cells while scrolling */
+.history-page.is-room-history .history-head { z-index: 4; }
