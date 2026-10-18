@@ -3693,7 +3693,17 @@ html:has(.alarm-page) .alarm-page {
 .history-chart-panel { border-color: #232d38; border-radius: 16px; background: #141a22; }
 
 /* Room Temp & RH: keep the Current / Hourly switch compact on wide screens */
-.page-switch { max-width: 420px; }
+@media (min-width: 700px) { .page-switch { max-width: 560px; } }
 
 /* Room hourly table: header must stay above the sticky Hour cells while scrolling */
 .history-page.is-room-history .history-head { z-index: 4; }
+
+/* Segmented switch: one shared border between neighbours (no double line) */
+.switch-button + .switch-button { border-left: 0; }
+
+/* Point filter: tighter, with a live count */
+.room-filter { padding: 10px 14px 12px; }
+.room-filter-head { gap: 12px; margin-bottom: 6px; }
+.room-filter-count { margin-left: auto; font-size: 12px; color: #8b98a8; }
+.room-filter-chips { gap: 6px; }
+.room-chip { min-height: 36px; padding: 0 12px; }

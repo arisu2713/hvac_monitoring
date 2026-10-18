@@ -2385,6 +2385,11 @@ function renderEnergy() {
         historyFilters.ENERGY.unit = ENERGY_ALL_UNITS;
     }
 
+    /* DETAIL was folded into the chips: pick one chip to see one unit. */
+    if (historyFilters.ENERGY.view === ENERGY_VIEW_DETAIL) {
+        historyFilters.ENERGY.view = ENERGY_VIEW_OVERVIEW;
+    }
+
     const bar = buildFilterBar([
         {
             type: "select",
@@ -2393,19 +2398,11 @@ function renderEnergy() {
             options: (data.categories || ["CT"]).map(c => ({ value: c, text: c }))
         },
         /*
-         * Equipment options are derived from THIS response's unit list, so the
-         * selector can only ever offer equipment the selected category actually
-         * has - CT offers 1-6 and 9-13, CCP and CHWP offer 1-9. "Combined" is
-         * first because it is the default, and it is what the chart shows
-         * whenever no single unit is chosen.
+         * Equipment is NOT a dropdown any more: the chips above the chart are
+         * the one equipment selector (built from this response's unit list, so
+         * only equipment the category really has). Category -> chips is the
+         * whole hierarchy; nothing else repeats it.
          */
-        {
-            type: "select",
-            name: "unit",
-            label: "Equipment",
-            options: [{ value: ENERGY_ALL_UNITS, text: "Combined — All equipment" }]
-                .concat(units.map(u => ({ value: String(u.unit), text: category + " " + u.unit })))
-        },
         { type: "date", name: "from", label: "From" },
         { type: "date", name: "to", label: "To" }
     ], historyFilters.ENERGY, applyEnergyFilter);
@@ -2422,8 +2419,7 @@ function renderEnergy() {
      * single unit, Overview and Combined simply draw the same one line.
      */
     buildPageSwitch([
-        { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ALL EQUIPMENT" },
-        { value: ENERGY_VIEW_DETAIL, label: "DETAIL — SELECTED" },
+        { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ONE PANEL EACH" },
         { value: ENERGY_VIEW_COMBINED, label: "COMBINED — ONE CHART" }
     ], historyFilters.ENERGY.view, setEnergyView);
 
@@ -2447,10 +2443,30 @@ function renderEnergy() {
      * overflow override keys off that class, and emitting it only when a chart
      * exists is what keeps the chartless page byte-identical to before.
      */
+    if (energyChartSelCat !== category) {
+        energyChartSel = null;
+        energyChartSelCat = category;
+    }
+
     if (showChart && units.length && days.length) {
         const stack = document.createElement("div");
         stack.className = "history-chart-stack";
-        stack.appendChild(buildEnergyChart(data));
+
+        const panels = document.createElement("div");
+        panels.className = "history-chart-panels";
+
+        const draw = () => {
+            panels.textContent = "";
+            panels.appendChild(buildEnergyChart(data));
+        };
+
+        /* Detail already charts exactly one unit, so there is nothing to pick. */
+        if (units.length > 1 && historyFilters.ENERGY.view !== ENERGY_VIEW_DETAIL) {
+            stack.appendChild(buildEnergyChartFilter(data, draw));
+        }
+
+        stack.appendChild(panels);
+        draw();
         page.appendChild(stack);
     }
 
@@ -2540,6 +2556,31 @@ function renderEnergy() {
  * "0"/"500" on 0-696; CHWP: "0"/"500" on 0-888) and left the top of every plot
  * unlabelled.
  */
+/*
+ * Which equipment the ENERGY Overview / Combined charts draw. null = all.
+ * Reset whenever the category changes, because keys only mean something
+ * inside one category.
+ */
+let energyChartSel = null;
+let energyChartSelCat = null;
+
+function buildEnergyChartFilter(data, onChange) {
+    const units = data.units || [];
+    const category = data.category || "CT";
+
+    return buildPointFilter(
+        units.map(u => ({
+            key: String(u.unit),
+            label: category + " " + u.unit,
+            color: energyChartColor(units, u.unit)
+        })),
+        () => energyChartSel,
+        v => { energyChartSel = v; },
+        onChange,
+        category + " EQUIPMENT"
+    );
+}
+
 function buildEnergyChart(data) {
     const units = data.units || [];
     const days = (data.days || []).slice().reverse();
@@ -2558,9 +2599,15 @@ function buildEnergyChart(data) {
      * set is what makes toggling between them a change of presentation rather
      * than a change of subject.
      */
+    const picked = (mode !== ENERGY_VIEW_DETAIL && energyChartSel)
+        ? units.filter(u => energyChartSel.has(String(u.unit)))
+        : units;
+
     const charted = mode === ENERGY_VIEW_DETAIL
         ? units.filter(u => String(u.unit) === String(selected))
-        : units;
+        : (picked.length ? picked : units);
+
+    const isSubset = mode !== ENERGY_VIEW_DETAIL && charted.length !== units.length;
 
     if (!charted.length) {
         return buildHistoryChartPanel({
@@ -2670,7 +2717,8 @@ function buildEnergyChart(data) {
      * which shares this panel, keeps its current display-only legend.
      */
     return buildHistoryChartPanel({
-        title: "DAILY ENERGY USAGE — ALL " + category + " (" + days.length + dayWord + ")",
+        title: "DAILY ENERGY USAGE — " + (isSubset ? "SELECTED " : "ALL ") + category
+            + " (" + days.length + dayWord + ")",
         meta: span + " — " + series.length + " channels on one shared scale (kWh)",
         series: series,
         note: note,
@@ -2771,7 +2819,7 @@ function applyEnergyFilter(inputs, isReset) {
     const prev = { category: f.category, unit: f.unit, from: f.from, to: f.to };
 
     f.category = inputs.category.value;
-    f.unit = inputs.unit.value;
+    f.unit = ENERGY_ALL_UNITS;
     f.from = isReset ? "" : inputs.from.value;
     f.to = isReset ? "" : inputs.to.value;
 
@@ -2984,8 +3032,15 @@ function renderRoomHourly() {
  */
 let roomChartSel = null;
 
-function buildRoomChartFilter(rooms, onChange) {
-    const keys = rooms.map(r => r.key);
+/*
+ * Point filter shared by the ROOM and ENERGY charts. `items` are
+ * { key, label, color }. The selection lives with the caller (getSel/setSel):
+ * null means every point; otherwise a Set of keys. From "all", a tap isolates
+ * that point; after that taps add or remove it. Emptying the set, or selecting
+ * every point, goes back to null.
+ */
+function buildPointFilter(items, getSel, setSel, onChange, title) {
+    const keys = items.map(it => it.key);
 
     const bar = document.createElement("div");
     bar.className = "room-filter";
@@ -2995,8 +3050,12 @@ function buildRoomChartFilter(rooms, onChange) {
 
     const label = document.createElement("span");
     label.className = "room-filter-label";
-    label.textContent = "POINTS";
+    label.textContent = title || "POINTS";
     head.appendChild(label);
+
+    const count = document.createElement("span");
+    count.className = "room-filter-count";
+    head.appendChild(count);
 
     const all = document.createElement("button");
     all.type = "button";
@@ -3010,48 +3069,56 @@ function buildRoomChartFilter(rooms, onChange) {
     const buttons = [];
 
     const sync = () => {
+        const sel = getSel();
+
         buttons.forEach(entry => {
-            const on = roomChartSel === null || roomChartSel.has(entry.key);
+            const on = sel === null || sel.has(entry.key);
             entry.el.classList.toggle("is-on", on);
             entry.el.setAttribute("aria-pressed", on ? "true" : "false");
         });
-        all.disabled = roomChartSel === null;
+
+        all.disabled = sel === null;
+        count.textContent = sel === null
+            ? "All " + keys.length
+            : sel.size + " of " + keys.length;
     };
 
-    rooms.forEach(room => {
+    items.forEach(it => {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "room-chip";
 
         const sw = document.createElement("span");
         sw.className = "room-chip-swatch";
-        sw.style.background = roomChartColor(room.key);
+        sw.style.background = it.color;
         b.appendChild(sw);
-        b.appendChild(document.createTextNode(room.label));
+        b.appendChild(document.createTextNode(it.label));
 
         b.addEventListener("click", () => {
-            /* From "all", a tap isolates that point; after that taps add/remove. */
-            if (roomChartSel === null) {
-                roomChartSel = new Set([room.key]);
-            } else if (roomChartSel.has(room.key)) {
-                roomChartSel.delete(room.key);
-                if (roomChartSel.size === 0) roomChartSel = null;
+            let sel = getSel();
+
+            if (sel === null) {
+                sel = new Set([it.key]);
+            } else if (sel.has(it.key)) {
+                sel.delete(it.key);
+                if (sel.size === 0) sel = null;
             } else {
-                roomChartSel.add(room.key);
+                sel.add(it.key);
             }
 
-            if (roomChartSel && roomChartSel.size === keys.length) roomChartSel = null;
+            if (sel && sel.size === keys.length) sel = null;
 
+            setSel(sel);
             sync();
             onChange();
         });
 
         chips.appendChild(b);
-        buttons.push({ key: room.key, el: b });
+        buttons.push({ key: it.key, el: b });
     });
 
     all.addEventListener("click", () => {
-        roomChartSel = null;
+        setSel(null);
         sync();
         onChange();
     });
@@ -3060,6 +3127,15 @@ function buildRoomChartFilter(rooms, onChange) {
     sync();
 
     return bar;
+}
+
+function buildRoomChartFilter(rooms, onChange) {
+    return buildPointFilter(
+        rooms.map(r => ({ key: r.key, label: r.label, color: roomChartColor(r.key) })),
+        () => roomChartSel,
+        v => { roomChartSel = v; },
+        onChange
+    );
 }
 
 function buildRoomChartPanel(data, metricKey, panelId) {
