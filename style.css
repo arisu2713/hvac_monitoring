@@ -2013,6 +2013,16 @@ html:has(.alarm-page) .alarm-page {
     gap: 3px;
 }
 
+/*
+ * A selector that only belongs to one scope is hidden, not removed: it has to
+ * keep its value while the other scope is active, and APPLY reads it. The rule
+ * is explicit because .filter-field's display:flex would otherwise win over
+ * the UA stylesheet's [hidden] { display: none }.
+ */
+.filter-field[hidden] {
+    display: none;
+}
+
 .filter-label {
     font-size: 10px;
     font-weight: 700;
@@ -3662,6 +3672,32 @@ html:has(.alarm-page) .alarm-page {
 .history-page.is-room-history .history-cell-null { color: #5d6b7c; }
 @media (max-width: 600px) {
     .history-page.is-room-history .history-cell-key { position: sticky; }
+}
+
+/* ---- Chart controls: the view switch, moved down beside the plot ---- */
+.history-chart-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+}
+
+/*
+ * The ENERGY view switch sits inside the chart stack, so it must not carry the
+ * page-level padding/max-width that #pageSwitch has. Its buttons keep the same
+ * look, so it still reads as the same control it always was.
+ */
+.history-chart-controls .page-switch {
+    flex: 0 0 auto;
+    padding: 0;
+    max-width: none;
+    gap: 0;
+}
+
+.history-chart-scope {
+    font-size: 12px;
+    color: #8b98a8;
+    margin-left: auto;
 }
 
 /* ---- Chart: point (room) filter ---- */

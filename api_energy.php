@@ -110,6 +110,38 @@ try {
 
     usort($units, fn($a, $b) => $a['unit'] <=> $b['unit']);
 
+    /*
+     * Device id per unit, so the page can offer an area filter.
+     *
+     * The snapshot tables store one column per unit and carry no device
+     * column, but the ACC point master does: every unit's kWh total is a
+     * "CT 1 KWh Total"-style point with a device_id. Reading it here keeps
+     * the device -> unit relationship in the database instead of duplicating
+     * it in the page.
+     *
+     * Read only, and only for the selected category. A unit with no matching
+     * ACC point gets null rather than a guessed device.
+     */
+    $deviceByUnit = [];
+
+    $pointStmt = $pdo->prepare("
+        SELECT point_name, device_id
+        FROM points
+        WHERE obj_type = 'ACC'
+          AND equip_type = :t
+    ");
+    $pointStmt->execute([':t' => $catKey]);
+
+    foreach ($pointStmt as $point) {
+        if (!preg_match('/^' . preg_quote($catKey, '/') . '\s+(\d+)\s+KWh Total$/i', trim($point['point_name']), $m)) {
+            continue;
+        }
+
+        $deviceByUnit[(int) $m[1]] = $point['device_id'] !== null
+            ? (int) $point['device_id']
+            : null;
+    }
+
     /* Available range drives the default window and the UI date bounds. */
     $range = $pdo->query(
         "SELECT MIN(reading_date) AS min_date, MAX(reading_date) AS max_date
@@ -223,7 +255,13 @@ try {
         'available'  => ['min' => $minDate, 'max' => $maxDate],
         'from'       => $from,
         'to'         => $to,
-        'units'      => array_map(fn($u) => ['unit' => $u['unit']], $units),
+        'units'      => array_map(
+            fn($u) => [
+                'unit'   => $u['unit'],
+                'device' => $deviceByUnit[$u['unit']] ?? null,
+            ],
+            $units
+        ),
         'days'       => $days,
     ]);
 } catch (Throwable $e) {

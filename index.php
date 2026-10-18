@@ -2128,12 +2128,52 @@ let roomView = ROOM_VIEW_CURRENT;
  */
 const ENERGY_ALL_UNITS = "__all__";
 const ENERGY_VIEW_OVERVIEW = "overview";
-const ENERGY_VIEW_DETAIL = "detail";
 const ENERGY_VIEW_COMBINED = "combined";
+
+/*
+ * Equipment scope. "All Units" keeps the previous behaviour; "By Area"
+ * narrows to the devices that belong to one area; "Individual Unit" charts
+ * exactly one channel.
+ *
+ * Areas are keyed by ACC device id, which api_energy.php reads from the point
+ * master and sends per unit. The mapping is a fact about the installation, not
+ * about a particular response, so it lives here as a lookup rather than being
+ * inferred from unit numbers (CT 1-6 sit on 10203 and CT 9-13 on 10202, but
+ * the id is the thing that actually defines the area).
+ */
+const ENERGY_SCOPE_ALL = "all";
+const ENERGY_SCOPE_AREA = "area";
+const ENERGY_SCOPE_UNIT = "unit";
+
+const ENERGY_DEVICE_AREA = {
+    10202: "G3",
+    10203: "G1-G2"
+};
+
+const ENERGY_AREA_ORDER = ["G1-G2", "G3"];
+
+/* Area of one unit, or null when its device is unknown/outside the map. */
+function energyUnitArea(unit) {
+    const device = Number(unit && unit.device);
+
+    if (!Number.isFinite(device) || device === 0) {
+        return null;
+    }
+
+    return ENERGY_DEVICE_AREA[device] ?? null;
+}
 
 /* Active filter values, kept out of the DOM so a re-render can restore them. */
 const historyFilters = {
-    ENERGY: { category: "CT", from: "", to: "", unit: ENERGY_ALL_UNITS, view: ENERGY_VIEW_OVERVIEW },
+    ENERGY: {
+        category: "CT",
+        from: "",
+        to: "",
+        scope: ENERGY_SCOPE_ALL,
+        area: "",
+        unit: ENERGY_ALL_UNITS,
+        view: ENERGY_VIEW_OVERVIEW
+    },
     TEMP_RH_HOURLY: { metric: "temp", from: "", to: "" }
 };
 
@@ -2180,7 +2220,7 @@ function buildFilterBar(defs, values, onApply) {
 
     const inputs = {};
 
-    const addSelect = (name, label, options, current) => {
+    const addSelect = (name, label, options, current, onChange) => {
         const wrap = document.createElement("label");
         wrap.className = "filter-field";
 
@@ -2203,9 +2243,20 @@ function buildFilterBar(defs, values, onApply) {
             select.appendChild(o);
         });
 
+        /*
+         * Optional live reaction to a selection. The ENERGY page uses it so
+         * the scope control can repopulate the area/unit list before APPLY,
+         * without a round trip and without losing the dates already typed.
+         */
+        if (onChange) {
+            select.addEventListener("change", () => onChange(select.value, inputs));
+        }
+
         inputs[name] = select;
         wrap.appendChild(select);
         pageFilters.appendChild(wrap);
+
+        return { wrap: wrap, select: select };
     };
 
     const addDate = (name, label, value) => {
@@ -2229,7 +2280,16 @@ function buildFilterBar(defs, values, onApply) {
 
     defs.forEach(def => {
         if (def.type === "select") {
-            addSelect(def.name, def.label, def.options, values[def.name]);
+            const field = addSelect(def.name, def.label, def.options, values[def.name], def.onChange);
+
+            /*
+             * A selector that only applies to one scope (Area, Unit) starts
+             * hidden. It stays in the DOM so its value survives switching
+             * scope, and so APPLY always sees it.
+             */
+            if (def.hidden) {
+                field.wrap.hidden = true;
+            }
         } else {
             addDate(def.name, def.label, values[def.name]);
         }
@@ -2378,16 +2438,18 @@ function renderEnergy() {
     /*
      * A unit can stop appearing in the response (a meter dropped from the
      * snapshot list, or a category swap that leaves a stale selection). Fall
-     * back to the combined view rather than charting a unit that is not there.
+     * back to All Units rather than charting equipment that is not there.
      */
-    if (historyFilters.ENERGY.unit !== ENERGY_ALL_UNITS
+    if (historyFilters.ENERGY.scope === ENERGY_SCOPE_UNIT
         && !units.some(u => String(u.unit) === String(historyFilters.ENERGY.unit))) {
+        historyFilters.ENERGY.scope = ENERGY_SCOPE_ALL;
         historyFilters.ENERGY.unit = ENERGY_ALL_UNITS;
     }
 
-    /* DETAIL was folded into the chips: pick one chip to see one unit. */
-    if (historyFilters.ENERGY.view === ENERGY_VIEW_DETAIL) {
-        historyFilters.ENERGY.view = ENERGY_VIEW_OVERVIEW;
+    if (historyFilters.ENERGY.scope === ENERGY_SCOPE_AREA
+        && !energyAreaUnits(units, historyFilters.ENERGY.area).length) {
+        historyFilters.ENERGY.scope = ENERGY_SCOPE_ALL;
+        historyFilters.ENERGY.area = "";
     }
 
     const bar = buildFilterBar([
@@ -2397,12 +2459,31 @@ function renderEnergy() {
             label: "Category",
             options: (data.categories || ["CT"]).map(c => ({ value: c, text: c }))
         },
-        /*
-         * Equipment is NOT a dropdown any more: the chips above the chart are
-         * the one equipment selector (built from this response's unit list, so
-         * only equipment the category really has). Category -> chips is the
-         * whole hierarchy; nothing else repeats it.
-         */
+        {
+            type: "select",
+            name: "scope",
+            label: "Equipment scope",
+            options: [
+                { value: ENERGY_SCOPE_ALL, text: "All Units" },
+                { value: ENERGY_SCOPE_AREA, text: "By Area" },
+                { value: ENERGY_SCOPE_UNIT, text: "Individual Unit" }
+            ],
+            onChange: (value, inputs) => syncEnergyScopeInputs(inputs, value)
+        },
+        {
+            type: "select",
+            name: "area",
+            label: "Area",
+            options: energyAreaOptions(units),
+            hidden: historyFilters.ENERGY.scope !== ENERGY_SCOPE_AREA
+        },
+        {
+            type: "select",
+            name: "unit",
+            label: "Unit",
+            options: energyUnitOptions(units, category),
+            hidden: historyFilters.ENERGY.scope !== ENERGY_SCOPE_UNIT
+        },
         { type: "date", name: "from", label: "From" },
         { type: "date", name: "to", label: "To" }
     ], historyFilters.ENERGY, applyEnergyFilter);
@@ -2413,24 +2494,11 @@ function renderEnergy() {
     });
 
     /*
-     * The three view modes, in its own container above the filter bar so
-     * switching modes never disturbs the filters (and vice versa). All three
-     * are available regardless of how many units the category has: with a
-     * single unit, Overview and Combined simply draw the same one line.
+     * The view switch now lives WITH the chart, not in #pageSwitch above the
+     * filter bar: it only changes how the chart is drawn, so it belongs beside
+     * the thing it changes. It is built inside the chart stack below.
      */
-    /*
-     * The view switch only means something while the chart is open, so it is
-     * built only then and cleared otherwise. The combined button is named after
-     * the category that is selected: CT COMBINED, CCP COMBINED or CHWP COMBINED.
-     */
-    if (showChart) {
-        buildPageSwitch([
-            { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ONE PANEL EACH" },
-            { value: ENERGY_VIEW_COMBINED, label: category + " COMBINED" }
-        ], historyFilters.ENERGY.view, setEnergyView);
-    } else {
-        clearPageSwitch();
-    }
+    clearPageSwitch();
 
     const page = document.createElement("div");
     page.className = "history-page";
@@ -2452,30 +2520,44 @@ function renderEnergy() {
      * overflow override keys off that class, and emitting it only when a chart
      * exists is what keeps the chartless page byte-identical to before.
      */
-    if (energyChartSelCat !== category) {
-        energyChartSel = null;
-        energyChartSelCat = category;
-    }
-
     if (showChart && units.length && days.length) {
         const stack = document.createElement("div");
         stack.className = "history-chart-stack";
 
+        /* View switch + the equipment it applies to, right above the plot. */
+        const controls = document.createElement("div");
+        controls.className = "history-chart-controls";
+
+        const viewSwitch = document.createElement("div");
+        viewSwitch.className = "page-switch history-chart-view-switch";
+
+        [
+            { value: ENERGY_VIEW_OVERVIEW, label: "OVERVIEW — ONE PANEL EACH" },
+            { value: ENERGY_VIEW_COMBINED, label: category + " COMBINED" }
+        ].forEach(opt => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "switch-button"
+                + (historyFilters.ENERGY.view === opt.value ? " is-active" : "");
+            button.textContent = opt.label;
+            button.addEventListener("click", () => setEnergyView(opt.value));
+            viewSwitch.appendChild(button);
+        });
+
+        controls.appendChild(viewSwitch);
+
+        const scopeLabel = document.createElement("span");
+        scopeLabel.className = "history-chart-scope";
+        scopeLabel.textContent = energyScopeLabel(units, category);
+        controls.appendChild(scopeLabel);
+
+        stack.appendChild(controls);
+
         const panels = document.createElement("div");
         panels.className = "history-chart-panels";
-
-        const draw = () => {
-            panels.textContent = "";
-            panels.appendChild(buildEnergyChart(data));
-        };
-
-        /* Detail already charts exactly one unit, so there is nothing to pick. */
-        if (units.length > 1 && historyFilters.ENERGY.view !== ENERGY_VIEW_DETAIL) {
-            stack.appendChild(buildEnergyChartFilter(data, draw));
-        }
-
+        panels.appendChild(buildEnergyChart(data));
         stack.appendChild(panels);
-        draw();
+
         page.appendChild(stack);
     }
 
@@ -2546,11 +2628,12 @@ function renderEnergy() {
 }
 
 /*
- * ENERGY chart: the hybrid Overview / Detail / Combined experience.
+ * ENERGY chart: Overview / Combined.
  *
- * All three modes plot the same `usage` values the table's columns show, over
- * the same days, through the same formatters, so the chart and the table can
- * never disagree.
+ * Both modes plot the same `usage` values the table's columns show, over the
+ * same days, through the same formatters, so the chart and the table can
+ * never disagree. They differ only in whether the units share a plot or get
+ * one panel each.
  *
  * A null usage means "not derivable" (no previous day, or a meter reset). It is
  * left as a gap in the line and counted in the note — never plotted as 0, which
@@ -2565,58 +2648,104 @@ function renderEnergy() {
  * "0"/"500" on 0-696; CHWP: "0"/"500" on 0-888) and left the top of every plot
  * unlabelled.
  */
+
+/* Units in one area, in unit order. Empty when the area has none. */
+function energyAreaUnits(units, area) {
+    if (!area) {
+        return [];
+    }
+
+    return units.filter(u => energyUnitArea(u) === area);
+}
+
+/* Area options present in this response, in the project's usual order. */
+function energyAreaOptions(units) {
+    const present = new Set();
+
+    units.forEach(u => {
+        const area = energyUnitArea(u);
+        if (area) present.add(area);
+    });
+
+    const ordered = ENERGY_AREA_ORDER.filter(a => present.has(a));
+
+    /* Anything outside the known map still gets an option, never dropped. */
+    Array.from(present).forEach(a => {
+        if (ordered.indexOf(a) < 0) ordered.push(a);
+    });
+
+    return ordered.map(a => ({ value: a, text: a }));
+}
+
+function energyUnitOptions(units, category) {
+    return units.map(u => ({
+        value: String(u.unit),
+        text: category + " " + u.unit + (energyUnitArea(u) ? " (" + energyUnitArea(u) + ")" : "")
+    }));
+}
+
+/* The units the current scope selects. */
+function energyScopeUnits(data) {
+    const units = (data && data.units) || [];
+    const f = historyFilters.ENERGY;
+
+    if (f.scope === ENERGY_SCOPE_UNIT) {
+        const one = units.filter(u => String(u.unit) === String(f.unit));
+        return one.length ? one : units;
+    }
+
+    if (f.scope === ENERGY_SCOPE_AREA) {
+        const area = energyAreaUnits(units, f.area);
+        return area.length ? area : units;
+    }
+
+    return units;
+}
+
+/* Short description of what the chart is currently showing. */
+function energyScopeLabel(units, category) {
+    const f = historyFilters.ENERGY;
+    const count = energyScopeUnits({ units: units }).length;
+
+    if (f.scope === ENERGY_SCOPE_UNIT && f.unit !== ENERGY_ALL_UNITS) {
+        return "Scope: " + category + " " + f.unit;
+    }
+
+    if (f.scope === ENERGY_SCOPE_AREA && f.area) {
+        return "Scope: Area " + f.area + " (" + count + " units)";
+    }
+
+    return "Scope: All units (" + units.length + ")";
+}
+
 /*
- * Which equipment the ENERGY Overview / Combined charts draw. null = all.
- * Reset whenever the category changes, because keys only mean something
- * inside one category.
+ * Show only the selector the chosen scope uses. The other one is hidden rather
+ * than removed so its value survives a round trip through All Units, and so
+ * APPLY always sees both inputs.
  */
-let energyChartSel = null;
-let energyChartSelCat = null;
+function syncEnergyScopeInputs(inputs, scope) {
+    if (!inputs || !inputs.area || !inputs.unit) {
+        return;
+    }
 
-function buildEnergyChartFilter(data, onChange) {
-    const units = data.units || [];
-    const category = data.category || "CT";
-
-    return buildPointFilter(
-        units.map(u => ({
-            key: String(u.unit),
-            label: category + " " + u.unit,
-            color: energyChartColor(units, u.unit)
-        })),
-        () => energyChartSel,
-        v => { energyChartSel = v; },
-        onChange,
-        category + " EQUIPMENT"
-    );
+    inputs.area.closest(".filter-field").hidden = scope !== ENERGY_SCOPE_AREA;
+    inputs.unit.closest(".filter-field").hidden = scope !== ENERGY_SCOPE_UNIT;
 }
 
 function buildEnergyChart(data) {
     const units = data.units || [];
     const days = (data.days || []).slice().reverse();
     const category = data.category || "CT";
-    const selected = historyFilters.ENERGY.unit;
     const mode = historyFilters.ENERGY.view;
 
     /*
-     * Which equipment each mode draws:
-     *   Combined - every unit in the category, on one shared axis.
-     *   Detail   - exactly the selected unit.
-     *   Overview - every unit in the category, one small chart each.
-     *
-     * Overview and Combined therefore plot the same set; they differ only in
-     * whether the units share a plot or get their own. Keeping them on the same
-     * set is what makes toggling between them a change of presentation rather
-     * than a change of subject.
+     * The scope decides which units are charted; the view mode only decides
+     * how they are drawn. Keeping the two apart means switching Overview /
+     * Combined never changes the subject of the chart.
      */
-    const picked = (mode !== ENERGY_VIEW_DETAIL && energyChartSel)
-        ? units.filter(u => energyChartSel.has(String(u.unit)))
-        : units;
+    const charted = energyScopeUnits(data);
 
-    const charted = mode === ENERGY_VIEW_DETAIL
-        ? units.filter(u => String(u.unit) === String(selected))
-        : (picked.length ? picked : units);
-
-    const isSubset = mode !== ENERGY_VIEW_DETAIL && charted.length !== units.length;
+    const isSubset = charted.length !== units.length;
 
     if (!charted.length) {
         return buildHistoryChartPanel({
@@ -2654,6 +2783,7 @@ function buildEnergyChart(data) {
         : "All " + (series.length * days.length) + " readings have a derivable usage.";
 
     const dayWord = days.length === 1 ? " day" : " days";
+    const channelWord = series.length === 1 ? " channel" : " channels";
     const span = (data.from || "--") + " to " + (data.to || "--");
 
     if (mode === ENERGY_VIEW_OVERVIEW) {
@@ -2683,7 +2813,7 @@ function buildEnergyChart(data) {
 
         return buildHistoryChartPanel({
             title: "DAILY ENERGY USAGE — " + category + " OVERVIEW (" + days.length + dayWord + ")",
-            meta: span + " — " + series.length + " channels, one panel each, shared 0-" + formatCompactNumber(Math.round(top)) + " kWh scale",
+            meta: span + " — " + series.length + channelWord + ", one panel each, shared 0-" + formatCompactNumber(Math.round(top)) + " kWh scale",
             series: series,
             note: note,
             /*
@@ -2702,22 +2832,9 @@ function buildEnergyChart(data) {
         });
     }
 
-    if (mode === ENERGY_VIEW_DETAIL) {
-        const unit = charted[0];
-
-        return buildHistoryChartPanel({
-            title: "DAILY ENERGY USAGE — " + category + " " + unit.unit + " (" + days.length + dayWord + ")",
-            meta: span + " — daily usage in kWh",
-            series: series,
-            note: note,
-            emptyText: "No daily usage to chart for this filter.",
-            options: energyChartOptions()
-        });
-    }
-
     /*
-     * Combined: every unit in the category on ONE shared axis, with a legend
-     * that shows and hides individual series.
+     * Combined: every unit in scope on ONE shared axis, with a legend that
+     * shows and hides individual series.
      *
      * This is the only mode that can carry more series than the palette has
      * slots, which is why the palette was extended to eleven validated hues
@@ -2728,7 +2845,7 @@ function buildEnergyChart(data) {
     return buildHistoryChartPanel({
         title: "DAILY ENERGY USAGE — " + (isSubset ? "SELECTED " : "ALL ") + category
             + " (" + days.length + dayWord + ")",
-        meta: span + " — " + series.length + " channels on one shared scale (kWh)",
+        meta: span + " — " + series.length + channelWord + " on one shared scale (kWh)",
         series: series,
         note: note,
         combine: true,
@@ -2739,7 +2856,7 @@ function buildEnergyChart(data) {
 }
 
 /*
- * Shared chart options for all three ENERGY modes.
+ * Shared chart options for all ENERGY modes.
  *
  * `padFraction` is what switches on adaptive scaling in the geometry (a caller
  * passing neither it nor `autoScale` gets the plain data range), so every mode
@@ -2810,46 +2927,38 @@ function exportEnergy(data) {
 /*
  * APPLY and RESET both come through here.
  *
- * Category, equipment and view mode are NOT date fields, so RESET deliberately
+ * Category, scope and view mode are NOT date fields, so RESET deliberately
  * leaves them alone: it clears the date range, which is the only thing the
  * RESET button has ever cleared on this page. Silently resetting the category
  * to CT or the view to Overview as well would make one button do three jobs and
  * lose the reader's place.
  *
- * Changing category always re-fetches, because the equipment list and the
- * equipment selector are both derived from the response. Changing only the
- * equipment or the view mode does not: both re-present data already in hand, so
- * they re-render from cache instead of making the reader wait on a request that
- * would return the same numbers — and, more importantly, so the page does not
- * flash empty in between.
+ * Changing category always re-fetches, because the unit list (and with it the
+ * area and unit options) is derived from the response. Changing the scope only
+ * re-renders from data already in hand: it selects a subset of the same rows,
+ * so making the reader wait on an identical request would only flash the page
+ * empty.
  */
 function applyEnergyFilter(inputs, isReset) {
     const f = historyFilters.ENERGY;
     const prev = { category: f.category, unit: f.unit, from: f.from, to: f.to };
 
     f.category = inputs.category.value;
-    f.unit = ENERGY_ALL_UNITS;
+    f.scope = inputs.scope ? inputs.scope.value : ENERGY_SCOPE_ALL;
+    f.area = inputs.area ? inputs.area.value : "";
+    f.unit = inputs.unit ? inputs.unit.value : ENERGY_ALL_UNITS;
     f.from = isReset ? "" : inputs.from.value;
     f.to = isReset ? "" : inputs.to.value;
 
     /*
      * A unit selection belongs to the category it was made in — CT 11 is not a
-     * CCP channel — so a category change drops it back to the combined view
-     * rather than carrying a stale selection across.
+     * CCP channel — so a category change drops it back to All Units rather
+     * than carrying a stale selection across.
      */
     if (f.category !== prev.category) {
+        f.scope = ENERGY_SCOPE_ALL;
+        f.area = "";
         f.unit = ENERGY_ALL_UNITS;
-    }
-
-    /*
-     * DETAIL is about one piece of equipment, so it cannot be showing with no
-     * equipment chosen. Picking "Combined — All equipment" while DETAIL is the
-     * active mode therefore means the reader wants all of them, which is
-     * OVERVIEW — so the mode follows the selection rather than drawing an empty
-     * frame that reads as "this filter has no data".
-     */
-    if (f.unit === ENERGY_ALL_UNITS && f.view === ENERGY_VIEW_DETAIL) {
-        f.view = ENERGY_VIEW_OVERVIEW;
     }
 
     const dataUnchanged = f.category === prev.category
@@ -2865,7 +2974,7 @@ function applyEnergyFilter(inputs, isReset) {
 
 /*
  * Switch view mode in place. Re-renders from the data already loaded, so the
- * three modes can be compared without a round trip.
+ * two modes can be compared without a round trip.
  */
 function setEnergyView(view) {
     if (historyFilters.ENERGY.view === view) return;
