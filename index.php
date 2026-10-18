@@ -1218,6 +1218,22 @@ function fitExhaustFanToViewport() {
      */
     apply(MIN_CARD_H);
 }
+function setRoomReading(el, raw, unitText) {
+    const has = raw !== null && raw !== undefined;
+
+    const num = document.createElement("span");
+    num.className = "rv-num";
+    num.textContent = has ? Number(raw).toFixed(1) : "--";
+
+    const u = document.createElement("span");
+    u.className = "rv-unit";
+    u.textContent = " " + unitText;
+
+    el.textContent = "";
+    el.appendChild(num);
+    el.appendChild(u);
+}
+
 function createRoomCard(unit, index) {
     const card = document.createElement("div");
     card.id = "roomcard" + (index + 1);
@@ -1247,17 +1263,13 @@ function createRoomCard(unit, index) {
 
     const tempVal = document.createElement("div");
     tempVal.className = "unit-value room-temp";
-    tempVal.textContent = (unit.temp !== null && unit.temp !== undefined)
-        ? Number(unit.temp).toFixed(1) + " °C"
-        : "-- °C";
+    setRoomReading(tempVal, unit.temp, "°C");
     applyAlarmClass(tempVal, unit.temp, null, unit.temp_max);
     card.appendChild(tempVal);
 
     const rhVal = document.createElement("div");
     rhVal.className = "unit-value room-rh";
-    rhVal.textContent = (unit.rh !== null && unit.rh !== undefined)
-        ? Number(unit.rh).toFixed(1) + " % RH"
-        : "-- % RH";
+    setRoomReading(rhVal, unit.rh, "% RH");
     applyAlarmClass(rhVal, unit.rh, null, unit.rh_max);
     card.appendChild(rhVal);
 
@@ -2832,6 +2844,14 @@ function buildEnergyUrl() {
    table. Both views share the one page, so switching never navigates.
    ========================================================= */
 
+/* "2026-10-17 21:00" -> two lines, so the sticky Hour column stays narrow. */
+function roomHourStamp(text) {
+    const s = String(text);
+    const k = s.indexOf(" ");
+
+    return k > 0 ? s.slice(0, k) + "\n" + s.slice(k + 1) : s;
+}
+
 function renderRoomHourly() {
     const data = allData.TEMP_RH_HOURLY;
 
@@ -2870,7 +2890,7 @@ function renderRoomHourly() {
     });
 
     const page = document.createElement("div");
-    page.className = "history-page";
+    page.className = "history-page is-room-history";
 
     const notice = document.createElement("div");
     notice.className = "history-notice";
@@ -2900,8 +2920,8 @@ function renderRoomHourly() {
     const rows = hours.map(hour => {
         const cells = [{
             label: "Hour",
-            value: formatHour(hour.recorded_at),
-            className: "history-cell-key"
+            value: roomHourStamp(formatHour(hour.recorded_at)),
+            className: "history-cell-key history-cell-stamp"
         }];
 
         rooms.forEach(room => {
@@ -2958,8 +2978,94 @@ function renderRoomHourly() {
  * real gap in the line; it is never coerced to 0, which would draw a plunge to
  * the baseline and read as a genuine measurement.
  */
+/*
+ * Which points (rooms) the ROOM charts draw. null = all of them. Kept at
+ * module level so the choice survives the periodic re-render.
+ */
+let roomChartSel = null;
+
+function buildRoomChartFilter(rooms, onChange) {
+    const keys = rooms.map(r => r.key);
+
+    const bar = document.createElement("div");
+    bar.className = "room-filter";
+
+    const head = document.createElement("div");
+    head.className = "room-filter-head";
+
+    const label = document.createElement("span");
+    label.className = "room-filter-label";
+    label.textContent = "POINTS";
+    head.appendChild(label);
+
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "room-filter-all";
+    all.textContent = "Show all";
+    head.appendChild(all);
+    bar.appendChild(head);
+
+    const chips = document.createElement("div");
+    chips.className = "room-filter-chips";
+    const buttons = [];
+
+    const sync = () => {
+        buttons.forEach(entry => {
+            const on = roomChartSel === null || roomChartSel.has(entry.key);
+            entry.el.classList.toggle("is-on", on);
+            entry.el.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        all.disabled = roomChartSel === null;
+    };
+
+    rooms.forEach(room => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "room-chip";
+
+        const sw = document.createElement("span");
+        sw.className = "room-chip-swatch";
+        sw.style.background = roomChartColor(room.key);
+        b.appendChild(sw);
+        b.appendChild(document.createTextNode(room.label));
+
+        b.addEventListener("click", () => {
+            /* From "all", a tap isolates that point; after that taps add/remove. */
+            if (roomChartSel === null) {
+                roomChartSel = new Set([room.key]);
+            } else if (roomChartSel.has(room.key)) {
+                roomChartSel.delete(room.key);
+                if (roomChartSel.size === 0) roomChartSel = null;
+            } else {
+                roomChartSel.add(room.key);
+            }
+
+            if (roomChartSel && roomChartSel.size === keys.length) roomChartSel = null;
+
+            sync();
+            onChange();
+        });
+
+        chips.appendChild(b);
+        buttons.push({ key: room.key, el: b });
+    });
+
+    all.addEventListener("click", () => {
+        roomChartSel = null;
+        sync();
+        onChange();
+    });
+
+    bar.appendChild(chips);
+    sync();
+
+    return bar;
+}
+
 function buildRoomChartPanel(data, metricKey, panelId) {
-    const rooms = data.rooms || [];
+    const allRooms = data.rooms || [];
+    const picked = roomChartSel ? allRooms.filter(r => roomChartSel.has(r.key)) : allRooms;
+    const rooms = picked.length ? picked : allRooms;
     const hours = (data.hours || []).slice().reverse();
     const isRh = metricKey === "rh";
     /*
@@ -3000,13 +3106,15 @@ function buildRoomChartPanel(data, metricKey, panelId) {
 
     return buildHistoryChartPanel({
         panelId: panelId,
-        title: (isRh ? "HUMIDITY" : "TEMPERATURE") + " — ALL ROOMS ("
+        title: (isRh ? "HUMIDITY" : "TEMPERATURE")
+            + (rooms.length === allRooms.length ? " — ALL ROOMS (" : " — SELECTED ROOMS (")
             + hours.length + (hours.length === 1 ? " hour" : " hours") + ")",
         meta: (data.from || "--") + " to " + (data.to || "--")
             + " — " + series.length + " rooms, reference line at " + ref.label,
         series: series,
         note: note,
         combine: true,
+        legendToggle: true,
         emptyText: "No hourly readings to chart for this filter.",
         options: {
             unit: unit,
@@ -3047,31 +3155,46 @@ function buildRoomCharts(primary, peer) {
     const wrap = document.createElement("div");
     wrap.className = "history-chart-stack";
 
-    const primaryMetric = primary && primary.metric === "rh" ? "rh" : "temp";
-    const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
+    const rooms = (primary && primary.rooms) || [];
 
-    const hasPeer = peer && Array.isArray(peer.hours) && peer.hours.length > 0;
+    const panels = document.createElement("div");
+    panels.className = "history-chart-panels";
 
-    if (hasPeer) {
-        const byMetric = {};
-        byMetric[primaryMetric] = primary;
-        byMetric[peerMetric] = peer;
+    const render = () => {
+        panels.textContent = "";
 
-        /* Fixed order: Temperature first, then Humidity. */
-        ["temp", "rh"].forEach(metricKey => {
-            wrap.appendChild(buildRoomChartPanel(byMetric[metricKey], metricKey, metricKey));
-        });
+        const primaryMetric = primary && primary.metric === "rh" ? "rh" : "temp";
+        const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
+        const hasPeer = peer && Array.isArray(peer.hours) && peer.hours.length > 0;
 
-        return wrap;
+        if (hasPeer) {
+            const byMetric = {};
+            byMetric[primaryMetric] = primary;
+            byMetric[peerMetric] = peer;
+
+            /* Fixed order: Temperature first, then Humidity. */
+            ["temp", "rh"].forEach(metricKey => {
+                panels.appendChild(buildRoomChartPanel(byMetric[metricKey], metricKey, metricKey));
+            });
+
+            return;
+        }
+
+        panels.appendChild(buildRoomChartPanel(primary, primaryMetric, primaryMetric));
+
+        const warn = document.createElement("div");
+        warn.className = "history-chart-note";
+        warn.textContent = "The " + (peerMetric === "rh" ? "humidity" : "temperature")
+            + " chart is unavailable: that reading could not be loaded for this range.";
+        panels.appendChild(warn);
+    };
+
+    if (rooms.length > 1) {
+        wrap.appendChild(buildRoomChartFilter(rooms, render));
     }
 
-    wrap.appendChild(buildRoomChartPanel(primary, primaryMetric, primaryMetric));
-
-    const warn = document.createElement("div");
-    warn.className = "history-chart-note";
-    warn.textContent = "The " + (peerMetric === "rh" ? "humidity" : "temperature")
-        + " chart is unavailable: that reading could not be loaded for this range.";
-    wrap.appendChild(warn);
+    wrap.appendChild(panels);
+    render();
 
     return wrap;
 }
@@ -4050,30 +4173,48 @@ function hvacScIssueCard(entry) {
     const isOpen = hvacScView.expanded[label] === true;
 
     /*
-     * One set of chips, never two.
+     * Collapsed: every metric that actually has a reading.
      *
-     * Expanded shows every metric, including the ones with no reading, so the
-     * absence is visible rather than hidden by the collapse. Collapsed shows
-     * only the metrics that actually have a reading. The two lists were
-     * previously appended one after the other, so an open card drew every
-     * reading twice — the values once in the collapsed row and again in the
-     * expanded row right below it.
+     * It used to show only the violated metrics, which meant a chiller whose CE
+     * had crossed its limit rendered as a single CE chip — the other five
+     * parameters it was reporting (SP, RLA, EL, EE, CL) were invisible until
+     * the reader knew to press "Show all values". The violation is still the
+     * thing that stands out, because hvacScValueChip paints it with is-bad and
+     * the card itself carries the warning band, but it no longer hides the rest
+     * of the unit's state.
+     *
+     * Missing readings are still never dressed up as values: they stay in the
+     * expanded view as "--", where their absence is visible but not implied.
      */
-    const visible = isOpen
-        ? metrics
-        : metrics.filter(m => hvacScNum(m.value) !== null);
+    const shown = metrics.filter(m => hvacScNum(m.value) !== null);
 
     const chips = document.createElement("div");
-    chips.className = "hsc-chips" + (isOpen ? " is-all" : "");
-    chips.dataset.n = visible.length;
+    chips.className = "hsc-chips";
+    chips.dataset.n = shown.length;
 
-    if (visible.length === 0) {
+    if (shown.length === 0) {
         const none = document.createElement("span");
         none.className = "hsc-v n";
         none.textContent = "no readings";
         chips.appendChild(none);
     } else {
-        visible.forEach(m => chips.appendChild(
+        shown.forEach(m => chips.appendChild(
+            hvacScValueChip(m, isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
+        ));
+    }
+
+    card.appendChild(chips);
+
+    /*
+     * Expanded: every metric, including the ones with no reading, so the
+     * absence is visible rather than hidden by the collapse.
+     */
+    if (isOpen) {
+        const all = document.createElement("div");
+        all.className = "hsc-chips is-all";
+        all.dataset.n = metrics.length;
+
+        metrics.forEach(m => all.appendChild(
             hvacScValueChip(
                 m,
                 hvacScNum(m.value) === null
@@ -4081,9 +4222,9 @@ function hvacScIssueCard(entry) {
                     : (isOutOfRange(m.value, m.min, m.max) ? "is-bad" : "")
             )
         ));
-    }
 
-    card.appendChild(chips);
+        card.appendChild(all);
+    }
 
     const more = document.createElement("button");
     more.type = "button";
