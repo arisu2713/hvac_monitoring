@@ -1529,6 +1529,28 @@ html:has(.alarm-page) .equipment-nav {
 }
 
 /*
+ * PHONES AND TABLETS: no sticky chrome at all.
+ *
+ * The pinned bars only exist to keep the nav reachable across a 17,000px
+ * desktop list. On a phone they cost more than they give: the sticky nav
+ * occupies ~72px of a ~844px screen (two wrapped rows) for the whole read,
+ * and the offset it needs is exactly what broke - see the height-based
+ * measurement in syncAlarmStickyOffset(). In normal flow there is no offset
+ * to get wrong, so the nav can never jump over a card or leave its slot
+ * empty, and both bars simply scroll away with the content.
+ *
+ * The column header that the offset also served is `display: none` below
+ * 900px (the rows become stacked cards), so nothing here loses a label.
+ * Desktop keeps the sticky stack unchanged.
+ */
+@media (max-width: 900px) {
+    html:has(.alarm-page) .topbar,
+    html:has(.alarm-page) .equipment-nav {
+        position: static;
+    }
+}
+
+/*
  * The footer is the last element in flow, so pinning it to the bottom can only
  * ever cover space the user has already scrolled past. It is opaque so rows
  * cannot show through it.

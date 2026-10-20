@@ -2070,12 +2070,27 @@ function syncAlarmStickyOffset() {
 
     /*
      * Both offsets are distances from the document top, which is exactly the
-     * space each sticky bar must clear. getBoundingClientRect is viewport
-     * relative, so the current scroll offset is added back in.
+     * space each sticky bar must clear - so they are the bars' FLOW heights,
+     * not their painted positions.
+     *
+     * This used to read `getBoundingClientRect().bottom + window.scrollY`.
+     * That is only correct while the bars are still in flow. Once the page is
+     * scrolled past them they are STUCK: getBoundingClientRect returns the
+     * pinned viewport position (top 0 / 60), and adding scrollY then counts
+     * the scroll offset twice. Measured on a phone at scrollY 900: the nav
+     * resolved to top=960px instead of 60px, so it jumped down over the alarm
+     * cards and left its own 72px flow slot empty - the blank band under the
+     * header. The value then persisted, because a later render while still
+     * scrolled re-measured the same wrong numbers, so scrolling back to the
+     * top left the nav stranded mid-page.
+     *
+     * Heights are scroll-independent, and the topbar is the first element in
+     * body (html/body carry no margin or padding), so its flow top is 0 and
+     * the two heights are the whole stack. The nav's own height already
+     * includes its wrap to two lines on a phone.
      */
-    const scrollTop = window.scrollY;
-    const navTop = Math.round(topbar.getBoundingClientRect().bottom + scrollTop);
-    const headerTop = Math.round(nav.getBoundingClientRect().bottom + scrollTop);
+    const navTop = topbar.offsetHeight;
+    const headerTop = navTop + nav.offsetHeight;
 
     const root = document.documentElement;
     root.style.setProperty("--alarm-nav-top", Math.max(0, navTop) + "px");
