@@ -927,17 +927,20 @@ footer {
     border-radius: 2px;
 }
 
-/* Unit Card Overrides for HVAC SC */
-.unit-card.hvac-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 10px 12px;
-    text-align: left;
-    align-items: stretch;
-    border-radius: 7px;
-    transition: transform 0.15s ease, filter 0.15s ease;
-}
+/*
+ * .unit-card.hvac-card / .compact-card were removed with the last card that
+ * emitted them. The AHU / EF G8 page was that card, and it now builds its
+ * cards from .ahu-card, so leaving these behind would have been dead CSS
+ * pointing at nothing — the same reason .hvac-card-badge and .chiller-card
+ * were removed before them.
+ *
+ * .hvac-card-header / .hvac-card-title are NOT dead: the G8 cards still emit
+ * them, and .g8-card below restyles them for a list-style card. They are the
+ * only surviving members of this vocabulary.
+ *
+ * .compact-metrics / .metric-item / .m-lbl / .m-val are also still live: the
+ * G8 cards use them for their label-left / value-right rows.
+ */
 
 .hvac-card-header {
     display: flex;
@@ -967,16 +970,9 @@ footer {
  * .chiller-card and .chiller-metrics were removed with the HVAC SC All Units
  * matrix's chiller card. That card is gone, and the classes had no other
  * emitter, so the rules would have been dead CSS pointing at nothing.
- *
- * .compact-card and .compact-metrics below are NOT dead: the AHU / EF G8 page
- * still builds its cards from them, so they stay.
  */
 
-/* Compact Card (CCP / CHWP / CT - readable and well-proportioned) */
-.compact-card {
-    min-height: 82px;
-}
-
+/* Compact Metrics — label-left / value-right rows, used by the G8 cards. */
 .compact-metrics {
     display: flex;
     flex-direction: column;
@@ -1020,10 +1016,6 @@ footer {
         font-size: 16px;
     }
 
-    .compact-card {
-        min-height: 88px;
-    }
-
     .compact-metrics {
         font-size: 12px;
         gap: 4px;
@@ -1041,10 +1033,6 @@ footer {
 @media (max-width: 650px) {
     .hvac-group-card {
         padding: 12px 14px 16px;
-    }
-
-    .compact-card {
-        min-height: 78px;
     }
 }
 
@@ -1067,11 +1055,24 @@ footer {
    AHU / EF G8 PAGE
    =========================================================
 
-   Two groupboxes (AHU 94-97, EF 58-61) reusing the existing .hvac-group-card
-   / .unit-card.hvac-card / .compact-metrics / .metric-item vocabulary, so the
-   page inherits the dashboard's typography and status colours rather than
-   restating them. Only what has no existing equivalent is defined here:
-   the two-column group layout, the EC fan table, and the footnote.
+   Two equipment groups (AHU 94-97, EF 58-61) drawn with the AHU page's own
+   vocabulary rather than a second design:
+
+     .ahu-section / .ahu-section-head / .ahu-section-title / .ahu-section-note
+         the group header — title left, unit count right
+     .ahu-card / .is-normal / .is-warning / .is-critical / .is-unknown
+         the card surface and its health band
+     .ahu-run-dot / .ahu-run-label
+         the operating axis, drawn in the header
+     .compact-metrics / .metric-item / .m-lbl / .m-val
+         the label-left / value-right rows
+
+   All of those already exist and are reused verbatim, so a G8 card's colour
+   means exactly what the same colour means on the AHU page. Only what has no
+   existing equivalent is defined here: the two-column group layout, the
+   metric typography inside an .ahu-card, the EC fan table, and the footnote.
+
+   The .g8-* selectors are page-local and match nothing on any other page.
 */
 
 .g8-page {
@@ -1082,15 +1083,120 @@ footer {
     align-items: start;
 }
 
+/*
+ * .ahu-section carries a 16px bottom margin for a band inside the AHU
+ * dashboard; as a column of the two-up page grid that margin would shorten the
+ * column and misalign the two groups, so the grid's own gap owns the spacing.
+ */
+.g8-page > .ahu-section {
+    margin-bottom: 0;
+    min-width: 0;
+}
+
 .g8-group-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    gap: 10px;
+    align-items: start;
+}
+
+/*
+ * The dashboard centres its name and reading because a card holds one reading.
+ * A G8 card holds a list, so its header is a left/right row: the unit name on
+ * the left, the operating state on the right. The card itself keeps the
+ * dashboard's min-height, which now acts as a floor rather than a fixed size,
+ * because a G8 card grows to fit its rows.
+ */
+.g8-card .hvac-card-header {
+    width: 100%;
+    margin-bottom: 5px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.g8-card .hvac-card-title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: inherit;
+}
+
+/* The operating dot and its optional written label, kept together. */
+.g8-run {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+}
+
+/*
+ * .ahu-run-dot is absolutely positioned for the dashboard's corner placement.
+ * In a G8 header it sits inline in the flex row instead, so the name and the
+ * state share one baseline and the dot cannot overlap a long name.
+ */
+.g8-run .ahu-run-dot {
+    position: static;
+    flex: none;
+}
+
+/*
+ * Metric rows. These are the dashboard's own .compact-metrics / .metric-item /
+ * .m-lbl / .m-val classes, sized for a card that holds a list rather than a
+ * single reading: the label keeps the dashboard's muted weight and the value
+ * keeps its white bold, so the label-left / value-right rhythm is identical.
+ */
+.g8-card .compact-metrics {
+    width: 100%;
+    margin-top: 0;
+    font-size: 12px;
+    gap: 4px;
+}
+
+.g8-card .m-lbl {
+    min-width: 0;
+    padding-right: 8px;
+    overflow-wrap: anywhere;
+}
+
+.g8-card .m-val {
+    flex: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/*
+ * A reading that is out of range keeps the AHU page's meaning: the card turns
+ * amber and the offending number is the reason. The value keeps its contrast
+ * against the amber surface by going to the same dark ink the dashboard uses
+ * for text on a warning card.
+ */
+.g8-card.is-warning .m-lbl,
+.g8-card.is-warning .m-val {
+    color: #1a1300;
+}
+
+.g8-card.is-warning .m-lbl {
+    opacity: 0.75;
+}
+
+/*
+ * On the critical and warning bands the muted grey label would disappear, so
+ * it inherits the band's ink at reduced strength instead.
+ */
+.g8-card.is-critical .m-lbl {
+    color: rgba(255, 255, 255, 0.78);
 }
 
 /*
  * The EC fan table sits under the room metrics inside an AHU 96-97 card, so
  * it gets a separator rather than its own card.
+ *
+ * text-align is reset to left because .ahu-card centres its text, which is
+ * right for a single centred reading but wrong for a table: it centred the
+ * fan-name row and made the label look detached from the numbers beneath it.
+ * The numeric cells override this with their own text-align: right.
  */
 .g8-fan-table {
     display: grid;
@@ -1100,6 +1206,8 @@ footer {
     padding-top: 6px;
     border-top: 1px solid rgba(255, 255, 255, 0.12);
     font-size: 10.5px;
+    width: 100%;
+    text-align: left;
 }
 
 .g8-fan-name {
@@ -1120,19 +1228,37 @@ footer {
     font-weight: 700;
     text-align: right;
     white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
 }
 
 /*
- * Fan / status values carry the same green-red-grey language as the card
- * backgrounds, but as text colour.
+ * The EC fan table keeps its own white type, which the warning band's metric
+ * rules above do not reach. On the amber surface that white measured 1.37
+ * (headers), 1.50 (fan names) and 1.78 (numbers) — unreadable. The table
+ * therefore takes the same dark ink the dashboard uses for text on a warning
+ * card, which measures 10.38 on #f5b83d.
  *
- * The dark backing is not decoration. These values sit INSIDE a card whose
- * background is already painted by the unit's own status, so plain coloured
- * text can land on its own colour: a green "RUN" on a green card is close to
- * invisible, and that is exactly the case that matters most — an aggregate
- * card that is RUN while one individual fan is OFF. A translucent pill gives
- * the word its own contrast, so it reads the same on a green, red or grey
- * card without changing any of them.
+ * This rule is placed BEFORE the .g8-val-* warning rules below on purpose:
+ * they share its specificity, so the later ones still win for the status
+ * words inside a cell (OK / TRIP / RUN / OFF / —) and those keep the colour
+ * that carries their meaning. Only the plain numbers change here.
+ */
+.g8-card.is-warning .g8-fan-head,
+.g8-card.is-warning .g8-fan-name,
+.g8-card.is-warning .g8-fan-cell {
+    color: #1a1300;
+}
+
+/*
+ * Fan / status values carry the same green-red-grey language as the operating
+ * dot, but as text colour.
+ *
+ * The dark backing is not decoration. These values sit inside a card whose
+ * surface may be amber or red, so plain coloured text can land on its own
+ * colour: a green "RUN" on a green surface is close to invisible. A
+ * translucent pill gives the word its own contrast, so it reads the same on a
+ * neutral, amber or red card without changing any of them.
  *
  * Only the words get the pill. The "—" placeholder is already subdued and
  * needs no backing; filling a column of dashes with pills turns the table
@@ -1164,8 +1290,44 @@ footer {
     color: #ff8a8a;
 }
 
+/*
+ * On the amber band the dark pill would sit on a light surface and the pale
+ * red/green words would vanish into it, so both are inverted there: a light
+ * pill with dark ink. On the red band the pale words already read against the
+ * dark pill, so only the OFF / TRIP red is lifted.
+ */
+.g8-card.is-warning .g8-val-run,
+.g8-card.is-warning .g8-val-off,
+.g8-card.is-warning .g8-val-ok,
+.g8-card.is-warning .g8-val-trip {
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.g8-card.is-warning .g8-val-off,
+.g8-card.is-warning .g8-val-trip {
+    color: #6b0f0f;
+}
+
+.g8-card.is-warning .g8-val-run,
+.g8-card.is-warning .g8-val-ok {
+    color: #063d22;
+}
+
+.g8-card.is-critical .g8-val-off,
+.g8-card.is-critical .g8-val-trip {
+    color: #ffd0cc;
+}
+
 .g8-val-unknown {
     color: rgba(255, 255, 255, 0.5);
+}
+
+/*
+ * "—" gets no pill (see above), so on the amber band it is plain text and
+ * needs the band's own dark ink rather than the muted white.
+ */
+.g8-card.is-warning .g8-val-unknown {
+    color: rgba(26, 19, 0, 0.62);
 }
 
 .g8-note {
@@ -2629,6 +2791,23 @@ html:has(.alarm-page) .alarm-page {
 .equipment-grid:has(.ahu-dashboard) {
     display: block;
     padding: 0 20px 20px;
+}
+
+/*
+ * The AHU / EF G8 page shares this page container, so the two pages have the
+ * same outer padding and the same "one block, not a card grid" layout. It is
+ * set by class rather than by :has(.g8-page) so the padding also holds on the
+ * first frame, before the page has rendered its children.
+ */
+.equipment-grid.ahu-view {
+    display: block;
+    padding: 0 20px 20px;
+}
+
+@media (max-width: 900px) {
+    .equipment-grid.ahu-view {
+        padding: 0 10px 16px;
+    }
 }
 
 /* --- Summary tiles: CRITICAL / WARNING / NORMAL / OFF / UNKNOWN --- */

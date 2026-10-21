@@ -518,6 +518,74 @@ function g8BoolClass(value) {
 }
 
 /*
+ * OPERATING state for a plain ON/OFF field, in the same on/off/unknown
+ * vocabulary the AHU page's ahuRunState uses.
+ *
+ * "" is rejected alongside null/undefined: Number("") is 0, so an empty field
+ * would otherwise be reported as a measured "off" — the same null-versus-zero
+ * mistake this page avoids everywhere else.
+ */
+function g8RunState(value) {
+    if (value === null || value === undefined || value === "") {
+        return "unknown";
+    }
+
+    const n = Number(value);
+
+    if (n === 1) {
+        return "on";
+    }
+
+    if (n === 0) {
+        return "off";
+    }
+
+    return "unknown";
+}
+
+/*
+ * The operating-state dot, reusing the AHU page's own .ahu-run-dot.
+ *
+ * The dot is the OPERATING axis and is drawn on every card, in every health
+ * band, exactly as on the AHU page: green running, red stopped, grey when the
+ * status point has no value. It is what replaces the old whole-card green
+ * wash — "this unit is running" is a dot, not a paint job, so a card can be
+ * running and out of range at the same time without either fact hiding the
+ * other.
+ */
+function g8RunDot(state) {
+    const dot = document.createElement("span");
+    dot.className = "ahu-run-dot is-" + (state === "on" ? "run" : state);
+    dot.title = state === "on"
+        ? "RUN"
+        : (state === "off" ? "OFF" : "Operating status unknown");
+
+    return dot;
+}
+
+/*
+ * Written operating label, shown only when the unit is not running — the
+ * AHU page's rule, for the same reason: a green dot needs no word, a red or
+ * grey one does, and "unknown" must not be left to a colour that also means
+ * "no data".
+ *
+ * Callers pass showLabel=false where the card already spells the state out in
+ * a metric row: an EF card's "Status: OFF" row is the written word, and
+ * repeating "OFF" in the header put the same word on the card twice.
+ */
+function g8RunLabel(state, showLabel) {
+    if (state === "on" || showLabel === false) {
+        return null;
+    }
+
+    const label = document.createElement("span");
+    label.className = "ahu-run-label is-" + state;
+    label.textContent = state === "off" ? "OFF" : "UNKNOWN";
+
+    return label;
+}
+
+/*
  * Colour for the EC fan TRIP flag, whose polarity is INVERTED relative to a
  * run status: 1 = tripped (fault), 0 = healthy.
  *
@@ -563,15 +631,16 @@ function g8Metric(label, value, valueClass) {
 }
 
 /*
- * The card header is the title alone.
+ * The card header carries the unit name and the operating dot.
  *
- * It used to carry a top-right status badge (RUN / OFF), which duplicated the
- * card's own background — the background is already painted from the same
- * status — so the same word appeared twice on every card. The status is not
- * lost: the background keeps it, and every card still lists its row-level
- * status values (per-fan status, EF Status) in the body.
+ * The dot used to be a whole-card green wash (.status-run painted the card),
+ * which made every healthy unit look identical and drowned out the readings.
+ * The AHU page answers the same question with a 13px dot in the corner and a
+ * neutral card surface, and that is what this header follows: the name on the
+ * left, the operating state on the right, on a card whose background says
+ * nothing about whether the unit happens to be running.
  */
-function g8CardHeader(titleText) {
+function g8CardHeader(titleText, state, showRunLabel) {
     const header = document.createElement("div");
     header.className = "hvac-card-header";
 
@@ -580,6 +649,27 @@ function g8CardHeader(titleText) {
     title.textContent = titleText;
 
     header.appendChild(title);
+
+    if (state) {
+        /*
+         * Dot plus, when the unit is not running, the written word. Same rule
+         * as the AHU page: a green dot needs no label, but a red or grey one
+         * does — "UNKNOWN" must never be left to a colour that also means
+         * "no data". The two are wrapped so they stay together at the header's
+         * right edge instead of being spread apart by space-between.
+         */
+        const run = document.createElement("span");
+        run.className = "g8-run";
+
+        const label = g8RunLabel(state, showRunLabel);
+
+        if (label) {
+            run.appendChild(label);
+        }
+
+        run.appendChild(g8RunDot(state));
+        header.appendChild(run);
+    }
 
     return header;
 }
@@ -651,15 +741,20 @@ function createG8EcFanTable(unit) {
  * the point has never been written. It is never defaulted to 0: a fan at 0 Hz
  * and a fan nobody has measured are different facts, and only one of them is
  * a fault.
+ *
+ * The card is banded on HEALTH (alarm > out of range > unknown), not on run,
+ * exactly like the AHU page's cards. Operating state is the dot in the header.
  */
 function createG8Ahu9495Card(unit) {
-    const status = getStatus(unit);
+    const band = g8BandOf(unit);
+    const state = g8RunState(unit.run);
 
     const card = document.createElement("div");
-    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
-    card.dataset.status = status;
+    card.className = "ahu-card is-" + band + " g8-card";
+    card.dataset.band = band;
+    card.dataset.run = state;
 
-    card.appendChild(g8CardHeader(unit.name ?? ""));
+    card.appendChild(g8CardHeader(unit.name ?? "", state));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -699,13 +794,15 @@ function createG8Ahu9495Card(unit) {
  * table shows real frequency and temperatures.
  */
 function createG8Ahu9697Card(unit) {
-    const status = getStatus(unit);
+    const band = g8BandOf(unit);
+    const state = g8RunState(unit.run);
 
     const card = document.createElement("div");
-    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
-    card.dataset.status = status;
+    card.className = "ahu-card is-" + band + " g8-card";
+    card.dataset.band = band;
+    card.dataset.run = state;
 
-    card.appendChild(g8CardHeader(unit.name ?? ""));
+    card.appendChild(g8CardHeader(unit.name ?? "", state));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -717,6 +814,44 @@ function createG8Ahu9697Card(unit) {
     card.appendChild(createG8EcFanTable(unit));
 
     return card;
+}
+
+/*
+ * HEALTH band for a G8 AHU card.
+ *
+ * This is the AHU page's own banding rule, reused rather than restated:
+ * alarm > reading outside its configured limit > no health reading at all.
+ * ahuBandOf already carries the room-versus-duct precedence AHU 96-97 need,
+ * and it is a pure read of the unit object, so calling it cannot alter the
+ * AHU page. Reusing it is what keeps a G8 unit's colour meaning identical to
+ * the same unit's colour on the AHU page.
+ *
+ * (Declared later in this script; function declarations hoist.)
+ */
+function g8BandOf(unit) {
+    return ahuBandOf(unit);
+}
+
+/*
+ * HEALTH band for a G8 exhaust fan.
+ *
+ * EF 58-61 publish no alarm point and no temperature, so the only health
+ * evidence they carry is whether the status point reported at all. A fan that
+ * reported 0 is stopped and healthy — that is the operating axis, drawn as the
+ * red dot — so it stays on the neutral "normal" surface. A fan whose status
+ * point has no value has no evidence, and is "unknown" rather than assumed
+ * stopped.
+ */
+function g8EfBandOf(unit) {
+    const status = unit.status;
+
+    if (status === null || status === undefined || status === "") {
+        return "unknown";
+    }
+
+    const n = Number(status);
+
+    return (n === 1 || n === 0) ? "normal" : "unknown";
 }
 
 function createG8AhuCard(unit) {
@@ -731,15 +866,17 @@ function createG8AhuCard(unit) {
  * The card is drawn in its proper slot and names the unit, so a missing unit
  * reads as "this one is not reporting" rather than as a unit that does not
  * exist. It carries no numbers at all — not even a zero — because the whole
- * point is that nothing is known about it. Status is "unknown", which is the
- * same grey the page already uses for a unit whose state cannot be read.
+ * point is that nothing is known about it. It sits in the UNKNOWN band, the
+ * same dashed neutral surface the AHU page gives a unit with no health
+ * reading, and its grey dot says the operating state is unknown too.
  */
 function createG8MissingCard(name) {
     const card = document.createElement("div");
-    card.className = "unit-card hvac-card compact-card g8-card status-unknown";
-    card.dataset.status = "unknown";
+    card.className = "ahu-card is-unknown g8-card";
+    card.dataset.band = "unknown";
+    card.dataset.run = "unknown";
 
-    card.appendChild(g8CardHeader(name));
+    card.appendChild(g8CardHeader(name, "unknown"));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -757,15 +894,26 @@ function createG8MissingCard(name) {
  * Status, Frequency (Hz) and Motor Current (A). The status colours reuse the
  * same getEfStatus() rules as Panel 1-9, so a G8 fan and a panel fan read the
  * same way.
+ *
+ * The card itself follows the AHU page: a neutral health surface plus the
+ * operating dot in the header, instead of a green card. The Status row is kept
+ * as a written RUN / OFF because it is the one reading a reader can quote, and
+ * the value colours still carry the same meaning they always did.
  */
 function createG8EfCard(unit) {
-    const status = getEfStatus(unit);
+    const band = g8EfBandOf(unit);
+    const state = g8RunState(unit.status);
 
     const card = document.createElement("div");
-    card.className = "unit-card hvac-card compact-card g8-card status-" + status;
-    card.dataset.status = status;
+    card.className = "ahu-card is-" + band + " g8-card";
+    card.dataset.band = band;
+    card.dataset.run = state;
 
-    card.appendChild(g8CardHeader(unit.name ?? ""));
+    /*
+     * No header label on this card: the "Status" row below already writes
+     * RUN / OFF, so a header word would repeat it.
+     */
+    card.appendChild(g8CardHeader(unit.name ?? "", state, false));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -784,21 +932,29 @@ function createG8EfCard(unit) {
 }
 
 /*
- * One groupbox: header + count, a grid of cards, and an optional footnote.
+ * One equipment group: the AHU page's section header, a grid of cards, and an
+ * optional footnote.
+ *
+ * The header reuses the AHU page's own .ahu-section-head / .ahu-section-title /
+ * .ahu-section-note triple — title on the left, unit count on the right — so a
+ * group title here is typographically the same object as a band title on the
+ * AHU page. It deliberately carries no band modifier: the group is a container,
+ * not a health state, so its title keeps the inherited colour instead of
+ * claiming green, amber or red for four units with four different states.
  */
 function g8Group(title, cards, note) {
     const group = document.createElement("section");
-    group.className = "hvac-group-card g8-group";
+    group.className = "ahu-section g8-group";
 
     const header = document.createElement("div");
-    header.className = "hvac-group-header";
+    header.className = "ahu-section-head";
 
-    const titleEl = document.createElement("div");
-    titleEl.className = "hvac-group-title";
+    const titleEl = document.createElement("h2");
+    titleEl.className = "ahu-section-title";
     titleEl.textContent = title;
 
-    const count = document.createElement("div");
-    count.className = "hvac-group-count";
+    const count = document.createElement("span");
+    count.className = "ahu-section-note";
     count.textContent = cards.length + (cards.length === 1 ? " unit" : " units");
 
     header.appendChild(titleEl);
@@ -917,7 +1073,13 @@ function g8EcFanNote(ahuByName) {
 }
 
 function renderAhuEfG8() {
-    grid.classList.add("hvac-view");
+    /*
+     * The AHU page's own page-level class, which is what gives this page the
+     * same container padding and the same "display: block" grid override. The
+     * old .hvac-view class was the HVAC SC matrix's, and it dragged that
+     * page's box vocabulary in with it.
+     */
+    grid.classList.add("ahu-view");
 
     sectionTitle.textContent = "AHU / EF G8";
 
@@ -5168,6 +5330,14 @@ function renderEquipment() {
     grid.innerHTML = "";
 
     /*
+     * Page-level layout classes are cleared here rather than in each branch.
+     * The branches that return early (EF, ALARM, ENERGY, AHU_G8) never reach a
+     * trailing cleanup, so a class left by the previous page would otherwise
+     * stay on the grid and restyle the next one.
+     */
+    grid.classList.remove("hvac-view", "ahu-view");
+
+    /*
      * Both bars are cleared up front, not at the end: several branches below
      * return early (EF, ALARM, ENERGY), so a trailing clear never ran for
      * them and a switch or filter bar left over from another page stayed on
@@ -5205,8 +5375,6 @@ function renderEquipment() {
         grid.classList.add("hvac-view");
         renderHvacSc();
         return;
-    } else {
-        grid.classList.remove("hvac-view");
     }
 
     const data = allData[currentEquipment];
