@@ -612,7 +612,21 @@ function g8TripClass(value) {
     return "g8-val-unknown";
 }
 
-function g8Metric(label, value, valueClass) {
+/*
+ * One metric row: label on the left, value on the right.
+ *
+ * valueClass colours the VALUE's meaning (a run status, a trip flag). The
+ * separate flag argument marks the value as a PROBLEM, and is deliberately the
+ * only thing on this page that paints a reading amber: "warning" fills the
+ * value with the dashboard's warning amber, so the row that is out of range
+ * carries the colour instead of the whole card.
+ *
+ * It is a fourth argument rather than a second class string because the two
+ * questions are independent — a value can be a healthy-looking number that is
+ * out of range — and because callers that have no limit to apply (every RH
+ * reading, every frequency, every fan temperature) simply omit it.
+ */
+function g8Metric(label, value, valueClass, flag) {
     const item = document.createElement("div");
     item.className = "metric-item";
 
@@ -621,13 +635,37 @@ function g8Metric(label, value, valueClass) {
     lbl.textContent = label;
 
     const val = document.createElement("span");
-    val.className = "m-val" + (valueClass ? " " + valueClass : "");
+    val.className = "m-val"
+        + (valueClass ? " " + valueClass : "")
+        + (flag ? " g8-flag-" + flag : "");
     val.textContent = value;
 
     item.appendChild(lbl);
     item.appendChild(val);
 
     return item;
+}
+
+/*
+ * The unit's own alarm flag, as a chip beside the operating dot.
+ *
+ * An alarm belongs to the unit and to none of its readings, so it cannot be
+ * shown by highlighting a value. Without this chip a unit that counted
+ * CRITICAL in the summary would have nothing red anywhere on its own card, and
+ * the two would disagree about the same unit.
+ *
+ * api_ahu.php leaves alarm null for every G8 unit today, so this is not
+ * reachable from the current data; it is here so that the card keeps faith
+ * with the summary if that ever changes, and it invents no threshold — it
+ * renders a flag the API already sends.
+ */
+function g8AlarmTag() {
+    const tag = document.createElement("span");
+    tag.className = "g8-alarm-tag";
+    tag.textContent = "ALARM";
+    tag.title = "The unit's alarm point reports an active alarm";
+
+    return tag;
 }
 
 /*
@@ -640,7 +678,7 @@ function g8Metric(label, value, valueClass) {
  * left, the operating state on the right, on a card whose background says
  * nothing about whether the unit happens to be running.
  */
-function g8CardHeader(titleText, state, showRunLabel) {
+function g8CardHeader(titleText, state, showRunLabel, alarm) {
     const header = document.createElement("div");
     header.className = "hvac-card-header";
 
@@ -665,6 +703,10 @@ function g8CardHeader(titleText, state, showRunLabel) {
 
         if (label) {
             run.appendChild(label);
+        }
+
+        if (ahuNum(alarm) === 1) {
+            run.appendChild(g8AlarmTag());
         }
 
         run.appendChild(g8RunDot(state));
@@ -750,11 +792,12 @@ function createG8Ahu9495Card(unit) {
     const state = g8RunState(unit.run);
 
     const card = document.createElement("div");
-    card.className = "ahu-card is-" + band + " g8-card";
+    card.className = g8CardClass(band);
     card.dataset.band = band;
     card.dataset.run = state;
+    card.dataset.condition = g8AhuCondition(unit);
 
-    card.appendChild(g8CardHeader(unit.name ?? "", state));
+    card.appendChild(g8CardHeader(unit.name ?? "", state, true, unit.alarm));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -774,7 +817,21 @@ function createG8Ahu9495Card(unit) {
         ));
     });
 
-    metrics.appendChild(g8Metric("Duct Temperature", g8Format(unit.temp, " °C")));
+    /*
+     * Duct temperature is the only reading on this card with a configured
+     * limit (temp / temp_min / temp_max, folded by ahuHealth), so it is the
+     * only one that can be marked. Duct RH has no limit in the data, and an RH
+     * value painted amber would assert a threshold nobody configured.
+     */
+    const health = ahuHealth(unit);
+
+    metrics.appendChild(g8Metric(
+        "Duct Temperature",
+        g8Format(unit.temp, " °C"),
+        "",
+        isOutOfRange(health.value, health.min, health.max) ? "warning" : null
+    ));
+
     metrics.appendChild(g8Metric("Duct RH", g8Format(unit.duct_rh, " % RH")));
 
     card.appendChild(metrics);
@@ -798,16 +855,31 @@ function createG8Ahu9697Card(unit) {
     const state = g8RunState(unit.run);
 
     const card = document.createElement("div");
-    card.className = "ahu-card is-" + band + " g8-card";
+    card.className = g8CardClass(band);
     card.dataset.band = band;
     card.dataset.run = state;
+    card.dataset.condition = g8AhuCondition(unit);
 
-    card.appendChild(g8CardHeader(unit.name ?? "", state));
+    card.appendChild(g8CardHeader(unit.name ?? "", state, true, unit.alarm));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
 
-    metrics.appendChild(g8Metric("Room Temperature", g8Format(unit.room_temp, " °C")));
+    /*
+     * Room temperature is judged against the ROOM limit (room_temp_max, 30 °C),
+     * which ahuHealth carries with the value precisely so a room reading is
+     * never measured against the AHU duct limit. Room RH has no limit, so it
+     * stays uncoloured on every value.
+     */
+    const health = ahuHealth(unit);
+
+    metrics.appendChild(g8Metric(
+        "Room Temperature",
+        g8Format(unit.room_temp, " °C"),
+        "",
+        isOutOfRange(health.value, health.min, health.max) ? "warning" : null
+    ));
+
     metrics.appendChild(g8Metric("Room RH", g8Format(unit.room_rh, " % RH")));
 
     card.appendChild(metrics);
@@ -854,6 +926,228 @@ function g8EfBandOf(unit) {
     return (n === 1 || n === 0) ? "normal" : "unknown";
 }
 
+/*
+ * The card's own class list.
+ *
+ * The health band no longer chooses a card FILL. A G8 card holds up to
+ * thirteen readings across three fans and a table, so filling the whole card
+ * for one of them said "this unit is bad" without naming which reading was
+ * bad — the reader still had to hunt for the number. The band colour now
+ * travels to the value that caused it (see g8Metric's flag argument), and the
+ * card keeps the neutral surface.
+ *
+ * UNKNOWN is the one band still drawn on the card, because "nothing was read"
+ * is a statement about the card as a whole: there is no single value to point
+ * at. It keeps the AHU page's own dashed surface, so a unit that never
+ * reported looks the same here as there.
+ *
+ * The band still travels in data-band, and the health-independent condition
+ * the summary counts travels in data-condition. They answer different
+ * questions on purpose: band is "is there health evidence", condition is
+ * "which tile does this unit go in". AHU 96 with a tripped fan is banded on its
+ * room temperature (warning) and counted CRITICAL — the red cell in its table
+ * is the evidence, and the summary is the tally.
+ */
+function g8CardClass(band) {
+    return band === "unknown" ? "ahu-card g8-card is-unknown" : "ahu-card g8-card";
+}
+
+/*
+ * The EC fans of one AHU whose TRIP flag is set.
+ *
+ * trip is the device's own fault flag (1 = tripped, 0 = healthy), not a limit
+ * this page applies, so reading it invents no threshold. It is the only source
+ * of a CRITICAL condition on this page: api_ahu.php leaves alarm null for all
+ * four G8 units, and no critical limit is configured for any of their
+ * readings.
+ *
+ * The polarity is inverted against a run status — that is why this cannot be
+ * folded into g8BoolClass, and why the answer is a list of the fans that are
+ * actually tripped rather than a truthy status.
+ */
+function g8TrippedFans(unit) {
+    const fans = unit.ec_fans || {};
+
+    return Object.keys(fans).filter(key => {
+        const fan = fans[key];
+
+        return fan && ahuNum(fan.trip) === 1;
+    });
+}
+
+/*
+ * The single condition a G8 unit is counted under on the page summary.
+ *
+ * One unit occupies exactly one tile, so the tiles always add up to the eight
+ * units the page header reports. The ladder is walked in order and the first
+ * match wins:
+ *
+ *   critical  the unit's alarm point, or one of its EC fans tripped
+ *   warning   a reading outside the limit configured for it
+ *   off       the run point reported 0
+ *   unknown   the unit could not be determined
+ *   normal    a reading inside its limit and a run point reporting 1
+ *
+ * Two consequences are deliberate, because both look like bugs otherwise:
+ *
+ *  - A stopped unit with a bad reading counts as WARNING, not OFF. The AHU
+ *    page keeps health and operating state on separate axes for exactly this
+ *    reason: a unit that has stopped must not be able to hide a temperature
+ *    problem by being stopped. Its card still shows both — the red OFF dot and
+ *    the amber value.
+ *
+ *  - OFF is claimed only from a run point that actually reported 0. A unit
+ *    whose run point has no value is UNKNOWN, never OFF, and neither is a unit
+ *    with no health reading. "No evidence of a problem" is not "measured
+ *    fine": an unread status is not a stop, and an unread temperature is not a
+ *    normal one. This is the same null-versus-zero rule the rest of the file
+ *    follows.
+ */
+function g8AhuCondition(unit) {
+    if (ahuNum(unit.alarm) === 1) {
+        return "critical";
+    }
+
+    if (g8TrippedFans(unit).length) {
+        return "critical";
+    }
+
+    const health = ahuHealth(unit);
+
+    if (isOutOfRange(health.value, health.min, health.max)) {
+        return "warning";
+    }
+
+    const state = g8RunState(unit.run);
+
+    if (state === "off") {
+        return "off";
+    }
+
+    if (health.value === null || state !== "on") {
+        return "unknown";
+    }
+
+    return "normal";
+}
+
+/*
+ * The condition of a G8 exhaust fan.
+ *
+ * EF 58-61 publish a status, a frequency and a motor current, and no limit for
+ * any of them — api_ef.php carries no thresholds for this group at all. So the
+ * only ladder these units have is their status: reported 1 is normal, reported
+ * 0 is OFF, and a status that did not report is UNKNOWN rather than assumed
+ * stopped.
+ *
+ * They can never be WARNING or CRITICAL, and that is a statement about the
+ * data, not an oversight: there is nothing to compare a frequency or a current
+ * against.
+ */
+function g8EfCondition(unit) {
+    const state = g8RunState(unit.status);
+
+    if (state === "on") {
+        return "normal";
+    }
+
+    return state === "off" ? "off" : "unknown";
+}
+
+/*
+ * The condition tiles, in the order the ladder is defined. Worst first, so the
+ * row reads as a severity scale rather than as a list of unrelated numbers.
+ */
+const G8_CONDITIONS = ["critical", "warning", "off", "unknown", "normal"];
+
+const G8_CONDITION_LABELS = {
+    critical: "CRITICAL",
+    warning: "WARNING",
+    off: "OFF",
+    unknown: "UNKNOWN",
+    normal: "NORMAL"
+};
+
+/*
+ * The page summary: how many of the eight units sit in each condition.
+ *
+ * Counted from the same per-unit functions the cards use, so a tile and the
+ * card it counts cannot disagree. A unit the API did not return counts as
+ * UNKNOWN — its card is the NO DATA placeholder, and counting it as normal
+ * would report a unit that never answered as a healthy one.
+ *
+ * The tiles reuse the AHU page's own ahuBuildTile / .ahu-summary vocabulary, so
+ * the amber and red here mean what they mean there.
+ */
+function g8Summary(ahuByName, efByName) {
+    const counts = {};
+
+    G8_CONDITIONS.forEach(condition => {
+        counts[condition] = 0;
+    });
+
+    G8_AHU_NAMES.forEach(name => {
+        const unit = ahuByName[name];
+
+        counts[unit ? g8AhuCondition(unit) : "unknown"] += 1;
+    });
+
+    G8_EF_NAMES.forEach(name => {
+        const unit = efByName[name];
+
+        counts[unit ? g8EfCondition(unit) : "unknown"] += 1;
+    });
+
+    const total = G8_AHU_NAMES.length + G8_EF_NAMES.length;
+
+    const wrap = document.createElement("div");
+    wrap.className = "g8-summary";
+    wrap.dataset.total = String(total);
+
+    const tiles = document.createElement("div");
+    tiles.className = "ahu-summary";
+
+    G8_CONDITIONS.forEach(condition => {
+        const tile = ahuBuildTile(
+            G8_CONDITION_LABELS[condition],
+            String(counts[condition]),
+            "is-" + condition
+        );
+
+        tile.dataset.condition = condition;
+        tile.dataset.count = String(counts[condition]);
+        tile.title = counts[condition] + " of " + total + " units";
+
+        tiles.appendChild(tile);
+    });
+
+    wrap.appendChild(tiles);
+
+    /*
+     * The counting rule, stated on the page rather than only in this file:
+     * a summary whose arithmetic is invisible is a summary nobody can act on,
+     * and the rule is not guessable from the numbers — a stopped unit with a
+     * bad reading is counted as WARNING, which is the one case a reader would
+     * otherwise get wrong.
+     *
+     * It also states what is NOT counted, because the absence of colour on RH
+     * and on the fan telemetry is otherwise indistinguishable from "checked and
+     * fine".
+     */
+    const note = document.createElement("div");
+    note.className = "g8-summary-note";
+    note.textContent = "Each unit is counted once, at its worst condition: "
+        + "CRITICAL > WARNING > OFF > UNKNOWN > NORMAL. CRITICAL needs a unit "
+        + "alarm or a tripped EC fan, and OFF needs a run point that reported 0. "
+        + "The only limits configured for these units are duct temperature "
+        + "(AHU 94-95) and room temperature (AHU 96-97), so RH, EC fan "
+        + "frequency, EC fan temperature and every EF reading stay uncoloured.";
+
+    wrap.appendChild(note);
+
+    return wrap;
+}
+
 function createG8AhuCard(unit) {
     return G8_AHU_9495.includes(unit.name)
         ? createG8Ahu9495Card(unit)
@@ -872,9 +1166,10 @@ function createG8AhuCard(unit) {
  */
 function createG8MissingCard(name) {
     const card = document.createElement("div");
-    card.className = "ahu-card is-unknown g8-card";
+    card.className = "ahu-card g8-card is-unknown";
     card.dataset.band = "unknown";
     card.dataset.run = "unknown";
+    card.dataset.condition = "unknown";
 
     card.appendChild(g8CardHeader(name, "unknown"));
 
@@ -905,9 +1200,10 @@ function createG8EfCard(unit) {
     const state = g8RunState(unit.status);
 
     const card = document.createElement("div");
-    card.className = "ahu-card is-" + band + " g8-card";
+    card.className = g8CardClass(band);
     card.dataset.band = band;
     card.dataset.run = state;
+    card.dataset.condition = g8EfCondition(unit);
 
     /*
      * No header label on this card: the "Status" row below already writes
@@ -1132,6 +1428,13 @@ function renderAhuEfG8() {
     const page = document.createElement("div");
     page.className = "g8-page";
 
+    /*
+     * The summary comes first, before the two groups, because the question it
+     * answers — "is anything wrong right now" — is the one an operator arrives
+     * with. It is built from the unit objects rather than by reading the cards,
+     * so it cannot lag a card that failed to render.
+     */
+    page.appendChild(g8Summary(ahuByName, efByName));
     page.appendChild(g8Group("AHU 94 - 97", ahuCards, g8EcFanNote(ahuByName)));
     page.appendChild(g8Group("EXHAUST FAN 58 - 61", efCards, null));
 

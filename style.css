@@ -1101,6 +1101,26 @@ footer {
 }
 
 /*
+ * The card surface.
+ *
+ * A G8 card no longer takes its health band's fill: the band colour travels to
+ * the value that caused it (see .g8-flag-warning above), and every card keeps
+ * this neutral surface. That is what lets a stopped, out-of-range unit show its
+ * red OFF dot and its amber value at the same time without either fact hiding
+ * the other.
+ *
+ * UNKNOWN is the one band still drawn on the card, and it keeps the AHU page's
+ * own dashed surface: "nothing was read" is a statement about the card as a
+ * whole, so there is no single value to mark instead. That surface is not
+ * restated here — .ahu-card.is-unknown already draws it, and a G8 card with no
+ * reading should look exactly like an AHU card with no reading.
+ */
+.g8-card {
+    background: #151b22;
+    border: 1px solid #222b34;
+}
+
+/*
  * The dashboard centres its name and reading because a card holds one reading.
  * A G8 card holds a list, so its header is a left/right row: the unit name on
  * the left, the operating state on the right. The card itself keeps the
@@ -1167,26 +1187,24 @@ footer {
 }
 
 /*
- * A reading that is out of range keeps the AHU page's meaning: the card turns
- * amber and the offending number is the reason. The value keeps its contrast
- * against the amber surface by going to the same dark ink the dashboard uses
- * for text on a warning card.
+ * A reading outside its configured limit is marked on the VALUE, not on the
+ * card.
+ *
+ * The AHU page fills the whole card amber because its card IS the reading —
+ * one unit, one number. A G8 card holds up to thirteen readings across three
+ * fans and a table, so filling it said "this unit is bad" without saying which
+ * of the thirteen was bad, and the reader still had to hunt for it. Marking the
+ * value names the parameter and leaves the rest of the card readable.
+ *
+ * Amber fill with the dashboard's own dark ink for text on amber (10.38 on
+ * #f5b83d). The padding is on the value only, never on the row, so marking a
+ * value cannot change the width of the metric grid.
  */
-.g8-card.is-warning .m-lbl,
-.g8-card.is-warning .m-val {
+.g8-card .m-val.g8-flag-warning {
+    padding: 0 5px;
+    border-radius: 3px;
+    background: #f5b83d;
     color: #1a1300;
-}
-
-.g8-card.is-warning .m-lbl {
-    opacity: 0.75;
-}
-
-/*
- * On the critical and warning bands the muted grey label would disappear, so
- * it inherits the band's ink at reduced strength instead.
- */
-.g8-card.is-critical .m-lbl {
-    color: rgba(255, 255, 255, 0.78);
 }
 
 /*
@@ -1233,32 +1251,13 @@ footer {
 }
 
 /*
- * The EC fan table keeps its own white type, which the warning band's metric
- * rules above do not reach. On the amber surface that white measured 1.37
- * (headers), 1.50 (fan names) and 1.78 (numbers) — unreadable. The table
- * therefore takes the same dark ink the dashboard uses for text on a warning
- * card, which measures 10.38 on #f5b83d.
- *
- * This rule is placed BEFORE the .g8-val-* warning rules below on purpose:
- * they share its specificity, so the later ones still win for the status
- * words inside a cell (OK / TRIP / RUN / OFF / —) and those keep the colour
- * that carries their meaning. Only the plain numbers change here.
- */
-.g8-card.is-warning .g8-fan-head,
-.g8-card.is-warning .g8-fan-name,
-.g8-card.is-warning .g8-fan-cell {
-    color: #1a1300;
-}
-
-/*
  * Fan / status values carry the same green-red-grey language as the operating
  * dot, but as text colour.
  *
- * The dark backing is not decoration. These values sit inside a card whose
- * surface may be amber or red, so plain coloured text can land on its own
- * colour: a green "RUN" on a green surface is close to invisible. A
- * translucent pill gives the word its own contrast, so it reads the same on a
- * neutral, amber or red card without changing any of them.
+ * The dark backing is what makes the word a badge rather than another number:
+ * it separates OK / TRIP / RUN / OFF from the plain measurements beside them in
+ * the same row, and it holds the pale green and red at a steady contrast
+ * wherever the value lands.
  *
  * Only the words get the pill. The "—" placeholder is already subdued and
  * needs no backing; filling a column of dashes with pills turns the table
@@ -1291,43 +1290,23 @@ footer {
 }
 
 /*
- * On the amber band the dark pill would sit on a light surface and the pale
- * red/green words would vanish into it, so both are inverted there: a light
- * pill with dark ink. On the red band the pale words already read against the
- * dark pill, so only the OFF / TRIP red is lifted.
+ * An EC fan TRIP is the only CRITICAL this page can show, and it is painted on
+ * the single cell that reported it — not on its row, not on the table, not on
+ * the card.
+ *
+ * The pale red the word carries elsewhere is sized for a word on a dark
+ * surface; a fault flag should be louder than a state, so the cell takes a
+ * solid red fill with white ink (5.62). Nothing else in the table changes, and
+ * no other column is touched: frequency and the three fan temperatures have no
+ * configured limit, so they stay uncoloured however high they read.
  */
-.g8-card.is-warning .g8-val-run,
-.g8-card.is-warning .g8-val-off,
-.g8-card.is-warning .g8-val-ok,
-.g8-card.is-warning .g8-val-trip {
-    background: rgba(255, 255, 255, 0.72);
-}
-
-.g8-card.is-warning .g8-val-off,
-.g8-card.is-warning .g8-val-trip {
-    color: #6b0f0f;
-}
-
-.g8-card.is-warning .g8-val-run,
-.g8-card.is-warning .g8-val-ok {
-    color: #063d22;
-}
-
-.g8-card.is-critical .g8-val-off,
-.g8-card.is-critical .g8-val-trip {
-    color: #ffd0cc;
+.g8-fan-cell.g8-val-trip {
+    background: #c62828;
+    color: #fff;
 }
 
 .g8-val-unknown {
     color: rgba(255, 255, 255, 0.5);
-}
-
-/*
- * "—" gets no pill (see above), so on the amber band it is plain text and
- * needs the band's own dark ink rather than the muted white.
- */
-.g8-card.is-warning .g8-val-unknown {
-    color: rgba(26, 19, 0, 0.62);
 }
 
 .g8-note {
@@ -1339,6 +1318,75 @@ footer {
     color: rgba(255, 255, 255, 0.62);
     font-size: 11px;
     line-height: 1.4;
+}
+
+/*
+ * STATUS SUMMARY
+ *
+ * The tiles count the eight units on the page, one unit per tile, so they add
+ * up to the unit count the page header already reports. They reuse the AHU
+ * page's own .ahu-summary / .ahu-tile vocabulary, which is what makes the
+ * amber and red tiles here mean the same thing they mean there.
+ *
+ * The tile grid is auto-fit rather than the AHU page's fixed four columns
+ * because this row has five tiles: at 320px three fit on the first row and two
+ * on the second, and nothing is squeezed below the width of its own label.
+ *
+ * It spans both columns of the page grid, so the summary reads as belonging to
+ * the page rather than to the AHU group it happens to sit above.
+ */
+.g8-page > .g8-summary {
+    grid-column: 1 / -1;
+}
+
+.g8-page > .g8-summary > .ahu-summary {
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    margin-bottom: 6px;
+}
+
+/*
+ * The AHU page has no OFF tile — it keeps operating state on its own row, on a
+ * separate axis from health. Here the summary answers one question, so OFF is a
+ * tile; it takes the same red as the operating dot and the OFF label, as a
+ * colour on the value rather than a filled tile, because filling it would make
+ * a stopped unit shout as loudly as a critical one.
+ */
+.g8-page .ahu-tile.is-off .ahu-tile-value {
+    color: #ff9a92;
+}
+
+/*
+ * The counting rule, on the page. A summary whose arithmetic is invisible is a
+ * summary nobody can check, and this rule is not guessable from the numbers —
+ * a stopped unit with a bad reading is counted as WARNING, which is the one
+ * case a reader would otherwise get wrong.
+ */
+.g8-page .g8-summary-note {
+    padding: 0 2px;
+    color: #9aa7b3;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/*
+ * The unit's alarm flag, shown in the card header beside the operating dot.
+ * An alarm belongs to the unit and to none of its readings, so it cannot be
+ * shown by marking a value; without it a unit counted CRITICAL would show
+ * nothing red on its own card.
+ *
+ * No G8 unit publishes an alarm point today, so this is not reachable from the
+ * current data. It is styled here so that the tile and the card cannot disagree
+ * about the same unit if that changes.
+ */
+.g8-page .g8-alarm-tag {
+    padding: 0 5px;
+    border-radius: 3px;
+    background: #c62828;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    line-height: 1;
 }
 
 /*
