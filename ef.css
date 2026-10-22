@@ -1,74 +1,104 @@
 /* =========================================================
-   EXHAUST FAN
+   EXHAUST FAN — REDESIGN (AHU-ALIGNED SEVERITY/DARK THEME)
    ========================================================= */
 
+/* Summary Bar (in pageFilters) */
+.ef-summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 20px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ef-sum-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #c9d1d9;
+    font-size: 12px;
+    letter-spacing: .04em;
+}
+
+.ef-sum-item strong {
+    font-weight: 800;
+    font-size: 13px;
+}
+
+.ef-sum-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.ef-sum-dot.is-run     { background: #4ade80; }
+.ef-sum-dot.is-off     { background: #ed3c3c; }
+.ef-sum-dot.is-unknown { background: #6e7681; }
+
+/* Grid container for panels */
 .equipment-grid:has(.ef-panel) {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
+    gap: 10px;
     align-items: start;
     padding: 0 20px 20px;
+    --ef-card-h: 52px;
+    --ef-gap: 5px;
 }
 
+/* Panel Box — Dark Theme matching AHU surfaces */
 .ef-panel {
-    background: linear-gradient(145deg, #202020, #151515);
-    border: 1px solid #3a3a3a;
-    border-radius: 10px;
-    padding: 9px;
-    box-shadow:
-        0 3px 10px rgba(0, 0, 0, .35),
-        inset 0 1px 0 rgba(255,255,255,.025);
+    background: #151b22;
+    border: 1px solid #222b34;
+    border-radius: 8px;
+    padding: 8px 10px 10px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    transition: border-color 0.15s ease;
+}
+
+.ef-panel:hover {
+    border-color: #30363d;
 }
 
 .ef-panel-header {
-    font-size: 14px;
-    font-weight: 800;
-    color: #d8d8d8;
-    padding: 2px 5px 7px;
-    letter-spacing: .3px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 700;
+    color: #8b949e;
+    padding: 2px 2px 6px;
+    letter-spacing: .06em;
     text-transform: uppercase;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 6px;
 }
 
+.ef-panel-title {
+    color: #c9d1d9;
+    font-weight: 700;
+}
+
+.ef-panel-count {
+    font-size: 11px;
+    color: #6e7681;
+    font-weight: 500;
+    text-transform: none;
+}
+
+/* Grid of cards inside each panel */
 .ef-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 5px;
+    gap: var(--ef-gap, 5px);
 }
 
 /* =========================================================
    EXHAUST FAN G8 — EF 58-61
    ========================================================= */
 
-/*
- * G8 is a single groupbox holding 4 fans, not a 9-panel grid like Panel 1-9.
- * It spans the full width of the equipment grid and lays its 4 cards out in
- * ONE row, flush left.
- *
- * Why the full-width band: at the 1920x1080 wall-display resolution
- * style.css sets `html, body { height: 100%; overflow-y: hidden }`, so
- * anything past the viewport cannot be scrolled to. Laid out as a normal
- * 3-column panel (2 rows), G8 pushed the grid to 1113px and its bottom 17px
- * were unreachable. As a full-width band it is a single row, which brings the
- * grid back inside the viewport without changing Panel 1-9 at all.
- *
- * Why the fixed 4 columns: with `1fr` columns the 4 cards stretch to fill the
- * whole band, making them ~460px wide — 2.5x the Panel 1-9 cards (~183px) and
- * visibly oversized next to them. A fixed track of the SAME width as a
- * Panel 1-9 card keeps all 59 fans at one consistent size, and the row is
- * left-aligned so it lines up with the groupbox header.
- *
- * Why the box shrinks to its content: a grid item spanning 1 / -1 defaults to
- * `justify-self: stretch`, so the groupbox was filling the whole row while its
- * 4 fixed tracks stayed at the left — a ~1880px box around ~800px of cards.
- * `justify-self: start` sizes the item to its own content instead, so the box
- * hugs the 4 cards and the leftover row width stays empty on the right. The
- * span itself is kept: it is what puts G8 on a row of its own, below Panel 1-9.
- *
- * Applied only where the 4-across fixed tracks apply (see below); at narrower
- * widths G8 wraps to 2x2 and keeps its full-row width.
- *
- * Scoped strictly to .ef-panel-g8 — Panel 1-9 keep the 3-column rule above.
- */
 .equipment-grid:has(.ef-panel) .ef-panel-g8 {
     grid-column: 1 / -1;
 }
@@ -79,21 +109,11 @@
     }
 }
 
-/*
- * One track per card, each exactly as wide as a Panel 1-9 card, and no wider:
- * the leftover width is left empty on the right rather than distributed.
- *
- * --ef-card-w is the measured width of a real Panel 1-9 card, which already
- * accounts for that card's own panel padding — the G8 cards sit inside an
- * equally padded panel, so the two line up without any further adjustment.
- * index.php measures it from the DOM rather than assuming a pixel value.
- */
 .ef-panel-g8 .ef-grid {
     grid-template-columns: repeat(4, var(--ef-card-w, 183px));
     justify-content: start;
 }
 
-/* Narrower screens: 4 across is too tight, so wrap to 2x2. */
 @media (max-width: 1100px) {
     .ef-panel-g8 .ef-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -108,78 +128,176 @@
     }
 }
 
+/* =========================================================
+   UNIT CARD (EF CARD) — AHU-ALIGNED DESIGN
+   ========================================================= */
+
 .unit-card.ef-card {
-    min-height: 58px;
-    padding: 7px 4px;
-    border-radius: 7px;
+    position: relative;
+    min-height: var(--ef-card-h, 52px);
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 5px 4px 4px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
+    box-shadow: none;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    cursor: default;
 }
 
+.unit-card.ef-card:hover {
+    background: #161b22;
+    border-color: #38434f;
+    transform: translateY(-1px);
+}
+
+/* Operating Dot (Top-Right) */
+.ef-run-dot {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4);
+}
+
+.ef-run-dot.is-run {
+    background: #4ade80;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4), 0 0 4px rgba(74, 222, 128, 0.4);
+}
+
+.ef-run-dot.is-off {
+    background: #ed3c3c;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4), 0 0 4px rgba(237, 60, 60, 0.4);
+}
+
+.ef-run-dot.is-unknown {
+    background: #6e7681;
+}
+
+/* Fan Name */
 .unit-card.ef-card .ef-name {
-    font-size: 17px;
-    font-weight: 900;
-    line-height: 1;
+    font-size: clamp(12px, calc(var(--ef-card-h, 52px) * 0.27), 16px);
+    font-weight: 700;
+    color: #f0f6fc;
+    line-height: 1.15;
     letter-spacing: .2px;
     white-space: nowrap;
+    margin-bottom: 2px;
 }
 
-/* EF status */
+/* Status Label / Badge */
+.ef-status-label {
+    font-size: clamp(8.5px, calc(var(--ef-card-h, 52px) * 0.18), 10.5px);
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+
+.ef-status-label.is-run {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.22);
+}
+
+.ef-status-label.is-off {
+    color: #ff7b72;
+    background: rgba(237, 60, 60, 0.15);
+    border: 1px solid rgba(237, 60, 60, 0.3);
+}
+
+.ef-status-label.is-unknown {
+    color: #8b949e;
+    background: rgba(139, 148, 158, 0.1);
+    border: 1px solid rgba(139, 148, 158, 0.2);
+}
+
+/* Status Colors & Subtle Border Accents */
 .unit-card.ef-card.status-run {
-    background: #0b9f50;
-    border: 2px solid #16d873;
-    box-shadow: 0 0 7px rgba(0,210,106,.22);
+    background: #0d1117;
+    border: 1px solid rgba(74, 222, 128, 0.22);
+    box-shadow: none;
+}
+
+.unit-card.ef-card.status-run:hover {
+    background: #111820;
+    border-color: rgba(74, 222, 128, 0.45);
 }
 
 .unit-card.ef-card.status-off {
-    background: #b51d1d;
-    border: 2px solid #ed3c3c;
-    box-shadow: 0 0 7px rgba(255,40,40,.16);
+    background: #160d0e;
+    border: 1px solid rgba(237, 60, 60, 0.35);
+    box-shadow: none;
+    animation: ef-off-pulse 1.6s ease-in-out infinite;
+}
+
+.unit-card.ef-card.status-off:hover {
+    background: #1c1012;
 }
 
 .unit-card.ef-card.status-unknown {
-    background: #555;
-    border: 2px solid #777;
+    background: #0d1117;
+    border: 1px dashed #30363d;
+    box-shadow: none;
 }
 
-/* Large industrial display */
+/* OFF gentle breathing pulse on border only (no whole card flash) */
+@keyframes ef-off-pulse {
+    0%, 100% {
+        border-color: rgba(237, 60, 60, 0.3);
+        box-shadow: 0 0 0 rgba(237, 60, 60, 0);
+    }
+    50% {
+        border-color: rgba(237, 60, 60, 0.65);
+        box-shadow: 0 0 8px rgba(237, 60, 60, 0.2);
+    }
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    .unit-card.ef-card.status-off {
+        animation: none;
+    }
+}
+
+/* =========================================================
+   RESPONSIVE LAYOUTS
+   ========================================================= */
+
+/* Large industrial / Wall display (>= 1600px) */
 @media (min-width: 1600px) {
     .equipment-grid:has(.ef-panel) {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
+        gap: 12px;
         padding: 0 20px 16px;
     }
 
     .ef-panel {
-        padding: 10px;
-        border-radius: 10px;
+        padding: 9px 11px 11px;
     }
 
     .ef-panel-header {
-        font-size: 15px;
-        padding: 2px 6px 8px;
+        font-size: 13px;
+        padding: 2px 2px 7px;
     }
 
     .ef-grid {
         gap: 6px;
     }
-
-    .unit-card.ef-card {
-        min-height: 62px;
-    }
-
-    .unit-card.ef-card .ef-name {
-        font-size: 19px;
-        font-weight: 900;
-    }
 }
 
-/* Tablet */
+/* Tablet (max-width: 1100px) */
 @media (max-width: 1100px) {
     .equipment-grid:has(.ef-panel) {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
     }
 
     .ef-grid {
@@ -187,117 +305,59 @@
     }
 }
 
-/* Mobile */
+/* Mobile (max-width: 650px) */
 @media (max-width: 650px) {
+    .ef-summary-bar {
+        padding: 0 12px 8px;
+        gap: 10px;
+    }
+
     .equipment-grid:has(.ef-panel) {
         grid-template-columns: 1fr;
         gap: 10px;
         padding: 0 12px 16px;
+        --ef-card-h: 46px;
     }
 
     .ef-panel {
-        padding: 9px;
+        padding: 7px 8px 8px;
+    }
+
+    .ef-panel-header {
+        font-size: 11.5px;
+        margin-bottom: 5px;
+        padding-bottom: 4px;
     }
 
     .ef-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 5px;
+        gap: 4px;
     }
 
     .unit-card.ef-card {
-        min-height: 54px;
-    }
-
-    .unit-card.ef-card .ef-name {
-        font-size: 16px;
+        min-height: 44px;
+        padding: 4px 2px;
     }
 }
 
-/* EF OFF alarm blink */
-.ef-card.status-off {
-    animation: ef-off-blink 0.8s ease-in-out infinite;
-}
-
-@keyframes ef-off-blink {
-    0%, 100% {
-        filter: brightness(1);
-    }
-
-    50% {
-        filter: brightness(0.55);
-    }
-}
-
-/* =========================================================
-   EXHAUST FAN — FIT ALL 59 FANS TO THE ACTUAL VIEWPORT
-   ========================================================= */
-
-/*
- * Requirement: on desktop the whole EXHAUST FAN page — 9 panels + the G8
- * band, 59 fans — must be visible with NO scrolling of any kind. Mobile is
- * allowed to scroll.
- *
- * A fixed card height cannot guarantee that: the real CSS viewport is shorter
- * than the physical 1080px once browser chrome is subtracted, and it differs
- * per machine. So the sizes below are driven by --ef-card-h, which
- * index.php measures and sets from the ACTUAL viewport height. The values
- * here are only the fallbacks used before JS has run.
- *
- * Appended last on purpose so these win over the fixed sizes earlier in this
- * file and in style.css. Scoped to the EF view only — the AHU, HVAC SC and
- * ROOM views are not touched.
- *
- * Card size may shrink (the requirement allows it), but index.php clamps it
- * with a readable floor so it can never become too small to read.
- */
-.equipment-grid:has(.ef-panel) {
-    --ef-card-h: 62px;
-    --ef-gap: 5px;
-    --ef-panel-pad: 9px;
-}
-
-.ef-panel {
-    padding: var(--ef-panel-pad);
-}
-
-.ef-grid {
-    gap: var(--ef-gap);
-}
-
-/*
- * Fixed header size (deliberately NOT derived from --ef-card-h): the fit
- * calculation reads this height back from the DOM, so it must not depend on
- * the value being calculated.
- */
-.ef-panel-header {
-    font-size: 13px;
-    padding: 0 4px 6px;
-    line-height: 1.15;
-}
-
-.unit-card.ef-card {
-    min-height: var(--ef-card-h);
-    padding: 4px 3px;
-}
-
-/* The name scales with the card so it stays readable at any fitted height. */
-.unit-card.ef-card .ef-name {
-    font-size: clamp(11px, calc(var(--ef-card-h) * 0.26), 19px);
-    line-height: 1;
-}
-
-/*
- * Below the wall-display breakpoint the page is allowed to scroll, so the
- * fitted height is ignored and the original comfortable sizes come back.
- */
-@media (max-width: 1599px) {
+/* Small mobile (max-width: 380px) */
+@media (max-width: 380px) {
     .equipment-grid:has(.ef-panel) {
-        --ef-card-h: 62px;
+        padding: 0 8px 12px;
+        gap: 8px;
+        --ef-card-h: 42px;
     }
-}
 
-@media (max-width: 650px) {
-    .equipment-grid:has(.ef-panel) {
-        --ef-card-h: 54px;
+    .ef-panel {
+        padding: 6px;
+    }
+
+    .ef-grid {
+        gap: 3px;
+    }
+
+    .unit-card.ef-card {
+        min-height: 42px;
+        padding: 3px 2px;
     }
 }

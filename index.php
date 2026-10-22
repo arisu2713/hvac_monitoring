@@ -276,10 +276,20 @@ function createEfCard(unit) {
     card.className = "unit-card ef-card status-" + status;
     card.dataset.status = status;
 
+    const dot = document.createElement("span");
+    dot.className = "ef-run-dot is-" + status;
+    dot.title = status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN");
+    card.appendChild(dot);
+
     const name = document.createElement("div");
     name.className = "ef-name";
     name.textContent = unit.name ?? "";
     card.appendChild(name);
+
+    const label = document.createElement("div");
+    label.className = "ef-status-label is-" + status;
+    label.textContent = status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN");
+    card.appendChild(label);
 
     return card;
 }
@@ -1449,14 +1459,47 @@ function renderExhaustFan() {
 
     if (!Array.isArray(data)) {
         unitCount.textContent = "0 units";
+        clearPageFilters();
         return;
     }
 
-    const g8Count = Array.isArray(allData.EXHAUST_FAN_G8)
-        ? allData.EXHAUST_FAN_G8.length
-        : 0;
+    const g8Data = Array.isArray(allData.EXHAUST_FAN_G8)
+        ? allData.EXHAUST_FAN_G8
+        : [];
+    const g8Count = g8Data.length;
+    const totalCount = data.length + g8Count;
 
-    unitCount.textContent = (data.length + g8Count) + " units";
+    unitCount.textContent = totalCount + " units";
+
+    // Summary counts for operating status
+    let runCount = 0;
+    let offCount = 0;
+    let unknownCount = 0;
+
+    data.forEach(unit => {
+        const s = getEfStatus(unit);
+        if (s === "run") runCount++;
+        else if (s === "off") offCount++;
+        else unknownCount++;
+    });
+
+    g8Data.forEach(unit => {
+        const s = getEfStatus(unit);
+        if (s === "run") runCount++;
+        else if (s === "off") offCount++;
+        else unknownCount++;
+    });
+
+    // Summary bar in pageFilters
+    clearPageFilters();
+    const summaryBar = document.createElement("div");
+    summaryBar.className = "ef-summary-bar";
+    summaryBar.innerHTML =
+        '<span class="ef-sum-item is-run"><span class="ef-sum-dot is-run"></span><strong>' + runCount + '</strong> RUN</span>' +
+        '<span class="ef-sum-item is-off"><span class="ef-sum-dot is-off"></span><strong>' + offCount + '</strong> OFF</span>' +
+        (unknownCount > 0 ? '<span class="ef-sum-item is-unknown"><span class="ef-sum-dot is-unknown"></span><strong>' + unknownCount + '</strong> UNKNOWN</span>' : '');
+    pageFilters.appendChild(summaryBar);
+
     const panels = {};
 
     data.forEach(unit => {
@@ -1477,7 +1520,17 @@ function renderExhaustFan() {
 
             const header = document.createElement("div");
             header.className = "ef-panel-header";
-            header.textContent = "Panel " + panelNo;
+
+            const title = document.createElement("span");
+            title.className = "ef-panel-title";
+            title.textContent = "Panel " + panelNo;
+            header.appendChild(title);
+
+            const count = document.createElement("span");
+            count.className = "ef-panel-count";
+            count.textContent = panels[panelNo].length + " units";
+            header.appendChild(count);
+
             panel.appendChild(header);
 
             const panelGrid = document.createElement("div");
@@ -1497,21 +1550,24 @@ function renderExhaustFan() {
      * A separate groupbox AFTER Panel 1-9. These fans come from a different
      * source (the Daikin poller, via the EXHAUST_FAN_G8 key) and must never be
      * merged into the panel grouping above.
-     *
-     * The header is intentionally not "Panel N" — there is no panel number for
-     * these fans. Cards reuse createEfCard(), so the visual design (and the
-     * ON = green / OFF = red / unknown = gray rules, with no ON/OFF text) is
-     * exactly the same as Panel 1-9.
      */
-    const g8Data = allData.EXHAUST_FAN_G8;
-
-    if (Array.isArray(g8Data) && g8Data.length > 0) {
+    if (g8Data.length > 0) {
         const g8Panel = document.createElement("section");
         g8Panel.className = "ef-panel ef-panel-g8";
 
         const g8Header = document.createElement("div");
         g8Header.className = "ef-panel-header";
-        g8Header.textContent = "Exhaust Fan G8";
+
+        const g8Title = document.createElement("span");
+        g8Title.className = "ef-panel-title";
+        g8Title.textContent = "Exhaust Fan G8";
+        g8Header.appendChild(g8Title);
+
+        const g8CountEl = document.createElement("span");
+        g8CountEl.className = "ef-panel-count";
+        g8CountEl.textContent = g8Data.length + " units";
+        g8Header.appendChild(g8CountEl);
+
         g8Panel.appendChild(g8Header);
 
         const g8Grid = document.createElement("div");
@@ -1579,7 +1635,7 @@ function syncG8CardWidth() {
  */
 function fitExhaustFanToViewport() {
     const MIN_CARD_H = 40;   // readable floor; never go below this
-    const MAX_CARD_H = 90;   // never grow past the design's own card size
+    const MAX_CARD_H = 64;   // compact card design matching AHU
     const MIN_FIT_W = 1101;  // below this the grid drops to 2 columns
 
     /*
