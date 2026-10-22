@@ -1490,15 +1490,21 @@ function renderExhaustFan() {
         else unknownCount++;
     });
 
-    // Summary bar in pageFilters
+    // Compact Dashboard Summary Tiles in pageFilters
     clearPageFilters();
-    const summaryBar = document.createElement("div");
-    summaryBar.className = "ef-summary-bar";
-    summaryBar.innerHTML =
-        '<span class="ef-sum-item is-run"><span class="ef-sum-dot is-run"></span><strong>' + runCount + '</strong> RUN</span>' +
-        '<span class="ef-sum-item is-off"><span class="ef-sum-dot is-off"></span><strong>' + offCount + '</strong> OFF</span>' +
-        (unknownCount > 0 ? '<span class="ef-sum-item is-unknown"><span class="ef-sum-dot is-unknown"></span><strong>' + unknownCount + '</strong> UNKNOWN</span>' : '');
-    pageFilters.appendChild(summaryBar);
+    const summary = document.createElement("div");
+    summary.className = "ef-summary";
+
+    const runTile = ahuBuildTile("RUNNING", String(runCount), "is-ef-run");
+    summary.appendChild(runTile);
+
+    const offTile = ahuBuildTile("STOPPED", String(offCount), offCount > 0 ? "is-ef-off has-stopped" : "is-ef-off");
+    summary.appendChild(offTile);
+
+    const unkTile = ahuBuildTile("UNKNOWN", String(unknownCount), "is-ef-unknown");
+    summary.appendChild(unkTile);
+
+    pageFilters.appendChild(summary);
 
     const panels = {};
 
