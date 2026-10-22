@@ -286,10 +286,12 @@ function createEfCard(unit) {
     name.textContent = unit.name ?? "";
     card.appendChild(name);
 
-    const label = document.createElement("div");
-    label.className = "ef-status-label is-" + status;
-    label.textContent = status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN");
-    card.appendChild(label);
+    if (status !== "run") {
+        const label = document.createElement("div");
+        label.className = "ef-status-label is-" + status;
+        label.textContent = status === "off" ? "OFF" : "UNKNOWN";
+        card.appendChild(label);
+    }
 
     return card;
 }
