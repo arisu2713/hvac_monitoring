@@ -3962,25 +3962,101 @@ html:has(.alarm-page) .alarm-page {
 }
 
 /* ---- Hourly history: compact table with a sticky Hour column ---- */
-.history-page.is-room-history .history-table-wrap { border-color: #232d38; border-radius: 16px; background: #141a22; }
+.history-page.is-room-history .history-table-wrap {
+    border-color: #232d38;
+    border-radius: 16px;
+    background: #141a22;
+}
+.history-page.is-room-history .history-table {
+    min-width: auto;
+    width: max-content;
+}
 .history-page.is-room-history .history-row {
-    grid-template-columns: 92px repeat(calc(var(--history-cols) - 2), minmax(92px, 1fr)) minmax(150px, 1fr);
+    grid-template-columns: 80px repeat(calc(var(--history-cols) - 2), 96px) 126px;
+    width: max-content;
     border-bottom-color: #1f2833;
 }
-.history-page.is-room-history .history-head { background: #19212a; }
-.history-page.is-room-history .history-head .history-cell { color: #8b98a8; border-right-color: #232d38; }
+.history-page.is-room-history .history-head {
+    background: #19212a;
+}
+.history-page.is-room-history .history-head .history-cell {
+    color: #8b98a8;
+    border-right-color: #232d38;
+    padding: 7px 4px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: .2px;
+    white-space: pre-line;
+    text-align: center;
+    align-content: center;
+}
 .history-page.is-room-history .history-head .history-cell:first-child {
-    position: sticky; left: 0; z-index: 3; background: #19212a;
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: #19212a;
 }
-.history-page.is-room-history .history-row:not(.history-head):nth-child(even) .history-cell:not(.history-cell-key) { background: #171e27; }
-.history-page.is-room-history .history-cell { border-right-color: #1f2833; color: #dbe3ec; }
+.history-page.is-room-history .history-row:not(.history-head):nth-child(even) .history-cell:not(.history-cell-key) {
+    background: #171e27;
+}
+.history-page.is-room-history .history-cell {
+    border-right-color: #1f2833;
+    color: #dbe3ec;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+.history-page.is-room-history .history-cell-num {
+    padding: 6px 8px;
+    font-size: 12px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.history-page.is-room-history .history-cell-null {
+    color: #5d6b7c;
+    padding: 6px 8px;
+    font-size: 12px;
+    text-align: right;
+}
 .history-page.is-room-history .history-cell-key {
-    background: #19212a; text-align: left; white-space: pre-line; line-height: 1.25;
-    position: sticky; left: 0; z-index: 2;
+    background: #19212a;
+    text-align: center;
+    white-space: pre;
+    line-height: 1.25;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    padding: 6px 4px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
 }
-.history-page.is-room-history .history-cell-null { color: #5d6b7c; }
+.history-page.is-room-history .history-cell-time {
+    padding: 6px 6px;
+    font-size: 11px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
 @media (max-width: 600px) {
     .history-page.is-room-history .history-cell-key { position: sticky; }
+}
+@media (min-width: 1600px) {
+    .history-page.is-room-history .history-cell {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    .history-page.is-room-history .history-cell-num {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    .history-page.is-room-history .history-head .history-cell {
+        padding: 7px 4px;
+        font-size: 11px;
+    }
+    .history-page.is-room-history .history-cell-key {
+        padding: 6px 4px;
+        font-size: 11px;
+    }
 }
 
 /* ---- Chart controls: the view switch, moved down beside the plot ---- */

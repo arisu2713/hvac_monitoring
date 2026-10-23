@@ -3759,11 +3759,11 @@ function renderRoomHourly() {
     const columns = [{ label: "Hour" }];
     if (hasPeer) {
         rooms.forEach(r => {
-            columns.push({ label: r.label + " (°C)" });
-            columns.push({ label: r.label + " (%RH)" });
+            columns.push({ label: r.label + "\n(°C)" });
+            columns.push({ label: r.label + "\n(%RH)" });
         });
     } else {
-        const unitSuffix = f.metric === "rh" ? " (%RH)" : " (°C)";
+        const unitSuffix = f.metric === "rh" ? "\n(%RH)" : "\n(°C)";
         rooms.forEach(r => columns.push({ label: r.label + unitSuffix }));
     }
     columns.push({ label: "Reading at" });
@@ -3822,6 +3822,7 @@ function renderRoomHourly() {
     });
 
     page.appendChild(createTable(columns, rows, {
+        compact: true,
         emptyText: "No readings for this date range."
     }));
 
