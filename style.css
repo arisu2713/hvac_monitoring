@@ -2618,8 +2618,9 @@ html:has(.alarm-page) .alarm-page {
 .history-chart-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 14px;
-    margin-top: 8px;
+    align-items: center;
+    gap: 6px 14px;
+    margin-top: 10px;
     font-size: 11px;
     color: #ccc;
 }
@@ -2665,37 +2666,84 @@ html:has(.alarm-page) .alarm-page {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin-left: 6px;
+    margin-left: auto;
+    padding-left: 8px;
 }
 
 .history-chart-legend-btn {
     display: inline-flex;
     align-items: center;
-    background: #1e252f;
-    border: 1px solid #334155;
-    color: #8da4be;
+    gap: 5px;
+    padding: 3px 9px;
     border-radius: 4px;
-    padding: 1px 7px;
-    font-size: 10px;
-    font-weight: 500;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: 0.2px;
     cursor: pointer;
-    line-height: 1.4;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.history-chart-legend-btn:hover {
-    background: #2a3646;
-    border-color: #52759e;
-    color: #e0eaf6;
+    user-select: none;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
 
 .history-chart-legend-btn:active {
-    background: #344458;
+    transform: translateY(1px);
 }
 
 .history-chart-legend-btn:focus-visible {
     outline: 2px solid #3987e5;
     outline-offset: 1px;
+}
+
+.history-chart-legend-btn-icon {
+    display: inline-block;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+/* Distinct styling for Select All (Affirmative / Primary Blue Accent) */
+.history-chart-legend-btn-all {
+    background: #172334;
+    border: 1px solid #284469;
+    color: #93c5fd;
+}
+
+.history-chart-legend-btn-all .history-chart-legend-btn-icon {
+    color: #60a5fa;
+}
+
+.history-chart-legend-btn-all:hover {
+    background: #1e3a5f;
+    border-color: #3b82f6;
+    color: #ffffff;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+
+.history-chart-legend-btn-all:active {
+    background: #173052;
+}
+
+/* Distinct styling for Unselect All (Neutral / Dimmed Slate) */
+.history-chart-legend-btn-none {
+    background: #1b1e24;
+    border: 1px solid #353d49;
+    color: #94a3b8;
+}
+
+.history-chart-legend-btn-none .history-chart-legend-btn-icon {
+    color: #7d8b9d;
+}
+
+.history-chart-legend-btn-none:hover {
+    background: #272d37;
+    border-color: #4b5563;
+    color: #e2e8f0;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+}
+
+.history-chart-legend-btn-none:active {
+    background: #1f2530;
 }
 
 /*
@@ -2714,6 +2762,13 @@ html:has(.alarm-page) .alarm-page {
 
     .history-chart-facets {
         grid-template-columns: 1fr !important;
+    }
+
+    .history-chart-legend-actions {
+        margin-left: 0;
+        width: 100%;
+        margin-top: 4px;
+        padding-left: 0;
     }
 }
 

@@ -3469,6 +3469,7 @@ function buildEnergyChart(data) {
         note: note,
         combine: true,
         legendToggle: true,
+        legendActions: true,
         emptyText: "No daily usage to chart for this filter.",
         options: energyChartOptions()
     });
@@ -7165,18 +7166,40 @@ function buildHistoryChartPanel(config) {
 
             const btnAll = document.createElement("button");
             btnAll.type = "button";
-            btnAll.className = "history-chart-legend-btn";
-            btnAll.textContent = "Select All";
+            btnAll.className = "history-chart-legend-btn history-chart-legend-btn-all";
+            btnAll.title = "Select all series";
+            btnAll.setAttribute("aria-label", "Select all series");
+            btnAll.innerHTML = '<svg class="history-chart-legend-btn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"></polyline></svg><span>Select All</span>';
             btnAll.addEventListener("click", () => {
-                if (config.onSelectAll) config.onSelectAll();
+                if (config.onSelectAll) {
+                    config.onSelectAll();
+                } else {
+                    hidden.clear();
+                    legend.querySelectorAll(".history-chart-legend-item").forEach(item => {
+                        item.classList.remove("is-hidden");
+                        item.setAttribute("aria-pressed", "true");
+                    });
+                    redraw();
+                }
             });
 
             const btnNone = document.createElement("button");
             btnNone.type = "button";
-            btnNone.className = "history-chart-legend-btn";
-            btnNone.textContent = "Unselect All";
+            btnNone.className = "history-chart-legend-btn history-chart-legend-btn-none";
+            btnNone.title = "Unselect all series";
+            btnNone.setAttribute("aria-label", "Unselect all series");
+            btnNone.innerHTML = '<svg class="history-chart-legend-btn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="4" x2="12" y2="12"></line><line x1="12" y1="4" x2="4" y2="12"></line></svg><span>Unselect All</span>';
             btnNone.addEventListener("click", () => {
-                if (config.onUnselectAll) config.onUnselectAll();
+                if (config.onUnselectAll) {
+                    config.onUnselectAll();
+                } else {
+                    config.series.forEach(s => hidden.add(s.name));
+                    legend.querySelectorAll(".history-chart-legend-item").forEach(item => {
+                        item.classList.add("is-hidden");
+                        item.setAttribute("aria-pressed", "false");
+                    });
+                    redraw();
+                }
             });
 
             actions.appendChild(btnAll);
