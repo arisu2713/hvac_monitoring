@@ -3901,6 +3901,29 @@ html:has(.alarm-page) .alarm-page {
 .room-card .room-rh .rv-num { font-size: 18px; }
 .room-card .rv-unit { font-size: 12px; font-weight: 500; color: #8b98a8; }
 
+/* ---- Current: room card WARNING (aligned with AHU dashboard warning) ---- */
+.equipment-grid:has(.room-card) .unit-card.room-card.is-warning {
+    background: #f5b83d;
+    border: 2px solid #ffd98a;
+    color: #1a1300;
+}
+.equipment-grid:has(.room-card) .unit-card.room-card.is-warning:hover {
+    background: #e5a82d;
+    border-color: #ffd98a;
+}
+.room-card.is-warning .unit-name {
+    color: #1a1300;
+}
+.room-card.is-warning .room-temp {
+    color: #1a1300;
+}
+.room-card.is-warning .room-rh {
+    color: #2e2205;
+}
+.room-card.is-warning .rv-unit {
+    color: #5a450e;
+}
+
 /* ---- Hourly history: compact table with a sticky Hour column ---- */
 .history-page.is-room-history .history-table-wrap { border-color: #232d38; border-radius: 16px; background: #141a22; }
 .history-page.is-room-history .history-row {

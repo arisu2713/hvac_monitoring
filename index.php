@@ -1766,7 +1766,17 @@ function setRoomReading(el, raw, unitText) {
 function createRoomCard(unit, index) {
     const card = document.createElement("div");
     card.id = "roomcard" + (index + 1);
-    card.className = "unit-card room-card" + (unit.type === "OUTDOOR" ? " room-outdoor" : "");
+
+    const isWarning = isOutOfRange(unit.temp, null, unit.temp_max)
+        || isOutOfRange(unit.rh, null, unit.rh_max);
+
+    card.className = "unit-card room-card"
+        + (unit.type === "OUTDOOR" ? " room-outdoor" : "")
+        + (isWarning ? " is-warning" : "");
+
+    if (isWarning) {
+        card.dataset.band = "warning";
+    }
 
     const name = document.createElement("div");
     name.className = "unit-name";
