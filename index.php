@@ -5227,11 +5227,15 @@ function hvacScIssueCard(entry) {
         ));
     }
 
-    card.appendChild(chips);
+    if (!isOpen) {
+        card.appendChild(chips);
+    }
 
     /*
      * Expanded: every metric, including the ones with no reading, so the
-     * absence is visible rather than hidden by the collapse.
+     * absence is visible rather than hidden by the collapse. The collapsed
+     * chip row is intentionally NOT appended when open - showing both would
+     * render every parameter twice.
      */
     if (isOpen) {
         const all = document.createElement("div");
