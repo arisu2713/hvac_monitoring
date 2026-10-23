@@ -2788,7 +2788,7 @@ const historyFilters = {
         view: ENERGY_VIEW_OVERVIEW
     },
     TEMP_RH_HOURLY: {
-        metric: "temp",
+        metric: "combined",
         from: "",
         to: "",
         area: ROOM_AREA_ALL,
@@ -3643,7 +3643,16 @@ function renderRoomHourly() {
     if (!data || !Array.isArray(data.hours)) {
         unitCount.textContent = "0 hours";
         buildFilterBar([
-            { type: "select", name: "metric", label: "Metric", options: [{ value: "temp", text: "TEMPERATURE" }] },
+            {
+                type: "select",
+                name: "metric",
+                label: "Metric",
+                options: [
+                    { value: "combined", text: "COMBINED (TEMP + RH)" },
+                    { value: "temp", text: "TEMPERATURE (°C)" },
+                    { value: "rh", text: "HUMIDITY (%RH)" }
+                ]
+            },
             { type: "date", name: "from", label: "From" },
             { type: "date", name: "to", label: "To" }
         ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
@@ -3674,10 +3683,11 @@ function renderRoomHourly() {
             type: "select",
             name: "metric",
             label: "Metric",
-            options: (data.metrics || ["temp"]).map(m => ({
-                value: m,
-                text: m === "rh" ? "HUMIDITY (%RH)" : "TEMPERATURE (C)"
-            }))
+            options: [
+                { value: "combined", text: "COMBINED (TEMP + RH)" },
+                { value: "temp", text: "TEMPERATURE (°C)" },
+                { value: "rh", text: "HUMIDITY (%RH)" }
+            ]
         },
         {
             type: "select",
@@ -3697,9 +3707,11 @@ function renderRoomHourly() {
         { type: "date", name: "to", label: "To" }
     ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
 
+    const peerData = allData.TEMP_RH_HOURLY_PEER;
+
     appendHistoryButtons(bar, {
         onToggle: () => {},
-        onExport: () => exportTempRh(data)
+        onExport: () => exportTempRh(data, peerData)
     });
 
     /*
@@ -3714,12 +3726,17 @@ function renderRoomHourly() {
     const page = document.createElement("div");
     page.className = "history-page is-room-history";
 
+    const f = historyFilters.TEMP_RH_HOURLY;
+    const isCombined = f.metric === "combined";
+    const metricSummary = isCombined
+        ? "hourly temperature & humidity in °C & %RH"
+        : (f.metric === "rh" ? "hourly humidity in %RH" : "hourly temperature in °C");
+
     const notice = document.createElement("div");
     notice.className = "history-notice";
     notice.textContent = filterNotice(data.available)
         + " Showing " + (data.from || "--") + " to " + (data.to || "--")
-        + " — hourly " + (data.metric === "rh" ? "humidity" : "temperature")
-        + " in " + (data.unit || "") + "."
+        + " — " + metricSummary + "."
         + " " + roomScopeLabel(allRooms) + ".";
     page.appendChild(notice);
 
@@ -3736,8 +3753,19 @@ function renderRoomHourly() {
         page.appendChild(buildRoomCharts(data, allData.TEMP_RH_HOURLY_PEER));
     }
 
+    const hasPeer = isCombined && peerData && Array.isArray(peerData.hours) && peerData.hours.length > 0;
+    const peerMap = hasPeer ? new Map(peerData.hours.map(h => [h.recorded_at, h])) : null;
+
     const columns = [{ label: "Hour" }];
-    rooms.forEach(r => columns.push({ label: r.label }));
+    if (hasPeer) {
+        rooms.forEach(r => {
+            columns.push({ label: r.label + " (°C)" });
+            columns.push({ label: r.label + " (%RH)" });
+        });
+    } else {
+        const unitSuffix = f.metric === "rh" ? " (%RH)" : " (°C)";
+        rooms.forEach(r => columns.push({ label: r.label + unitSuffix }));
+    }
     columns.push({ label: "Reading at" });
 
     const rows = hours.map(hour => {
@@ -3747,17 +3775,35 @@ function renderRoomHourly() {
             className: "history-cell-key history-cell-stamp"
         }];
 
-        rooms.forEach(room => {
-            const value = (hour.values || {})[room.key];
+        const peerHour = peerMap ? peerMap.get(hour.recorded_at) : null;
 
-            cells.push({
-                label: room.label,
-                value: value === null || value === undefined ? "--" : formatNumber(value, 1),
-                className: value === null || value === undefined
-                    ? "history-cell-null"
-                    : "history-cell-num"
+        if (hasPeer) {
+            rooms.forEach(room => {
+                const tempVal = (hour.values || {})[room.key];
+                const rhVal = peerHour ? (peerHour.values || {})[room.key] : null;
+
+                cells.push({
+                    label: room.label + " (°C)",
+                    value: isMissingValue(tempVal) ? "--" : formatNumber(tempVal, 1),
+                    className: isMissingValue(tempVal) ? "history-cell-null" : "history-cell-num"
+                });
+                cells.push({
+                    label: room.label + " (%RH)",
+                    value: isMissingValue(rhVal) ? "--" : formatNumber(rhVal, 1),
+                    className: isMissingValue(rhVal) ? "history-cell-null" : "history-cell-num"
+                });
             });
-        });
+        } else {
+            rooms.forEach(room => {
+                const value = (hour.values || {})[room.key];
+
+                cells.push({
+                    label: room.label,
+                    value: isMissingValue(value) ? "--" : formatNumber(value, 1),
+                    className: isMissingValue(value) ? "history-cell-null" : "history-cell-num"
+                });
+            });
+        }
 
         /*
          * read_at is the poller's own timestamp. If it differs across the
@@ -3969,7 +4015,8 @@ function roomReadAtLabel(hour, rooms) {
     return lo === hi ? lo : lo + " … " + hi;
 }
 
-function buildRoomChartPanel(data, metricKey, panelId) {
+function buildRoomChartPanel(data, metricKey, panelId, extraConfig) {
+    const extra = extraConfig || {};
     const allRooms = data.rooms || [];
 
     /*
@@ -4028,6 +4075,12 @@ function buildRoomChartPanel(data, metricKey, panelId) {
         note: note,
         combine: true,
         legendToggle: true,
+        sharedHidden: extra.sharedHidden,
+        legendActions: extra.legendActions,
+        onToggle: extra.onToggle,
+        onSelectAll: extra.onSelectAll,
+        onUnselectAll: extra.onUnselectAll,
+        registerRedraw: extra.registerRedraw,
         emptyText: "No hourly readings to chart for this filter.",
         options: {
             unit: unit,
@@ -4049,33 +4102,87 @@ function buildRoomChartPanel(data, metricKey, panelId) {
     });
 }
 
-/*
- * ROOM TEMP & RH charts: exactly two panels, always Temperature then Humidity,
- * regardless of which metric the filter bar has selected. The filter still
- * drives the table and the export (which remain single-metric), and it still
- * drives the date range both charts are drawn from.
- *
- * The order is fixed rather than led by the selected metric so the pair never
- * swaps places: on a wall display the reader learns "top is temperature" once
- * and it stays true.
- *
- * The peer metric is a separate fetch, so it can be absent — after a failed
- * load, or on the very first paint. That case renders the selected metric's
- * chart alone and says why, rather than drawing an empty frame that would look
- * like "this room has no data".
- */
 function buildRoomCharts(primary, peer) {
     const wrap = document.createElement("div");
     wrap.className = "history-chart-stack";
 
-    const rooms = (primary && primary.rooms) || [];
-
     const panels = document.createElement("div");
     panels.className = "history-chart-panels";
 
+    const f = historyFilters.TEMP_RH_HOURLY;
+    const selectedMetric = f.metric;
+
+    const allRooms = (primary && primary.rooms) || (peer && peer.rooms) || [];
+    const rooms = roomScopeRooms(allRooms);
+    const allSeriesNames = rooms.map(r => r.label);
+
+    const sharedHidden = new Set();
+    const redrawFns = [];
+    const panelElements = [];
+
+    const updateLegendStates = () => {
+        panelElements.forEach(p => {
+            const items = p.querySelectorAll(".history-chart-legend-item[data-series-name]");
+            items.forEach(item => {
+                const sName = item.dataset.seriesName;
+                const isHidden = sharedHidden.has(sName);
+                item.classList.toggle("is-hidden", isHidden);
+                item.setAttribute("aria-pressed", isHidden ? "false" : "true");
+            });
+        });
+    };
+
+    const redrawAll = () => {
+        redrawFns.forEach(fn => fn());
+    };
+
+    const sharedConfig = {
+        sharedHidden: sharedHidden,
+        legendActions: true,
+        onToggle: (seriesName) => {
+            if (sharedHidden.has(seriesName)) {
+                sharedHidden.delete(seriesName);
+            } else {
+                sharedHidden.add(seriesName);
+            }
+            updateLegendStates();
+            redrawAll();
+        },
+        onSelectAll: () => {
+            sharedHidden.clear();
+            updateLegendStates();
+            redrawAll();
+        },
+        onUnselectAll: () => {
+            allSeriesNames.forEach(name => sharedHidden.add(name));
+            updateLegendStates();
+            redrawAll();
+        },
+        registerRedraw: (fn) => {
+            redrawFns.push(fn);
+        }
+    };
+
     const render = () => {
         panels.textContent = "";
+        redrawFns.length = 0;
+        panelElements.length = 0;
 
+        if (selectedMetric === "temp") {
+            const p = buildRoomChartPanel(primary, "temp", "temp", sharedConfig);
+            panelElements.push(p);
+            panels.appendChild(p);
+            return;
+        }
+
+        if (selectedMetric === "rh") {
+            const p = buildRoomChartPanel(primary, "rh", "rh", sharedConfig);
+            panelElements.push(p);
+            panels.appendChild(p);
+            return;
+        }
+
+        // Combined mode
         const primaryMetric = primary && primary.metric === "rh" ? "rh" : "temp";
         const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
         const hasPeer = peer && Array.isArray(peer.hours) && peer.hours.length > 0;
@@ -4087,13 +4194,17 @@ function buildRoomCharts(primary, peer) {
 
             /* Fixed order: Temperature first, then Humidity. */
             ["temp", "rh"].forEach(metricKey => {
-                panels.appendChild(buildRoomChartPanel(byMetric[metricKey], metricKey, metricKey));
+                const p = buildRoomChartPanel(byMetric[metricKey], metricKey, metricKey, sharedConfig);
+                panelElements.push(p);
+                panels.appendChild(p);
             });
 
             return;
         }
 
-        panels.appendChild(buildRoomChartPanel(primary, primaryMetric, primaryMetric));
+        const p = buildRoomChartPanel(primary, primaryMetric, primaryMetric, sharedConfig);
+        panelElements.push(p);
+        panels.appendChild(p);
 
         const warn = document.createElement("div");
         warn.className = "history-chart-note";
@@ -4102,11 +4213,6 @@ function buildRoomCharts(primary, peer) {
         panels.appendChild(warn);
     };
 
-    /*
-     * No chip filter here any more: the equipment scope in the filter bar is
-     * the one control, and it drives the table and the export too, which a
-     * chart-local chip set never did.
-     */
     wrap.appendChild(panels);
     render();
 
@@ -4122,38 +4228,56 @@ function buildRoomCharts(primary, peer) {
  * The room list comes through the same scope helper the table uses, so the
  * equipment filter applies to the file exactly as it applies to the screen.
  */
-function exportTempRh(data) {
+function exportTempRh(data, peer) {
+    const f = historyFilters.TEMP_RH_HOURLY;
+    const isCombined = f.metric === "combined";
     const allRooms = data.rooms || [];
     const rooms = roomScopeRooms(allRooms);
     const hours = data.hours || [];
-    const unit = data.unit || (data.metric === "rh" ? "%RH" : "C");
+
+    const hasPeer = isCombined && peer && Array.isArray(peer.hours) && peer.hours.length > 0;
+    const peerMap = hasPeer ? new Map(peer.hours.map(h => [h.recorded_at, h])) : null;
 
     const columns = ["Hour"];
-
-    rooms.forEach(r => columns.push(r.label + " (" + unit + ")"));
-
+    if (hasPeer) {
+        rooms.forEach(r => {
+            columns.push(r.label + " (°C)");
+            columns.push(r.label + " (%RH)");
+        });
+    } else {
+        const unit = data.unit || (data.metric === "rh" ? "%RH" : "C");
+        rooms.forEach(r => columns.push(r.label + " (" + unit + ")"));
+    }
     columns.push("Reading at");
 
     const rows = hours.map(hour => {
         const row = [formatHour(hour.recorded_at)];
+        const peerHour = peerMap ? peerMap.get(hour.recorded_at) : null;
 
-        rooms.forEach(room => {
-            const v = (hour.values || {})[room.key];
-            row.push(isMissingValue(v) ? null : Number(v));
-        });
+        if (hasPeer) {
+            rooms.forEach(room => {
+                const tv = (hour.values || {})[room.key];
+                const rv = peerHour ? (peerHour.values || {})[room.key] : null;
+                row.push(isMissingValue(tv) ? null : Number(tv));
+                row.push(isMissingValue(rv) ? null : Number(rv));
+            });
+        } else {
+            rooms.forEach(room => {
+                const v = (hour.values || {})[room.key];
+                row.push(isMissingValue(v) ? null : Number(v));
+            });
+        }
 
         row.push(roomReadAtLabel(hour, rooms));
-
         return row;
     });
 
-    const bytes = buildXlsxWorkbook(
-        "TEMP RH " + (data.metric === "rh" ? "HUMIDITY" : "TEMPERATURE"),
-        columns,
-        rows
-    );
+    const sheetTitle = isCombined
+        ? "TEMP RH COMBINED"
+        : ("TEMP RH " + (data.metric === "rh" ? "HUMIDITY" : "TEMPERATURE"));
 
-    downloadXlsx(exportFilename("temp_rh_" + (data.metric || "temp"), data.from, data.to), bytes);
+    const bytes = buildXlsxWorkbook(sheetTitle, columns, rows);
+    downloadXlsx(exportFilename("temp_rh_" + (isCombined ? "combined" : (data.metric || "temp")), data.from, data.to), bytes);
 }
 
 /*
@@ -4204,7 +4328,10 @@ function applyTempRhFilter(inputs, isReset) {
  */
 function buildTempRhHourlyUrl(metricOverride) {
     const f = historyFilters.TEMP_RH_HOURLY;
-    const metric = metricOverride || f.metric;
+    let metric = metricOverride || f.metric;
+    if (metric === "combined") {
+        metric = "temp";
+    }
     let url = TEMP_RH_HOURLY_API_URL + "?metric=" + encodeURIComponent(metric);
 
     if (f.from) {
@@ -5844,15 +5971,21 @@ async function loadData() {
              * chart plus a note saying why.
              */
             const selectedMetric = historyFilters.TEMP_RH_HOURLY.metric;
-            const peerMetric = selectedMetric === "rh" ? "temp" : "rh";
+            const isCombined = selectedMetric === "combined";
+            const primaryMetric = isCombined ? "temp" : selectedMetric;
+            const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
 
-            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl(selectedMetric));
+            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl(primaryMetric));
 
-            try {
-                allData.TEMP_RH_HOURLY_PEER = await loadHistoryPage(buildTempRhHourlyUrl(peerMetric));
-            } catch (peerError) {
+            if (isCombined) {
+                try {
+                    allData.TEMP_RH_HOURLY_PEER = await loadHistoryPage(buildTempRhHourlyUrl(peerMetric));
+                } catch (peerError) {
+                    allData.TEMP_RH_HOURLY_PEER = null;
+                    console.warn("HVAC peer metric unavailable:", peerError);
+                }
+            } else {
                 allData.TEMP_RH_HOURLY_PEER = null;
-                console.warn("HVAC peer metric unavailable:", peerError);
             }
 
             setConnection(true);
@@ -6567,6 +6700,14 @@ function drawHistoryChart(canvas, series, options) {
     const visible = series.filter(s => s.points.some(p => !isMissingValue(p.value)));
 
     if (!visible.length) {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            canvas.width = Math.round(rect.width * dpr);
+            canvas.height = Math.round(rect.height * dpr);
+        }
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return null;
     }
 
@@ -6953,15 +7094,16 @@ function buildHistoryChartPanel(config) {
      * shortened, and an index-keyed set would hide a different channel after a
      * re-render.
      */
-    const hidden = new Set();
+    const hidden = config.sharedHidden || new Set();
 
-    if (visible.length >= 2) {
+    if (visible.length >= 2 || (config.legendActions && visible.length >= 1)) {
         const legend = document.createElement("div");
         legend.className = "history-chart-legend";
 
         visible.forEach(s => {
             const item = document.createElement("span");
             item.className = "history-chart-legend-item";
+            item.dataset.seriesName = s.name;
 
             const sw = document.createElement("span");
             sw.className = "history-chart-swatch";
@@ -6980,6 +7122,11 @@ function buildHistoryChartPanel(config) {
                 const itemKey = s.name;
 
                 const toggle = () => {
+                    if (config.onToggle) {
+                        config.onToggle(itemKey);
+                        return;
+                    }
+
                     /*
                      * Never hide the last line. An empty plot with a live legend
                      * reads as "this filter has no data", which is a different
@@ -6996,7 +7143,9 @@ function buildHistoryChartPanel(config) {
                     redraw();
                 };
 
-                item.setAttribute("aria-pressed", "true");
+                const isHidden = hidden.has(itemKey);
+                item.classList.toggle("is-hidden", isHidden);
+                item.setAttribute("aria-pressed", isHidden ? "false" : "true");
                 item.addEventListener("click", toggle);
                 item.addEventListener("keydown", ev => {
                     if (ev.key === "Enter" || ev.key === " ") {
@@ -7008,6 +7157,31 @@ function buildHistoryChartPanel(config) {
 
             legend.appendChild(item);
         });
+
+        if (config.legendActions) {
+            const actions = document.createElement("span");
+            actions.className = "history-chart-legend-actions";
+
+            const btnAll = document.createElement("button");
+            btnAll.type = "button";
+            btnAll.className = "history-chart-legend-btn";
+            btnAll.textContent = "Select All";
+            btnAll.addEventListener("click", () => {
+                if (config.onSelectAll) config.onSelectAll();
+            });
+
+            const btnNone = document.createElement("button");
+            btnNone.type = "button";
+            btnNone.className = "history-chart-legend-btn";
+            btnNone.textContent = "Unselect All";
+            btnNone.addEventListener("click", () => {
+                if (config.onUnselectAll) config.onUnselectAll();
+            });
+
+            actions.appendChild(btnAll);
+            actions.appendChild(btnNone);
+            legend.appendChild(actions);
+        }
 
         panel.appendChild(legend);
     }
@@ -7035,8 +7209,17 @@ function buildHistoryChartPanel(config) {
         const shown = config.series.filter(s => !hidden.has(s.name));
         const geo = drawHistoryChart(canvas, shown, config.options || {});
         canvas.__historyGeo = geo;
-        if (geo) attachHistoryChartHover(canvas, shown, config.options || {});
+        if (geo) {
+            attachHistoryChartHover(canvas, shown, config.options || {});
+        } else {
+            const tip = canvas.parentElement.querySelector(".history-chart-tooltip");
+            if (tip) tip.style.display = "none";
+        }
     };
+
+    if (config.registerRedraw) {
+        config.registerRedraw(redraw);
+    }
 
     requestAnimationFrame(redraw);
     registerHistoryChartResize(canvases, redraw);

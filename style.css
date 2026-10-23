@@ -2661,6 +2661,43 @@ html:has(.alarm-page) .alarm-page {
     text-decoration: line-through;
 }
 
+.history-chart-legend-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+}
+
+.history-chart-legend-btn {
+    display: inline-flex;
+    align-items: center;
+    background: #1e252f;
+    border: 1px solid #334155;
+    color: #8da4be;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.history-chart-legend-btn:hover {
+    background: #2a3646;
+    border-color: #52759e;
+    color: #e0eaf6;
+}
+
+.history-chart-legend-btn:active {
+    background: #344458;
+}
+
+.history-chart-legend-btn:focus-visible {
+    outline: 2px solid #3987e5;
+    outline-offset: 1px;
+}
+
 /*
  * The per-facet column count is set inline by the ENERGY Overview mode; these
  * breakpoints win over it, because a fixed three-across is unreadable once the
