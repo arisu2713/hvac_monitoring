@@ -61,6 +61,7 @@ function hvac_sc_blank(string $type, string $name, array $limits = []): array
     if ($type === 'CHILLER') {
         return array_merge([
             'name'               => $name,
+            'device_id'          => null,
             'run'                => null,
             'alarm'              => null,
             'setpoint'           => null,   // filled from CHILLER <n> MODBUS below
@@ -78,6 +79,7 @@ function hvac_sc_blank(string $type, string $name, array $limits = []): array
     if ($type === 'CT') {
         return array_merge([
             'name'        => $name,
+            'device_id'   => null,
             'run'         => null,
             'alarm'       => null,
             'frequency'   => null,
@@ -93,6 +95,7 @@ function hvac_sc_blank(string $type, string $name, array $limits = []): array
     // CCP, CHWP
     return array_merge([
         'name'        => $name,
+        'device_id'   => null,
         'run'         => null,
         'alarm'       => null,
         'frequency'   => null,
@@ -201,6 +204,7 @@ try {
     $sql = "
         SELECT
             p.point_id,
+            p.device_id,
             p.point_name,
             p.obj_type,
             CASE
@@ -281,6 +285,9 @@ try {
             if (!isset($equipment['CHILLER'][$cn])) {
                 $equipment['CHILLER'][$cn] = hvac_sc_blank('CHILLER', $cn, $chillerThresholds);
             }
+            if ($row['device_id'] !== null && $equipment['CHILLER'][$cn]['device_id'] === null) {
+                $equipment['CHILLER'][$cn]['device_id'] = (int)$row['device_id'];
+            }
             $equipment['CHILLER'][$cn]['evap_leaving_temp'] = $g3Value;
             if (
                 $row['read_at'] !== null &&
@@ -324,6 +331,10 @@ try {
                 : hvac_sc_current_limits($type, $name, $unitMotorKw, $thresholdByKw);
 
             $equipment[$type][$name] = hvac_sc_blank($type, $name, $limits);
+        }
+
+        if ($row['device_id'] !== null && $equipment[$type][$name]['device_id'] === null) {
+            $equipment[$type][$name]['device_id'] = (int)$row['device_id'];
         }
 
         if (!array_key_exists($field, $equipment[$type][$name])) {
@@ -373,6 +384,10 @@ try {
                 if ($equipment['CT'][$cellKey][$f] === null && $parent[$f] !== null) {
                     $equipment['CT'][$cellKey][$f] = $parent[$f];
                 }
+            }
+
+            if ($equipment['CT'][$cellKey]['device_id'] === null && $parent['device_id'] !== null) {
+                $equipment['CT'][$cellKey]['device_id'] = $parent['device_id'];
             }
 
             if (

@@ -3569,6 +3569,7 @@ html:has(.alarm-page) .alarm-page {
     padding: 12px 14px;
     border-radius: 12px;
     box-sizing: border-box;
+    border: 1.5px solid #384656;
 }
 
 .hsc-card.is-critical {
@@ -3588,7 +3589,7 @@ html:has(.alarm-page) .alarm-page {
  */
 .hsc-card.is-unknown {
     background: #1b222a;
-    border: 2px dashed #2c3640;
+    border: 2px dashed #384656;
 }
 
 /*
@@ -3610,8 +3611,8 @@ html:has(.alarm-page) .alarm-page {
  */
 .hsc-card.hsc-u {
     background: #151b22;
-    border: 1px solid #222b34;
-    border-left-width: 3px;
+    border: 1.5px solid #384656;
+    border-left-width: 4px;
     padding: 10px 12px;
 }
 
@@ -3619,6 +3620,14 @@ html:has(.alarm-page) .alarm-page {
 .hsc-card.hsc-u.is-warning  { border-left-color: #f5b83d; }
 .hsc-card.hsc-u.is-normal   { border-left-color: #4ade80; }
 .hsc-card.hsc-u.is-unknown  { border-left-color: #4a5763; }
+
+.hsc-card.hsc-u:hover {
+    border-color: #4e5f75;
+}
+.hsc-card.hsc-u.is-critical:hover { border-left-color: #ff6b63; }
+.hsc-card.hsc-u.is-warning:hover  { border-left-color: #f5b83d; }
+.hsc-card.hsc-u.is-normal:hover   { border-left-color: #4ade80; }
+.hsc-card.hsc-u.is-unknown:hover  { border-left-color: #4a5763; }
 
 /*
  * In the issues view the name row is name-on-the-left, badge-on-the-right. A
@@ -3926,7 +3935,8 @@ html:has(.alarm-page) .alarm-page {
 
 /* Normal units: full-parameter mini-cards */
 .hsc-ok { padding: 10px; gap: 10px; background: #141a22; border-radius: 18px; }
-.hsc-o { display: block; padding: 12px 14px; min-height: 0; background: #1b222a; border-radius: 14px; box-shadow: none; }
+.hsc-o { display: block; padding: 12px 14px; min-height: 0; background: #1b222a; border: 1.5px solid #384656; border-radius: 14px; box-shadow: none; }
+.hsc-o:hover { border-color: #4e5f75; }
 .hsc-o-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .hsc-o-head b { flex: 1; min-width: 0; }
 .hsc-o b small { display: block; font-size: 11px; font-weight: 400; color: #8b98a8; }

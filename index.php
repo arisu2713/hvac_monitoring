@@ -398,6 +398,9 @@ function hvacScUnitCard(entry) {
     card.className = "hsc-card hsc-u is-" + band;
     card.dataset.band = band;
     card.dataset.run = hvacScRunState(unit);
+    if (unit && unit.device_id !== null && unit.device_id !== undefined) {
+        card.dataset.deviceId = String(unit.device_id);
+    }
 
     const row = document.createElement("div");
     row.className = "hsc-card-row";
@@ -5698,9 +5701,21 @@ function renderHvacSc() {
  * The category name lists are the original ones: chillers/CCP/CHWP are matched
  * on the bare number, cooling towers on the upper-cased tower name.
  */
-function hvacScGroupElement(title, categories, present) {
+const HVAC_SC_DEVICE_G1G2 = 10203;
+const HVAC_SC_DEVICE_G3   = 10202;
+
+function hvacScSortUnits(list) {
+    return list.slice().sort((a, b) => {
+        return String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" });
+    });
+}
+
+function hvacScGroupElement(title, categories, deviceId) {
     const group = document.createElement("section");
     group.className = "hvac-group-card";
+    if (deviceId !== undefined && deviceId !== null) {
+        group.dataset.deviceId = String(deviceId);
+    }
 
     const body = document.createElement("div");
     body.className = "hvac-group-body";
@@ -5708,13 +5723,16 @@ function hvacScGroupElement(title, categories, present) {
     let count = 0;
 
     categories.forEach(cat => {
+        if (!cat.units || cat.units.length === 0) {
+            return;
+        }
+
         const block = document.createElement("div");
         /*
          * The category kind drives the card grid's minimum track width. A
          * chiller card carries six two-part chips plus a name row that must
          * hold "▲ OUT OF RANGE", so it needs far more width than a pump card
-         * with three short chips. Without this marker both got the same floor,
-         * which forced pumps and towers onto one full-width column on a phone.
+         * with three short chips.
          */
         block.className = "hvac-cat is-" + String(cat.kind).toLowerCase();
 
@@ -5726,18 +5744,33 @@ function hvacScGroupElement(title, categories, present) {
         const items = document.createElement("div");
         items.className = "hvac-cat-items";
 
-        cat.names.forEach(name => {
-            const unit = present(cat, name);
+        cat.units.forEach(u => {
+            const entry = {
+                kind: cat.kind === "CHILLER" ? "chiller" : "compact",
+                prefix: cat.kind === "CHILLER" ? "Chiller" : cat.kind,
+                label: (cat.kind === "CHILLER" ? "Chiller " : cat.kind + " ") + u.name,
+                unit: u
+            };
 
-            if (unit) {
-                items.appendChild(hvacScUnitCard(unit));
+            if (hvacScMatchesSearch(entry.label)) {
+                items.appendChild(hvacScUnitCard(entry));
                 count++;
             }
         });
 
-        block.appendChild(items);
-        body.appendChild(block);
+        if (items.children.length > 0) {
+            block.appendChild(items);
+            body.appendChild(block);
+        }
     });
+
+    if (body.children.length === 0) {
+        const noMatch = document.createElement("div");
+        noMatch.className = "hsc-section-note";
+        noMatch.style.padding = "10px 0";
+        noMatch.textContent = hvacScView.search ? "No matching units in this group." : "No units in this group.";
+        body.appendChild(noMatch);
+    }
 
     const header = document.createElement("div");
     header.className = "hvac-group-header";
@@ -5760,66 +5793,55 @@ function hvacScGroupElement(title, categories, present) {
 
 function hvacScMatrixElement() {
     const chiller = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
-    const ccp = Array.isArray(allData.CCP) ? allData.CCP : [];
-    const chwp = Array.isArray(allData.CHWP) ? allData.CHWP : [];
-    const ct = Array.isArray(allData.CT) ? allData.CT : [];
+    const ccp     = Array.isArray(allData.CCP) ? allData.CCP : [];
+    const chwp    = Array.isArray(allData.CHWP) ? allData.CHWP : [];
+    const ct      = Array.isArray(allData.CT) ? allData.CT : [];
 
-    const seq = (kind, prefix, from, to) => {
-        const names = [];
+    const categories = [
+        { kind: "CHILLER", prefix: "CHILLER",       units: chiller },
+        { kind: "CCP",     prefix: "CCP",           units: ccp },
+        { kind: "CHWP",    prefix: "CHWP",          units: chwp },
+        { kind: "CT",      prefix: "COOLING TOWER", units: ct }
+    ];
 
-        for (let n = from; n <= to; n++) {
-            names.push(String(n));
-        }
-
-        return { kind, header: prefix + " (" + from + "-" + to + ")", names };
-    };
-
-    const towers = (header, list) => ({ kind: "CT", header, names: list });
-
-    const lookup = {
-        CHILLER: n => chiller.find(x => String(x.name) === String(n)),
-        CCP: n => ccp.find(x => String(x.name) === String(n)),
-        CHWP: n => chwp.find(x => String(x.name) === String(n)),
-        CT: n => ct.find(x => String(x.name).toUpperCase() === String(n).toUpperCase())
-    };
-
-    const find = (cat, name) => {
-        const unit = lookup[cat.kind](name);
-
-        if (!unit) {
-            return null;
-        }
-
+    const filterCategoryByDeviceId = (cat, targetDeviceId) => {
+        const matched = cat.units.filter(u => {
+            const dev = (u && u.device_id !== null && u.device_id !== undefined) ? Number(u.device_id) : null;
+            return dev === targetDeviceId;
+        });
+        const sorted = hvacScSortUnits(matched);
+        const range = sorted.length > 0 ? " (" + sorted[0].name + "-" + sorted[sorted.length - 1].name + ")" : "";
         return {
-            kind: cat.kind === "CHILLER" ? "chiller" : "compact",
-            prefix: cat.kind === "CHILLER" ? "Chiller" : cat.kind,
-            label: (cat.kind === "CHILLER" ? "Chiller " : cat.kind + " ") + unit.name,
-            unit
+            kind: cat.kind,
+            header: cat.prefix + range,
+            units: sorted
         };
     };
 
     const container = document.createElement("div");
     container.className = "hvac-sc-container";
 
-    container.appendChild(hvacScGroupElement("HVAC G1-G2", [
-        seq("CHILLER", "CHILLER", 1, 5),
-        seq("CCP", "CCP", 1, 5),
-        seq("CHWP", "CHWP", 1, 5),
-        towers("COOLING TOWER (1A-6B)", [
-            "1A", "1B", "2A", "2B", "3A", "3B",
-            "4A", "4B", "5A", "5B", "6A", "6B"
-        ])
-    ], find));
+    container.appendChild(hvacScGroupElement("HVAC G1G2", categories.map(cat => filterCategoryByDeviceId(cat, HVAC_SC_DEVICE_G1G2)), "10203"));
+    container.appendChild(hvacScGroupElement("HVAC G3", categories.map(cat => filterCategoryByDeviceId(cat, HVAC_SC_DEVICE_G3)), "10202"));
 
-    container.appendChild(hvacScGroupElement("HVAC G3", [
-        seq("CHILLER", "CHILLER", 6, 9),
-        seq("CCP", "CCP", 6, 9),
-        seq("CHWP", "CHWP", 6, 9),
-        towers("COOLING TOWER (9A-13B)", [
-            "9A", "9B", "10A", "10B", "11A", "11B",
-            "12A", "12B", "13A", "13B"
-        ])
-    ], find));
+    const unexpectedCategories = categories.map(cat => {
+        const matched = cat.units.filter(u => {
+            const dev = (u && u.device_id !== null && u.device_id !== undefined) ? Number(u.device_id) : null;
+            return dev !== HVAC_SC_DEVICE_G1G2 && dev !== HVAC_SC_DEVICE_G3;
+        });
+        const sorted = hvacScSortUnits(matched);
+        const range = sorted.length > 0 ? " (" + sorted[0].name + "-" + sorted[sorted.length - 1].name + ")" : "";
+        return {
+            kind: cat.kind,
+            header: cat.prefix + range,
+            units: sorted
+        };
+    }).filter(cat => cat.units.length > 0);
+
+    if (unexpectedCategories.length > 0) {
+        console.warn("HVAC SC: Unexpected or missing Device IDs detected:", unexpectedCategories);
+        container.appendChild(hvacScGroupElement("HVAC UNASSIGNED", unexpectedCategories, "unexpected"));
+    }
 
     return container;
 }
