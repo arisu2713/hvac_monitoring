@@ -327,7 +327,7 @@ function createCard(unit) {
         temp.textContent = "-- °C";
     }
 
-    applyAlarmClass(temp, unit.temp, null, unit.temp_max);
+    applyAlarmClass(temp, unit.temp, unit.temp_min, unit.temp_max);
 
     card.appendChild(temp);
 
@@ -4762,7 +4762,7 @@ function ahuRenderSections() {
         }
 
         members.sort(band.key === "warning"
-            ? (a, b) => (ahuDeviation(b) ?? 0) - (ahuDeviation(a) ?? 0) || ahuCompareName(a, b)
+            ? (a, b) => (Math.abs(ahuDeviation(b) ?? 0) - Math.abs(ahuDeviation(a) ?? 0)) || ahuCompareName(a, b)
             : ahuCompareName);
 
         ahuSectionsHost.appendChild(
@@ -5821,7 +5821,7 @@ function hvacScMatrixElement() {
     const container = document.createElement("div");
     container.className = "hvac-sc-container";
 
-    container.appendChild(hvacScGroupElement("HVAC G1G2", categories.map(cat => filterCategoryByDeviceId(cat, HVAC_SC_DEVICE_G1G2)), "10203"));
+    container.appendChild(hvacScGroupElement("HVAC G1-G2", categories.map(cat => filterCategoryByDeviceId(cat, HVAC_SC_DEVICE_G1G2)), "10203"));
     container.appendChild(hvacScGroupElement("HVAC G3", categories.map(cat => filterCategoryByDeviceId(cat, HVAC_SC_DEVICE_G3)), "10202"));
 
     const unexpectedCategories = categories.map(cat => {

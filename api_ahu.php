@@ -96,6 +96,7 @@ try {
      * threshold_direct(equip_type, metric, min_value, max_value) is a
      * reference table maintained outside this app; it is only read here.
      */
+    $tempMin = null;
     $tempMax = null;
 
     $thresholdSql = "
@@ -106,6 +107,9 @@ try {
     ";
 
     foreach ($pdo->query($thresholdSql)->fetchAll() as $threshold) {
+        $tempMin = $threshold['min_value'] !== null
+            ? (float)$threshold['min_value']
+            : null;
         $tempMax = $threshold['max_value'] !== null
             ? (float)$threshold['max_value']
             : null;
@@ -163,6 +167,7 @@ try {
                 'run'         => null,
                 'alarm'       => null,
                 'temp'        => null,
+                'temp_min'    => $tempMin,
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
@@ -559,6 +564,7 @@ try {
                 'run'         => null,
                 'alarm'       => null,
                 'temp'        => null,
+                'temp_min'    => $tempMin,
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
@@ -681,6 +687,7 @@ try {
                 'run'         => null,
                 'alarm'       => null,
                 'temp'        => null,
+                'temp_min'    => $tempMin,
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
