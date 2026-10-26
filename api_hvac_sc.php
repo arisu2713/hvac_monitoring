@@ -31,6 +31,22 @@ $config = require __DIR__ . '/config.php';
 
 const HVAC_SC_TYPES = ['CHILLER', 'CCP', 'CHWP', 'CT'];
 
+/*
+ * Warning limit for the cooling-tower cell return temperature.
+ *
+ * Return Temp is a CT-only reading and has no row in threshold_direct /
+ * threshold_by_kw / unit_motor_kw, so there is nothing to resolve it from the
+ * reference tables. It travels to the frontend as return_temp_max, the same
+ * way chiller evap_leaving_temp_max / cond_entering_temp_max and the CCP/CHWP/
+ * CT current_min/current_max do, so the page judges it with the one existing
+ * isOutOfRange() rule instead of a second, CT-specific comparison.
+ *
+ * 32.0 is inclusive-Normal: the rule is Ret Tmp > 32.0 => Warning, so 32.0
+ * itself stays Normal. Kept as a named constant here (not inline) so the
+ * threshold has exactly one definition.
+ */
+const HVAC_SC_CT_RETURN_TEMP_MAX = 32.0;
+
 // function text (lowercase) => JSON field
 const HVAC_SC_FIELDS = [
     'status'           => 'run',
@@ -87,6 +103,9 @@ function hvac_sc_blank(string $type, string $name, array $limits = []): array
             'current_min' => null,
             'current_max' => null,
             'return_temp' => null,
+            // Upper bound only: Ret Tmp > 32.0 is a Warning, at or below is
+            // Normal. There is no low limit, so min stays absent.
+            'return_temp_max' => HVAC_SC_CT_RETURN_TEMP_MAX,
             'drive_temperature' => null,
             'last_update' => null,
         ], $limits);

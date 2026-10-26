@@ -3915,8 +3915,16 @@ html:has(.alarm-page) .alarm-page {
 .hvac-sc-dashboard:not(.is-all) .hsc-card.is-warning { background: #171d26; border: 1px solid rgba(245,184,61,.45); }
 .hvac-sc-dashboard:not(.is-all) .hsc-card.is-critical { background: #1f1719; border: 1px solid rgba(255,107,99,.6); }
 
-.hsc-card-row { flex-wrap: nowrap; gap: 10px; }
-.hsc-card-name { flex: 1; text-align: left; font-size: 17px; }
+/*
+ * Scoped to the Issues First view. Unscoped, `nowrap` overrode the base
+ * .hsc-card-row rule above and reached the All Units view, where a compact
+ * 150px card cannot hold dot + name + the 122px "▲ OUT OF RANGE" badge on one
+ * line: the name (flex:1, min-width:0) collapsed to zero width and vanished.
+ * That was latent until a compact unit could actually raise a warning — CT
+ * Ret Tmp is the first one that does. All Units keeps the wrapping rule.
+ */
+.hvac-sc-dashboard:not(.is-all) .hsc-card-row { flex-wrap: nowrap; gap: 10px; }
+.hvac-sc-dashboard:not(.is-all) .hsc-card-name { flex: 1; text-align: left; font-size: 17px; }
 .hsc-badge { border-radius: 999px; padding: 5px 10px; }
 .hsc-why { margin: 8px 0 12px; }
 

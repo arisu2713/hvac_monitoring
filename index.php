@@ -5006,10 +5006,11 @@ function hvacScNum(value) {
 
 /*
  * The metrics shown per unit, with exactly the bounds the existing cards
- * already use — no new threshold is introduced here. Chiller EL/CE carry the
- * API's evap_leaving_temp_max / cond_entering_temp_max; CCP/CHWP/CT current
- * carries current_min/current_max. SP, RLA, EE, CL, Freq and Drv Tmp have no
- * bound in the data, so they can never raise a WARNING.
+ * already use — no new comparison rule is introduced here. Chiller EL/CE
+ * carry the API's evap_leaving_temp_max / cond_entering_temp_max; CCP/CHWP/CT
+ * current carries current_min/current_max; CT Ret Tmp carries
+ * return_temp_max. SP, RLA, EE, CL, Freq and Drv Tmp have no bound in the
+ * data, so they can never raise a WARNING.
  */
 function hvacScMetrics(kind, unit) {
     if (kind === "chiller") {
@@ -5035,9 +5036,20 @@ function hvacScMetrics(kind, unit) {
      * the key rather than for the type keeps this honest if a CCP ever gains
      * the point — and stops a permanently "-- °C" chip appearing on every
      * pump that can never have one.
+     *
+     * The bound travels with the value, exactly like EL/CE and Curr above:
+     * return_temp_max is 32.0, so the existing isOutOfRange() rule marks the
+     * chip, the card band, the badge and the reason line on its own. No
+     * CT-specific comparison is made here, and a missing reading stays "--"
+     * rather than being compared against the limit.
      */
     if (Object.prototype.hasOwnProperty.call(unit, "return_temp")) {
-        metrics.push({ label: "Ret Tmp", value: unit.return_temp, suffix: " °C" });
+        metrics.push({
+            label: "Ret Tmp",
+            value: unit.return_temp,
+            suffix: " °C",
+            max: unit.return_temp_max
+        });
     }
 
     return metrics;
