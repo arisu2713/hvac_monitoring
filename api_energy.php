@@ -78,6 +78,90 @@ try {
     ]);
 
     /*
+     * Fast summary mode for Main Dashboard:
+     * Returns today's and yesterday's energy totals across CT, CCP, and CHWP
+     * without querying or transferring 31 days of historical readings.
+     */
+    if (isset($_GET['summary'])) {
+        $summary = [
+            'available'      => false,
+            'today_date'     => null,
+            'yesterday_date' => null,
+            'today_kwh'      => null,
+            'yesterday_kwh'  => null,
+            'categories'     => []
+        ];
+
+        try {
+            $todaySum = 0.0;
+            $yesterdaySum = 0.0;
+            $hasData = false;
+
+            foreach ($categories as $catName => $catMeta) {
+                $tableName = $catMeta['usage'];
+                $stmt = $pdo->query("SELECT * FROM `{$tableName}` ORDER BY reading_date DESC LIMIT 2");
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $cToday = null;
+                $cYest = null;
+
+                if (!empty($rows[0])) {
+                    $hasData = true;
+                    if ($summary['today_date'] === null) {
+                        $summary['today_date'] = $rows[0]['reading_date'];
+                    }
+                    $vals = array_filter($rows[0], fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
+                    $numericVals = array_filter($vals, 'is_numeric');
+                    if (!empty($numericVals)) {
+                        $cToday = round((float)array_sum($numericVals), 1);
+                        $todaySum += $cToday;
+                    }
+                }
+
+                if (!empty($rows[1])) {
+                    if ($summary['yesterday_date'] === null) {
+                        $summary['yesterday_date'] = $rows[1]['reading_date'];
+                    }
+                    $vals = array_filter($rows[1], fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
+                    $numericVals = array_filter($vals, 'is_numeric');
+                    if (!empty($numericVals)) {
+                        $cYest = round((float)array_sum($numericVals), 1);
+                        $yesterdaySum += $cYest;
+                    }
+                }
+
+                $summary['categories'][$catName] = [
+                    'label'     => $catMeta['label'],
+                    'today'     => $cToday,
+                    'yesterday' => $cYest,
+                ];
+            }
+
+            if ($hasData) {
+                $summary['available']     = true;
+                $summary['today_kwh']     = round($todaySum, 1);
+                $summary['yesterday_kwh'] = round($yesterdaySum, 1);
+            }
+
+            echo json_encode([
+                'success'     => true,
+                'server_time' => date('Y-m-d H:i:s'),
+                'summary'     => $summary
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+
+        } catch (Throwable $e) {
+            error_log('[' . basename(__FILE__) . '] summary error: ' . $e->getMessage());
+            echo json_encode([
+                'success'     => true,
+                'server_time' => date('Y-m-d H:i:s'),
+                'summary'     => $summary
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    /*
      * Unit columns come from information_schema for the whitelisted table.
      * Each name is re-validated against a strict pattern before it is used
      * in the SELECT list below — a column name is still SQL text, so it is

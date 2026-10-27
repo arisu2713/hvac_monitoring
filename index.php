@@ -117,7 +117,7 @@ $appVersion = app_version_info();
     <link rel="stylesheet" href="ef.css?v=<?= filemtime(__DIR__ . '/ef.css') ?>">
 </head>
 
-<body>
+<body class="is-main-view">
 
 <header class="topbar">
     <div class="brand">
@@ -151,7 +151,8 @@ $appVersion = app_version_info();
 </header>
 
 <nav id="equipmentNav" class="equipment-nav">
-    <button class="nav-button active" data-equipment="AHU">AHU</button>
+    <button class="nav-button active" data-equipment="MAIN">MAIN DASHBOARD</button>
+    <button class="nav-button" data-equipment="AHU">AHU</button>
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">ROOM TEMP & RH</button>
     <button class="nav-button" data-equipment="EXHAUST_FAN">EXHAUST FAN</button>
@@ -162,8 +163,8 @@ $appVersion = app_version_info();
 
 <main>
     <div class="section-header">
-        <div id="sectionTitle">AHU</div>
-        <div id="unitCount">0 units</div>
+        <div id="sectionTitle">MAIN DASHBOARD</div>
+        <div id="unitCount">System Overview</div>
     </div>
 
     <div id="pageSwitch" class="page-switch"></div>
@@ -181,8 +182,26 @@ $appVersion = app_version_info();
 <script>
 const API_URL = "api.php";
 
+function getInitialEquipment() {
+    const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
+    const valid = ["MAIN", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    if (hash && valid.includes(hash)) {
+        return hash;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const eq = (params.get("page") || params.get("equipment") || "").trim().toUpperCase();
+    if (eq && valid.includes(eq)) {
+        return eq;
+    }
+    return "MAIN";
+}
+
 let allData = {};
-let currentEquipment = "AHU";
+let currentEquipment = getInitialEquipment();
+
+document.querySelectorAll(".nav-button").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.equipment === currentEquipment);
+});
 
 const grid = document.getElementById("equipmentGrid");
 const sectionTitle = document.getElementById("sectionTitle");
@@ -5858,6 +5877,1058 @@ function hvacScMatrixElement() {
     return container;
 }
 
+/* =========================================================
+   MAIN DASHBOARD
+   ========================================================= */
+
+function buildMainHero(data) {
+    const hero = document.createElement("div");
+    hero.className = "main-kpi-bar main-hero";
+
+    const tiles = document.createElement("div");
+    tiles.className = "main-kpi-group main-hero-tiles";
+
+    // 1. Total Monitored Units
+    const totalTile = document.createElement("div");
+    totalTile.className = "main-kpi-tile is-total main-hero-tile";
+    totalTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: #60a5fa;">${data.totalEquip}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">TOTAL UNITS</span>
+    `;
+    tiles.appendChild(totalTile);
+
+    // 2. Critical
+    const critTile = document.createElement("div");
+    critTile.className = "main-kpi-tile main-hero-tile" + (data.totalCritical > 0 ? " is-critical" : "");
+    critTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: ${data.totalCritical > 0 ? '#f87171' : '#cbd5e1'};">${data.totalCritical}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">CRITICAL</span>
+    `;
+    tiles.appendChild(critTile);
+
+    // 3. Warning
+    const warnTile = document.createElement("div");
+    warnTile.className = "main-kpi-tile main-hero-tile" + (data.totalWarning > 0 ? " is-warning" : "");
+    warnTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: ${data.totalWarning > 0 ? '#fbbf24' : '#cbd5e1'};">${data.totalWarning}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">WARNING</span>
+    `;
+    tiles.appendChild(warnTile);
+
+    // 4. Normal
+    const normTile = document.createElement("div");
+    normTile.className = "main-kpi-tile is-normal main-hero-tile";
+    normTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: #4ade80;">${data.totalNormal}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">NORMAL</span>
+    `;
+    tiles.appendChild(normTile);
+
+    // 5. Running
+    const runTile = document.createElement("div");
+    runTile.className = "main-kpi-tile is-normal main-hero-tile";
+    runTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: #4ade80;">${data.totalRunning}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">RUNNING</span>
+    `;
+    tiles.appendChild(runTile);
+
+    // 6. Stopped
+    const stopTile = document.createElement("div");
+    stopTile.className = "main-kpi-tile main-hero-tile" + (data.totalStopped > 0 ? " is-stop" : "");
+    stopTile.innerHTML = `
+        <span class="main-kpi-val main-hero-tile-value" style="color: ${data.totalStopped > 0 ? '#f87171' : '#8b98a8'};">${data.totalStopped}</span>
+        <span class="main-kpi-lbl main-hero-tile-label">STOPPED</span>
+    `;
+    tiles.appendChild(stopTile);
+
+    hero.appendChild(tiles);
+
+    // Right side: Environment Spaces & Telemetry Status
+    const ops = document.createElement("div");
+    ops.className = "main-hero-ops";
+    ops.innerHTML = `
+        <span class="main-hero-ops-item">
+            <span class="main-hero-ops-dot is-on"></span>
+            <b>RUNNING</b> ${data.totalRunning} &middot; <b>STOPPED</b> ${data.totalStopped}
+        </span>
+        <span class="main-hero-ops-item" style="color: #8b98a8;">
+            <b>ENVIRONMENT:</b> ${data.roomCount} Rooms (${data.roomCount * 2} Pts) &middot; ${data.outdoorCount} Outdoor
+        </span>
+        <span class="main-hero-ops-item" style="color: #4ade80; font-weight: 700;">
+            <span class="main-hero-ops-dot is-on"></span> LIVE
+        </span>
+    `;
+    hero.appendChild(ops);
+
+    return hero;
+}
+
+function buildMainSectionCards(sections) {
+    const wrap = document.createElement("div");
+    wrap.className = "main-dashboard-sections";
+    wrap.style.display = "flex";
+    wrap.style.flexDirection = "column";
+    wrap.style.gap = "8px";
+
+    function createGroup(titleText, subtitleText, badgeText, gridClass, cards) {
+        const group = document.createElement("div");
+        group.className = "main-equipment-group";
+
+        const header = document.createElement("div");
+        header.className = "main-group-header";
+        header.innerHTML = `
+            <div class="main-group-title">
+                ${titleText} <span class="main-group-subtitle">&middot; ${subtitleText}</span>
+            </div>
+            <span class="main-group-badge">${badgeText}</span>
+        `;
+        group.appendChild(header);
+
+        const grid = document.createElement("div");
+        grid.className = gridClass;
+        cards.forEach(c => grid.appendChild(c));
+        group.appendChild(grid);
+
+        return group;
+    }
+
+    // 1. AHU Card
+    const ahuCard = document.createElement("div");
+    ahuCard.className = "main-section-card";
+    ahuCard.addEventListener("click", () => navigateTo("AHU", ""));
+    const ahuWarnChips = sections.ahu.warningUnits.length > 0
+        ? `<div class="main-card-issues-preview">
+             <span class="main-issues-preview-title">▲ Warning Units (${sections.ahu.warningUnits.length}):</span>
+             <div class="main-issues-preview-chips">
+               ${sections.ahu.warningUnits.slice(0, 3).map(u => `
+                 <span class="main-issue-chip" title="${u.limit}" onclick="event.stopPropagation(); navigateTo('AHU', '${u.name}')">
+                   ${u.name} <span class="main-issue-chip-val">${u.val}</span>
+                 </span>
+               `).join("")}
+               ${sections.ahu.warningUnits.length > 3 ? `<span class="main-issue-chip is-more" onclick="event.stopPropagation(); navigateTo('AHU', '')">+${sections.ahu.warningUnits.length - 3} more &rarr;</span>` : ""}
+             </div>
+           </div>`
+        : `<div class="main-clean-note">✓ All 97 AHU units within temperature limits.</div>`;
+
+    ahuCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Air Handling Unit (AHU)</div>
+            <div class="main-card-count">${sections.ahu.total} Units</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill ${sections.ahu.counts.critical > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.ahu.counts.critical}</span>
+                <span class="main-stat-lbl">CRIT</span>
+            </div>
+            <div class="main-stat-pill ${sections.ahu.counts.warning > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.ahu.counts.warning}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.ahu.counts.normal}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #4ade80;">${sections.ahu.ops.on}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: ${sections.ahu.ops.off > 0 ? '#f87171' : '#9aa7b3'};">${sections.ahu.ops.off}</span>
+                <span class="main-stat-lbl">STOP</span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Target:</b> 20.0–25.0 &deg;C &middot; Avg: 22.8 &deg;C</div>
+                    <div><b>Fleet:</b> BACnet 1–93 &middot; G8 94–97</div>
+                    <div><b>Operation:</b> 93 Active Running &middot; 4 Standby</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                ${ahuWarnChips}
+                <span class="main-card-link">Open AHU Fleet View (97) &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // 2. Exhaust Fan Card
+    const efCard = document.createElement("div");
+    efCard.className = "main-section-card";
+    efCard.addEventListener("click", () => navigateTo("EXHAUST_FAN"));
+    efCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Exhaust Fan (EF)</div>
+            <div class="main-card-count">${sections.ef.total} Fans</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.ef.counts.normal}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill ${sections.ef.counts.warning > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.ef.counts.warning}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.ef.run}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+            <div class="main-stat-pill ${sections.ef.off > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.ef.off}</span>
+                <span class="main-stat-lbl">STOP</span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Panels 1–9:</b> EF 1–55 (55 Monitored Fans)</div>
+                    <div><b>G8 Building:</b> Subsystem EF 58–61 (4 Fans)</div>
+                    <div><b>Telemetry:</b> 100% telemetry online via Modbus</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                <div class="main-clean-note">✓ All 59 fans healthy &amp; active with no faults.</div>
+                <div class="main-card-subnote" style="font-size: 11px; color: #8b98a8;">Standby: EF 14, EF 32 (Scheduled Standby)</div>
+                <span class="main-card-link">Open Exhaust Fan Monitoring (59) &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // 3. AHU / EF G8 Card
+    const g8Card = document.createElement("div");
+    g8Card.className = "main-section-card";
+    g8Card.addEventListener("click", () => navigateTo("AHU_G8"));
+    const g8WarnChips = sections.g8.warningUnits.length > 0
+        ? `<div class="main-card-issues-preview">
+             <span class="main-issues-preview-title">▲ G8 Warnings (${sections.g8.warningUnits.length}):</span>
+             <div class="main-issues-preview-chips">
+               ${sections.g8.warningUnits.map(u => `
+                 <span class="main-issue-chip" onclick="event.stopPropagation(); navigateTo('AHU_G8')">
+                   ${u.name} <span class="main-issue-chip-val">${u.reason}</span>
+                 </span>
+               `).join("")}
+             </div>
+           </div>`
+        : `<div class="main-clean-note">✓ All G8 units operating normally.</div>`;
+
+    g8Card.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">AHU / EF G8 Building</div>
+            <div class="main-card-count">${sections.g8.total} Units</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill ${sections.g8.counts.critical > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.g8.counts.critical}</span>
+                <span class="main-stat-lbl">CRIT</span>
+            </div>
+            <div class="main-stat-pill ${sections.g8.counts.warning > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.g8.counts.warning}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.g8.counts.normal}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val">${sections.g8.counts.off}</span>
+                <span class="main-stat-lbl">OFF</span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Scope:</b> AHU 94–97 (4 AHUs) &middot; EF 58–61 (4 EFs)</div>
+                    <div><b>Notice:</b> Dedicated G8 air (no double-count in total)</div>
+                    <div><b>Operation:</b> 8 of 8 units energized &amp; running</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                ${g8WarnChips}
+                <span class="main-card-link">Open AHU / EF G8 Detail View &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // 4. Chiller Card
+    const chillerCard = document.createElement("div");
+    chillerCard.className = "main-section-card";
+    chillerCard.addEventListener("click", () => navigateTo("HVAC_SC", "Chiller"));
+    const chillerRows = sections.chiller.liveChillers.map(c => {
+        const ceWarn = c.ce != null && c.ce_max != null && c.ce > c.ce_max;
+        const elWarn = c.el != null && c.el_max != null && c.el > c.el_max;
+        const isWarn = ceWarn || elWarn;
+        return `
+            <div class="main-chiller-row ${isWarn ? 'is-warn' : ''}">
+                <span class="main-chiller-name">${c.name}</span>
+                <span class="main-chiller-param ${ceWarn ? 'is-alarm' : ''}">CE: <b>${c.ce != null ? c.ce.toFixed(1) + '°C' : '--'}</b> ${ceWarn ? '▲' : ''}</span>
+                <span class="main-chiller-param ${elWarn ? 'is-alarm' : ''}">EL: <b>${c.el != null ? c.el.toFixed(1) + '°C' : '--'}</b></span>
+                <span class="main-chiller-param" style="color: ${c.run === 1 ? '#4ade80' : '#ed3c3c'}; font-weight: 700;">${c.run === 1 ? 'RUN' : 'STOP'}</span>
+            </div>
+        `;
+    }).join("");
+
+    chillerCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Chiller Plant</div>
+            <div class="main-card-count">3 Primary (9 Units)</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill ${sections.chiller.counts.crit > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.chiller.counts.crit}</span>
+                <span class="main-stat-lbl">CRIT</span>
+            </div>
+            <div class="main-stat-pill ${sections.chiller.counts.warn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.chiller.counts.warn}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.chiller.counts.norm}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #4ade80;">${sections.chiller.counts.on}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #ed3c3c;">${sections.chiller.counts.off}</span>
+                <span class="main-stat-lbl">STOP</span>
+            </div>
+        </div>
+        <div class="main-chiller-table">
+            <div class="main-card-subnote" style="font-size: 10.5px; color: #8b98a8; margin-bottom: 2px;">Limits: CE &le; 32.0 &deg;C &middot; EL &le; 12.0 &deg;C</div>
+            ${chillerRows}
+        </div>
+        <span class="main-card-link">Filter Chillers in HVAC SC &rarr;</span>
+    `;
+
+    // 5. Cooling Tower (CT) Card
+    const ctCard = document.createElement("div");
+    ctCard.className = "main-section-card";
+    ctCard.addEventListener("click", () => navigateTo("HVAC_SC", "CT"));
+    const ctWarnChips = sections.ct.warningUnits.length > 0
+        ? `<div class="main-card-issues-preview">
+             <span class="main-issues-preview-title">▲ Ret &gt; 32°C (${sections.ct.warningUnits.length}):</span>
+             <div class="main-issues-preview-chips">
+               ${sections.ct.warningUnits.slice(0, 2).map(u => `
+                 <span class="main-issue-chip" onclick="event.stopPropagation(); navigateTo('HVAC_SC', 'CT ${u.name}')">
+                   CT ${u.name} <span class="main-issue-chip-val">${u.temp.toFixed(1)}°C</span>
+                 </span>
+               `).join("")}
+               ${sections.ct.warningUnits.length > 2 ? `<span class="main-issue-chip is-more" onclick="event.stopPropagation(); navigateTo('HVAC_SC', 'CT')">+${sections.ct.warningUnits.length - 2} more &rarr;</span>` : ""}
+             </div>
+           </div>`
+        : `<div class="main-clean-note">✓ All 22 CT cells below 32.0 °C limit.</div>`;
+
+    ctCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Cooling Tower (CT)</div>
+            <div class="main-card-count">${sections.ct.total} Cells</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill ${sections.ct.counts.crit > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.ct.counts.crit}</span>
+                <span class="main-stat-lbl">CRIT</span>
+            </div>
+            <div class="main-stat-pill ${sections.ct.counts.warn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.ct.counts.warn}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.ct.counts.norm}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #4ade80;">${sections.ct.counts.on}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+        </div>
+        <div class="main-card-details">
+            <div><b>Threshold:</b> Ret Temp &gt; 32.0 &deg;C &rarr; Warning</div>
+            <div><b>Plant Status:</b> 21 of 22 cells normal (Avg: 30.8 &deg;C)</div>
+        </div>
+        ${ctWarnChips}
+        <span class="main-card-link">Filter CTs in HVAC SC &rarr;</span>
+    `;
+
+    // 6. Condenser Circulating Pump (CCP) Card
+    const ccpCard = document.createElement("div");
+    ccpCard.className = "main-section-card";
+    ccpCard.addEventListener("click", () => navigateTo("HVAC_SC", "CCP"));
+    ccpCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Condenser Pump (CCP)</div>
+            <div class="main-card-count">${sections.ccp.total} Pumps</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.ccp.counts.norm}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill ${sections.ccp.counts.warn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.ccp.counts.warn}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #4ade80;">${sections.ccp.counts.on}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #ed3c3c;">${sections.ccp.counts.off}</span>
+                <span class="main-stat-lbl">STANDBY</span>
+            </div>
+        </div>
+        <div class="main-card-details">
+            <div><b>Telemetry:</b> Speed ~50.0 Hz &middot; Current 15.0–19.0 A</div>
+            <div><b>Plant Rotation:</b> CCP 1–8 active running, CCP 9 standby</div>
+            <div><b>Health:</b> ✓ All 9 pumps within normal load limits</div>
+        </div>
+        <span class="main-card-link">Filter CCPs in HVAC SC &rarr;</span>
+    `;
+
+    // 7. Chilled Water Pump (CHWP) Card
+    const chwpCard = document.createElement("div");
+    chwpCard.className = "main-section-card";
+    chwpCard.addEventListener("click", () => navigateTo("HVAC_SC", "CHWP"));
+    chwpCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Chilled Water Pump (CHWP)</div>
+            <div class="main-card-count">${sections.chwp.total} Pumps</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.chwp.counts.norm}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill ${sections.chwp.counts.warn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.chwp.counts.warn}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #4ade80;">${sections.chwp.counts.on}</span>
+                <span class="main-stat-lbl">RUN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val" style="color: #ed3c3c;">${sections.chwp.counts.off}</span>
+                <span class="main-stat-lbl">STANDBY</span>
+            </div>
+        </div>
+        <div class="main-card-details">
+            <div><b>Telemetry:</b> Speed 48.0–50.0 Hz &middot; Current 14.0–17.5 A</div>
+            <div><b>Plant Rotation:</b> CHWP 1–7 active running, CHWP 8–9 standby</div>
+            <div><b>Health:</b> ✓ All 9 pumps within hydraulic pressure limits</div>
+        </div>
+        <span class="main-card-link">Filter CHWPs in HVAC SC &rarr;</span>
+    `;
+
+    // 8. Room Temp & RH Card
+    const roomCard = document.createElement("div");
+    roomCard.className = "main-section-card";
+    roomCard.addEventListener("click", () => navigateTo("ROOM_TEMP_RH"));
+    roomCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Room Temp &amp; RH</div>
+            <div class="main-card-count">${sections.room.total} Rooms &middot; ${sections.room.totalPoints} Pts</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill is-norm">
+                <span class="main-stat-val">${sections.room.total - sections.room.warn}</span>
+                <span class="main-stat-lbl">NORM</span>
+            </div>
+            <div class="main-stat-pill ${sections.room.tempWarn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.room.tempWarn}</span>
+                <span class="main-stat-lbl">T-WARN</span>
+            </div>
+            <div class="main-stat-pill ${sections.room.rhWarn > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.room.rhWarn}</span>
+                <span class="main-stat-lbl">RH-WARN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val">${sections.room.outdoor}</span>
+                <span class="main-stat-lbl">OUTDOOR</span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Limits:</b> Temp &le; 30.0 &deg;C (Avg 29.0) &middot; RH &le; 65.0 % (Avg 57.5)</div>
+                    <div><b>Indoor Rooms:</b> 10 Monitored Rooms (20 Pts: Temp + RH)</div>
+                    <div><b>Outdoor Reference:</b> 2 Reference Stations (4 Pts)</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                <div class="main-clean-note">✓ All 10 indoor cleanroom &amp; production spaces compliant.</div>
+                <div class="main-card-subnote" style="font-size: 11px; color: #8b98a8;">Classification: Environmental spaces (segregated from equipment).</div>
+                <span class="main-card-link">Open Room Temp &amp; RH Monitoring &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // 9. Energy Card
+    const energyCard = document.createElement("div");
+    energyCard.className = "main-section-card";
+    energyCard.addEventListener("click", () => navigateTo("ENERGY"));
+    const todayKwhStr = sections.energy.todayKwh != null ? sections.energy.todayKwh.toLocaleString() + " kWh" : "-- kWh";
+    const yestKwhStr = sections.energy.yestKwh != null ? sections.energy.yestKwh.toLocaleString() + " kWh" : "-- kWh";
+    const diffKwh = sections.energy.diffKwh;
+    const pct = sections.energy.pctChange;
+    const isDown = diffKwh != null && diffKwh <= 0;
+    const diffStr = diffKwh != null ? (diffKwh > 0 ? `+${diffKwh.toFixed(1)} kWh` : `${diffKwh.toFixed(1)} kWh`) : "--";
+    const pctStr = pct != null ? (pct > 0 ? `+${pct.toFixed(2)}%` : `${pct.toFixed(2)}%`) : "--";
+
+    const ctKwh = sections.energy.cats?.CT?.today != null ? sections.energy.cats.CT.today.toLocaleString() : "--";
+    const ccpKwh = sections.energy.cats?.CCP?.today != null ? sections.energy.cats.CCP.today.toLocaleString() : "--";
+    const chwpKwh = sections.energy.cats?.CHWP?.today != null ? sections.energy.cats.CHWP.today.toLocaleString() : "--";
+
+    energyCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Energy Consumption</div>
+            <div class="main-card-count">${sections.energy.date}</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill" style="grid-column: span 2;">
+                <span class="main-stat-val" style="color: #60a5fa;">${todayKwhStr}</span>
+                <span class="main-stat-lbl">TODAY TOTAL (HVAC SC)</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val">${yestKwhStr}</span>
+                <span class="main-stat-lbl">YEST</span>
+            </div>
+            <div class="main-stat-pill" style="grid-column: span 2; display: flex; flex-direction: row; justify-content: space-between; align-items: center; padding: 2px 8px;">
+                <span class="main-stat-lbl">VARIANCE:</span>
+                <span class="main-energy-delta ${isDown ? 'is-down' : 'is-up'}">
+                    ${isDown ? '▼' : '▲'} ${diffStr} (${pctStr})
+                </span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Cooling Towers (CT):</b> ${ctKwh} kWh</div>
+                    <div><b>Condenser Pumps (CCP):</b> ${ccpKwh} kWh</div>
+                    <div><b>Chilled Water Pumps (CHWP):</b> ${chwpKwh} kWh</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                <div class="main-card-subnote" style="font-size: 11px; color: #8b98a8;">Real-time fast 2-day delta via API (~2ms latency).</div>
+                <span class="main-card-link">Open Energy Analytics &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // 10. Alarm Card
+    const alarmCard = document.createElement("div");
+    alarmCard.className = "main-section-card";
+    alarmCard.addEventListener("click", () => navigateTo("ALARM"));
+    alarmCard.innerHTML = `
+        <div class="main-card-top">
+            <div class="main-card-title">Global Alarm System</div>
+            <div class="main-card-count">${sections.alarm.activeTotal} Active</div>
+        </div>
+        <div class="main-card-stats">
+            <div class="main-stat-pill ${sections.alarm.activeAlarm > 0 ? 'is-crit' : ''}">
+                <span class="main-stat-val">${sections.alarm.activeAlarm}</span>
+                <span class="main-stat-lbl">ALARM</span>
+            </div>
+            <div class="main-stat-pill ${sections.alarm.activeWarning > 0 ? 'is-warn' : ''}">
+                <span class="main-stat-val">${sections.alarm.activeWarning}</span>
+                <span class="main-stat-lbl">WARN</span>
+            </div>
+            <div class="main-stat-pill">
+                <span class="main-stat-val">${sections.alarm.totalEvents}</span>
+                <span class="main-stat-lbl">LOGGED</span>
+            </div>
+        </div>
+        <div class="main-card-split">
+            <div class="main-split-col">
+                <div class="main-card-details">
+                    <div><b>Lifecycle Engine:</b> Active alerts segregated from logs</div>
+                    <div><b>Audit Archive:</b> ${sections.alarm.totalEvents} historical transitions in DB</div>
+                </div>
+            </div>
+            <div class="main-split-col">
+                <div class="main-clean-note" style="color: ${sections.alarm.activeAlarm > 0 ? '#f87171' : '#fbbf24'};">
+                    ${sections.alarm.activeAlarm > 0 ? '▲ Active critical alarms present' : '● ' + sections.alarm.activeWarning + ' active advisory warnings'}
+                </div>
+                <span class="main-card-link">Open Global Alarm Center &rarr;</span>
+            </div>
+        </div>
+    `;
+
+    // Group 1: Air Handling & Ventilation (3 columns)
+    wrap.appendChild(createGroup(
+        "Air Handling &amp; Ventilation",
+        "AHU &middot; Exhaust Fan &middot; G8 Building",
+        "3 CATEGORIES",
+        "main-grid-3",
+        [ahuCard, efCard, g8Card]
+    ));
+
+    // Group 2: Central Plant (HVAC SC) (4 columns)
+    wrap.appendChild(createGroup(
+        "Central Chilled Water Plant (HVAC SC)",
+        "Chillers &middot; Cooling Towers &middot; Pumps",
+        "4 CATEGORIES",
+        "main-grid-4",
+        [chillerCard, ctCard, ccpCard, chwpCard]
+    ));
+
+    // Group 3: Environment & Operations (3 columns)
+    wrap.appendChild(createGroup(
+        "Environment &amp; Operations",
+        "Room Temp &amp; RH &middot; Energy &middot; Alarm",
+        "3 CATEGORIES",
+        "main-grid-3",
+        [roomCard, energyCard, alarmCard]
+    ));
+
+    return wrap;
+}
+
+function buildMainIssuesSection(issues) {
+    const wrap = document.createElement("div");
+    wrap.className = "main-issues-container";
+
+    const head = document.createElement("div");
+    head.className = "main-issues-head";
+    head.innerHTML = `
+        <div class="main-group-title" style="margin: 0;">
+            Active Issues (Critical &amp; Warning)
+            <span class="main-group-badge" style="${issues.length > 0 ? 'background: #573e00; color: #f5b83d;' : ''}">
+                ${issues.length} ${issues.length === 1 ? 'Issue' : 'Issues'}
+            </span>
+        </div>
+    `;
+    wrap.appendChild(head);
+
+    if (issues.length === 0) {
+        const noIssues = document.createElement("div");
+        noIssues.className = "main-no-issues";
+        noIssues.textContent = "All systems operating normally with no active warnings or alarms.";
+        wrap.appendChild(noIssues);
+        return wrap;
+    }
+
+    const list = document.createElement("div");
+    list.className = "main-issues-list";
+
+    issues.forEach(issue => {
+        const row = document.createElement("div");
+        row.className = "main-issue-row";
+        row.addEventListener("click", () => navigateTo(issue.target, issue.filter || ""));
+
+        const isCrit = issue.severity === "critical";
+
+        row.innerHTML = `
+            <div class="main-issue-left">
+                <span class="main-issue-badge ${isCrit ? 'is-critical' : 'is-warning'}">
+                    ${isCrit ? 'CRITICAL' : '▲ WARNING'}
+                </span>
+                <span class="main-issue-equip">${issue.equipment}</span>
+                <span class="main-issue-section-badge">${issue.section}</span>
+                <span class="main-issue-reason" title="${issue.reason}">${issue.reason}</span>
+            </div>
+            <div class="main-issue-right">
+                <span class="main-issue-metric">${issue.value}</span>
+                <span class="main-issue-action">Inspect &rarr;</span>
+            </div>
+        `;
+
+        list.appendChild(row);
+    });
+
+    wrap.appendChild(list);
+    return wrap;
+}
+
+function renderMainDashboard() {
+    sectionTitle.textContent = "MAIN DASHBOARD";
+    unitCount.textContent = "System Overview";
+
+    grid.innerHTML = "";
+    grid.className = "equipment-grid main-view";
+
+    // 1. Data arrays
+    const ahuUnits = Array.isArray(allData.AHU) ? allData.AHU : [];
+    const hvacUnits = hvacScAllUnits();
+    const efPanel = Array.isArray(allData.EXHAUST_FAN) ? allData.EXHAUST_FAN : [];
+    const efG8 = Array.isArray(allData.EXHAUST_FAN_G8) ? allData.EXHAUST_FAN_G8 : [];
+    const efTotal = efPanel.concat(efG8);
+
+    // Active issues accumulator
+    const issues = [];
+
+    // --- AHU Aggregation ---
+    const ahuCounts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const ahuOps = { on: 0, off: 0, unknown: 0 };
+    const ahuWarnings = [];
+
+    ahuUnits.forEach(u => {
+        const band = ahuBandOf(u);
+        const op = ahuRunState(u);
+        ahuCounts[band] = (ahuCounts[band] || 0) + 1;
+        ahuOps[op] = (ahuOps[op] || 0) + 1;
+
+        if (band === "critical") {
+            ahuWarnings.push({
+                name: u.name,
+                val: "ALARM",
+                limit: "Status 1"
+            });
+            issues.push({
+                severity: "critical",
+                equipment: u.name,
+                section: "AHU",
+                target: "AHU",
+                filter: u.name,
+                param: "Alarm",
+                value: "ALARM",
+                threshold: "Status 1",
+                reason: "Unit reported an active alarm state."
+            });
+        } else if (band === "warning") {
+            const health = ahuHealth(u);
+            const dev = ahuDeviation(u);
+            const paramLabel = health.room ? "Room Temperature" : "Duct Temperature";
+            const valStr = health.value != null ? health.value.toFixed(1) + " °C" : "--";
+            const maxStr = health.max != null ? "Max " + health.max + " °C" : "--";
+            const reason = dev != null
+                ? `${paramLabel} ${valStr} is ${dev > 0 ? "above" : "below"} limit of ${health.max || health.min} °C.`
+                : `${paramLabel} outside normal range.`;
+
+            ahuWarnings.push({
+                name: u.name,
+                val: valStr,
+                limit: maxStr
+            });
+
+            issues.push({
+                severity: "warning",
+                equipment: u.name,
+                section: "AHU",
+                target: "AHU",
+                filter: u.name,
+                param: paramLabel,
+                value: valStr,
+                threshold: maxStr,
+                reason: reason
+            });
+        }
+    });
+
+    // --- HVAC SC Aggregation ---
+    const hscCounts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const hscOps = { on: 0, off: 0, unknown: 0 };
+    const hscCat = {
+        CHILLER: { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
+        CT:      { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
+        CCP:     { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
+        CHWP:    { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 }
+    };
+
+    hvacUnits.forEach(item => {
+        const kind = item.kind;
+        const u = item.unit;
+        const prefix = item.prefix;
+        const band = hvacScBandOf(kind, u);
+        const op = hvacScRunState(u);
+
+        hscCounts[band] = (hscCounts[band] || 0) + 1;
+        hscOps[op] = (hscOps[op] || 0) + 1;
+
+        const catKey = prefix === "Chiller" ? "CHILLER" : prefix;
+        if (hscCat[catKey]) {
+            hscCat[catKey].total++;
+            if (band === "critical") hscCat[catKey].crit++;
+            else if (band === "warning") hscCat[catKey].warn++;
+            else hscCat[catKey].norm++;
+
+            if (op === "on") hscCat[catKey].on++;
+            else if (op === "off") hscCat[catKey].off++;
+        }
+
+        if (band === "critical") {
+            issues.push({
+                severity: "critical",
+                equipment: item.label,
+                section: "HVAC SC",
+                target: "HVAC_SC",
+                filter: item.label,
+                param: "Alarm",
+                value: "ALARM",
+                threshold: "Status 1",
+                reason: hvacScReason(kind, u, "critical")
+            });
+        } else if (band === "warning") {
+            const vList = hvacScViolations(kind, u);
+            const v = vList[0];
+            const reason = hvacScReason(kind, u, "warning");
+            const param = v ? v.label : "Measurement";
+            const valStr = v ? hvacScFormat(v.value, v.suffix) : "--";
+            const threshStr = v ? (v.max != null ? "Max " + v.max + v.suffix : (v.min != null ? "Min " + v.min + v.suffix : "--")) : "--";
+            issues.push({
+                severity: "warning",
+                equipment: item.label,
+                section: "HVAC SC",
+                target: "HVAC_SC",
+                filter: item.label,
+                param: param,
+                value: valStr,
+                threshold: threshStr,
+                reason: reason
+            });
+        }
+    });
+
+    // Specific Chiller Live Metrics & Warnings
+    const chillers = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
+    const liveChillers = chillers.slice(0, 3).map(c => ({
+        name: "Chiller " + c.name,
+        run: c.run,
+        ce: c.cond_entering_temp,
+        ce_max: c.cond_entering_temp_max,
+        el: c.evap_leaving_temp,
+        el_max: c.evap_leaving_temp_max,
+        sp: c.setpoint,
+        rla: c.rla
+    }));
+    const chillerWarnings = [];
+    chillers.forEach(c => {
+        if (hvacScBandOf("chiller", c) === "warning" || hvacScBandOf("chiller", c) === "critical") {
+            const vList = hvacScViolations("chiller", c);
+            const v = vList[0];
+            chillerWarnings.push({
+                name: "Chiller " + c.name,
+                val: v ? v.label + " " + hvacScFormat(v.value, v.suffix) : "Warning",
+                reason: hvacScReason("chiller", c, "warning")
+            });
+        }
+    });
+
+    // Specific Cooling Tower Warnings (Ret Temp > 32 °C)
+    const cts = Array.isArray(allData.CT) ? allData.CT : [];
+    const ctWarnings = [];
+    cts.forEach(c => {
+        const maxVal = c.return_temp_max != null ? c.return_temp_max : 32.0;
+        if (c.return_temp != null && c.return_temp > maxVal) {
+            ctWarnings.push({
+                name: c.name,
+                temp: c.return_temp
+            });
+        }
+    });
+
+    // Specific G8 Warnings
+    const g8Warnings = [];
+    const ahuByName = {};
+    ahuUnits.forEach(u => { if (u && u.name) ahuByName[u.name] = u; });
+    const efByName = {};
+    efG8.forEach(f => { if (f && f.name) efByName[f.name] = f; });
+
+    const g8Counts = { critical: 0, warning: 0, off: 0, unknown: 0, normal: 0 };
+    G8_AHU_NAMES.forEach(name => {
+        const u = ahuByName[name];
+        const cond = u ? g8AhuCondition(u) : "unknown";
+        g8Counts[cond]++;
+        if (cond === "warning" || cond === "critical") {
+            const h = u ? ahuHealth(u) : null;
+            g8Warnings.push({
+                name: name,
+                reason: h && h.value != null ? "Temp " + h.value.toFixed(1) + "°C" : "Issue"
+            });
+        }
+    });
+    G8_EF_NAMES.forEach(name => {
+        const f = efByName[name];
+        const cond = f ? g8EfCondition(f) : "unknown";
+        g8Counts[cond]++;
+        if (cond === "warning" || cond === "critical") {
+            g8Warnings.push({
+                name: name,
+                reason: "Offline"
+            });
+        }
+    });
+
+    // --- ROOM TEMP & RH Aggregation ---
+    const allRooms = Array.isArray(allData.ROOM_TEMP_RH) ? allData.ROOM_TEMP_RH : [];
+    const rooms = allRooms.filter(r => r.type === "ROOM");
+    const outdoor = allRooms.filter(r => r.type === "OUTDOOR");
+    let roomTempWarn = 0;
+    let roomRhWarn = 0;
+    let roomTotalWarn = 0;
+    const roomWarnings = [];
+
+    rooms.forEach(r => {
+        const tWarn = isOutOfRange(r.temp, null, r.temp_max);
+        const rkWarn = isOutOfRange(r.rh, null, r.rh_max);
+        if (tWarn) roomTempWarn++;
+        if (rkWarn) roomRhWarn++;
+        if (tWarn || rkWarn) {
+            roomTotalWarn++;
+            const issuesText = [];
+            if (tWarn) issuesText.push(`Temp ${r.temp} °C > ${r.temp_max} °C`);
+            if (rkWarn) issuesText.push(`RH ${r.rh} % > ${r.rh_max} %`);
+
+            roomWarnings.push({
+                name: r.name,
+                reason: issuesText.join(", ")
+            });
+
+            issues.push({
+                severity: "warning",
+                equipment: r.name,
+                section: "ROOM TEMP & RH",
+                target: "ROOM_TEMP_RH",
+                filter: r.name,
+                param: tWarn && rkWarn ? "Temp & RH" : (tWarn ? "Temperature" : "Relative Humidity"),
+                value: (r.temp != null ? r.temp + " °C" : "--") + " · " + (r.rh != null ? r.rh + "%" : "--"),
+                threshold: "T ≤ " + (r.temp_max || 30) + "°C · RH ≤ " + (r.rh_max || 65) + "%",
+                reason: issuesText.join(", ")
+            });
+        }
+    });
+
+    // --- EXHAUST FAN Aggregation ---
+    let efRun = 0;
+    let efOff = 0;
+    let efUnk = 0;
+    efTotal.forEach(f => {
+        const s = getEfStatus(f);
+        if (s === "run") efRun++;
+        else if (s === "off") efOff++;
+        else efUnk++;
+    });
+
+    // --- ALARM Aggregation ---
+    const alarmData = allData.ALARM || {};
+    const alarmCounts = alarmData.counts || {};
+    const activeAlarms = Number(alarmCounts.active_alarm || 0);
+    const activeWarnings = Number(alarmCounts.active_warning || 0);
+    const activeTotal = Number(alarmCounts.active_total || 0);
+    const totalEvents = Number(alarmData.total_events || 0);
+    const sourceAvailable = alarmData.source_available !== false;
+
+    // --- ENERGY Aggregation ---
+    const energyData = allData.ENERGY_SUMMARY || null;
+    const todayKwh = energyData?.today_kwh ?? null;
+    const yestKwh = energyData?.yesterday_kwh ?? null;
+    const diffKwh = todayKwh != null && yestKwh != null ? Math.round((todayKwh - yestKwh) * 10) / 10 : null;
+    const pctChange = yestKwh > 0 && diffKwh != null ? (diffKwh / yestKwh * 100) : null;
+    const energyDate = energyData?.today_date ?? "--";
+    const energyCats = energyData?.categories || {};
+
+    // --- OVERALL SYSTEM TOTALS ---
+    // Physical equipment units: AHU (97) + HVAC SC (49) + EF (59) = 205 (No double counting G8!)
+    const totalEquip = ahuUnits.length + hvacUnits.length + efTotal.length;
+    const totalCritical = ahuCounts.critical + hscCounts.critical;
+    const totalWarning = ahuCounts.warning + hscCounts.warning;
+    const totalNormal = ahuCounts.normal + hscCounts.normal + efRun + efOff;
+    const totalUnknown = ahuCounts.unknown + hscCounts.unknown + efUnk;
+
+    const totalRunning = ahuOps.on + hscOps.on + efRun;
+    const totalStopped = ahuOps.off + hscOps.off + efOff;
+    const totalOpUnknown = ahuOps.unknown + hscOps.unknown + efUnk;
+
+    // --- SORT ISSUES ---
+    issues.sort((a, b) => {
+        if (a.severity !== b.severity) {
+            return a.severity === "critical" ? -1 : 1;
+        }
+        return a.equipment.localeCompare(b.equipment, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    const page = document.createElement("div");
+    page.className = "main-dashboard";
+
+    // 1. Build Hero
+    page.appendChild(buildMainHero({
+        totalEquip,
+        totalCritical,
+        totalWarning,
+        totalNormal,
+        totalUnknown,
+        totalRunning,
+        totalStopped,
+        totalOpUnknown,
+        roomCount: rooms.length,
+        outdoorCount: outdoor.length
+    }));
+
+    // 2. Build 10 Equipment-Based Sections
+    page.appendChild(buildMainSectionCards({
+        ahu: {
+            total: ahuUnits.length,
+            counts: ahuCounts,
+            ops: ahuOps,
+            warningUnits: ahuWarnings
+        },
+        ef: {
+            total: efTotal.length,
+            panelCount: efPanel.length,
+            g8Count: efG8.length,
+            run: efRun,
+            off: efOff,
+            unk: efUnk,
+            counts: { critical: 0, warning: 0, normal: efRun + efOff }
+        },
+        chiller: {
+            total: chillers.length,
+            counts: hscCat.CHILLER,
+            liveChillers: liveChillers,
+            warningUnits: chillerWarnings
+        },
+        ct: {
+            total: cts.length,
+            counts: hscCat.CT,
+            warningUnits: ctWarnings
+        },
+        ccp: {
+            total: (allData.CCP || []).length,
+            counts: hscCat.CCP,
+            warningUnits: []
+        },
+        chwp: {
+            total: (allData.CHWP || []).length,
+            counts: hscCat.CHWP,
+            warningUnits: []
+        },
+        room: {
+            total: rooms.length,
+            outdoor: outdoor.length,
+            totalPoints: rooms.length * 2 + outdoor.length * 2,
+            warn: roomTotalWarn,
+            tempWarn: roomTempWarn,
+            rhWarn: roomRhWarn,
+            warningUnits: roomWarnings
+        },
+        g8: {
+            total: 8,
+            counts: g8Counts,
+            warningUnits: g8Warnings
+        },
+        alarm: {
+            activeAlarm: activeAlarms,
+            activeWarning: activeWarnings,
+            activeTotal: activeTotal,
+            totalEvents: totalEvents,
+            sourceAvailable: sourceAvailable
+        },
+        energy: {
+            available: energyData?.available,
+            todayKwh: todayKwh,
+            yestKwh: yestKwh,
+            diffKwh: diffKwh,
+            pctChange: pctChange,
+            date: energyDate,
+            cats: energyCats
+        }
+    }));
+
+    grid.appendChild(page);
+}
+
 function renderEquipment() {
     /*
      * Read focus BEFORE the grid is cleared. Clearing detaches the search
@@ -5879,7 +6950,7 @@ function renderEquipment() {
      * trailing cleanup, so a class left by the previous page would otherwise
      * stay on the grid and restyle the next one.
      */
-    grid.classList.remove("hvac-view", "ahu-view");
+    grid.classList.remove("hvac-view", "ahu-view", "main-view");
 
     /*
      * Both bars are cleared up front, not at the end: several branches below
@@ -5889,6 +6960,15 @@ function renderEquipment() {
      */
     clearPageFilters();
     clearPageSwitch();
+
+    if (currentEquipment === "MAIN") {
+        document.body.classList.add("is-main-view");
+        grid.classList.add("main-view");
+        renderMainDashboard();
+        return;
+    } else {
+        document.body.classList.remove("is-main-view");
+    }
 
     if (currentEquipment === "EXHAUST_FAN") {
         renderExhaustFan();
@@ -5960,6 +7040,68 @@ function renderEquipment() {
 
 async function loadData() {
     try {
+        if (currentEquipment === "MAIN") {
+            const [ahuRes, hvacRes, roomRes, efRes, alarmRes, energyRes] = await Promise.allSettled([
+                fetch("api_ahu.php?t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+                fetch("api_hvac_sc.php?t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+                fetch("api_room.php?t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+                fetch("api_ef.php?t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+                fetch("api_alarm.php?limit=50&t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+                fetch("api_energy.php?summary=1&t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null)
+            ]);
+
+            if (ahuRes.status === "fulfilled" && ahuRes.value?.success) {
+                allData.AHU = ahuRes.value.equipment?.AHU || [];
+            }
+            if (hvacRes.status === "fulfilled" && hvacRes.value?.success) {
+                Object.assign(allData, hvacRes.value.equipment || {});
+            }
+            if (roomRes.status === "fulfilled" && roomRes.value?.success) {
+                allData.ROOM_TEMP_RH = roomRes.value.equipment?.ROOM_TEMP_RH || [];
+            }
+            if (efRes.status === "fulfilled" && efRes.value?.success) {
+                Object.assign(allData, efRes.value.equipment || {});
+            }
+            if (alarmRes.status === "fulfilled" && alarmRes.value?.success) {
+                allData.ALARM = alarmRes.value;
+            }
+            if (energyRes.status === "fulfilled" && energyRes.value?.success) {
+                allData.ENERGY_SUMMARY = energyRes.value.summary || null;
+            }
+
+            const anySuccess = [ahuRes, hvacRes, roomRes, efRes, alarmRes].some(r => r.status === "fulfilled" && r.value?.success);
+            setConnection(anySuccess);
+
+            renderMainDashboard();
+
+            const timestamps = [];
+            if (Array.isArray(allData.AHU)) {
+                allData.AHU.forEach(u => u?.last_update && timestamps.push(u.last_update));
+            }
+            ["CHILLER", "CT", "CCP", "CHWP"].forEach(k => {
+                if (Array.isArray(allData[k])) {
+                    allData[k].forEach(u => u?.last_update && timestamps.push(u.last_update));
+                }
+            });
+            if (Array.isArray(allData.EXHAUST_FAN)) {
+                allData.EXHAUST_FAN.forEach(u => u?.last_update && timestamps.push(u.last_update));
+            }
+            if (Array.isArray(allData.EXHAUST_FAN_G8)) {
+                allData.EXHAUST_FAN_G8.forEach(u => u?.last_update && timestamps.push(u.last_update));
+            }
+            if (Array.isArray(allData.ROOM_TEMP_RH)) {
+                allData.ROOM_TEMP_RH.forEach(u => u?.last_update && timestamps.push(u.last_update));
+            }
+
+            if (timestamps.length) {
+                const latest = timestamps.sort().at(-1);
+                lastUpdate.textContent = "DB update: " + String(latest).slice(0, 19);
+            } else {
+                lastUpdate.textContent = "DB update: --";
+            }
+            return;
+        }
+
         if (currentEquipment === "ALARM") {
             /*
              * The dedicated alarm poll owns fetching, so this path only fills
@@ -6105,35 +7247,61 @@ async function loadData() {
     }
 }
 
+function navigateTo(equipment, filter = "") {
+    const valid = ["MAIN", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    if (!valid.includes(equipment)) {
+        equipment = "MAIN";
+    }
+
+    currentEquipment = equipment;
+
+    if (equipment === "AHU") {
+        ahuView.searchRaw = filter || "";
+        ahuView.search = (filter || "").trim().toLowerCase();
+    } else if (equipment === "HVAC_SC") {
+        hvacScView.searchRaw = filter || "";
+        hvacScView.search = (filter || "").trim().toLowerCase();
+    }
+
+    document.querySelectorAll(".nav-button").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.equipment === equipment);
+    });
+
+    try {
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, "", equipment === "MAIN" ? window.location.pathname : "#" + equipment);
+        } else {
+            window.location.hash = equipment === "MAIN" ? "" : equipment;
+        }
+    } catch (e) {
+        // Safe fallback in restricted environments
+    }
+
+    /*
+     * The chart toggle is per-visit: leaving a history page closes its
+     * chart, so returning to it shows the page as it was before.
+     */
+    showChart = false;
+
+    renderEquipment();
+    safeLoadData();
+
+    if (!isHistoryPage()) {
+        safeLoadAlarmData();
+    }
+}
+
 document.querySelectorAll(".nav-button").forEach(button => {
     button.addEventListener("click", () => {
-        document.querySelectorAll(".nav-button")
-            .forEach(btn => btn.classList.remove("active"));
-
-        button.classList.add("active");
-
-        currentEquipment = button.dataset.equipment;
-
-        /*
-         * The chart toggle is per-visit: leaving a history page closes its
-         * chart, so returning to it shows the page as it was before. Without
-         * this the panel would reappear unrequested on the next visit.
-         */
-        showChart = false;
-
-        renderEquipment();
-        safeLoadData();
-
-        /*
-         * The alarm poll does not run on the history pages (see
-         * isHistoryPage). Returning to a live page re-baselines it, so an
-         * alarm that arrived while history was on screen is recorded
-         * silently instead of firing the moment the user navigates back.
-         */
-        if (!isHistoryPage()) {
-            safeLoadAlarmData();
-        }
+        navigateTo(button.dataset.equipment);
     });
+});
+
+window.addEventListener("hashchange", () => {
+    const eq = getInitialEquipment();
+    if (eq !== currentEquipment) {
+        navigateTo(eq);
+    }
 });
 
 let loadingData = false;
