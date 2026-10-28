@@ -78,112 +78,205 @@ try {
     ]);
 
     /*
-     * Fast summary mode for Main Dashboard:
-     * Returns today's and yesterday's energy totals plus past 7 days daily history
-     * across CT, CCP, and CHWP without querying or transferring all 31 days of readings.
+     * Fast summary mode for Main Dashboard.
+     *
+     * Reports the last COMPLETED day, not today. The snapshot script writes a
+     * row for today as soon as it runs, and that row is frozen from then on:
+     * it does not grow through the day. Presenting it as "today" compares a
+     * finished day against one still in progress, which reads as a sudden
+     * drop every morning and says nothing about how the plant is doing now.
+     *
+     * So the reporting day is the newest row dated before today, the
+     * comparison day is the one before that, and the 7-day window ends at
+     * the reporting day.
      */
     if (isset($_GET['summary'])) {
         $summary = [
-            'available'      => false,
-            'today_date'     => null,
-            'yesterday_date' => null,
-            'today_kwh'      => null,
-            'yesterday_kwh'  => null,
-            'categories'     => [],
-            'daily_history'  => [],
-            'peak_day'       => null,
-            'avg_daily_kwh'  => null,
-            'total_7d_kwh'   => null
+            'available'     => false,
+            'report_date'   => null,
+            'prev_date'     => null,
+            'report_kwh'    => null,
+            'prev_kwh'      => null,
+            'is_yesterday'  => false,
+            'categories'    => [],
+            'daily_history' => [],
+            'peak_day'      => null,
+            'avg_daily_kwh' => null,
+            'total_7d_kwh'  => null,
         ];
 
         try {
-            $todaySum = 0.0;
-            $yesterdaySum = 0.0;
-            $hasData = false;
-            $daysMap = [];
+            /*
+             * "Today" in plant time. The snapshot script pins itself to
+             * Asia/Jakarta; this must agree with it, or a server running on
+             * UTC would disagree for seven hours a day about which row is
+             * today's and report the unfinished one again.
+             */
+            $plantNow = new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta'));
+            $today = $plantNow->format('Y-m-d');
+            $yesterday = $plantNow->modify('-1 day')->format('Y-m-d');
+
+            /*
+             * Sum of every numeric unit column in a row. NULL when the row
+             * carries no reading at all - distinct from a row of zeroes,
+             * which is a real "nothing consumed".
+             */
+            $rowSum = static function (array $row): ?float {
+                $vals = array_filter($row, fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
+                $numeric = array_filter($vals, 'is_numeric');
+
+                return empty($numeric) ? null : round((float) array_sum($numeric), 1);
+            };
+
+            /*
+             * Fourteen rows, not eight. Eight would exactly cover a 7-day
+             * window plus its baseline only when every date is present; a
+             * category with gaps would then reach back too few distinct dates
+             * and the union window would silently shrink. The extra rows cost
+             * nothing and the window is trimmed to seven dates below.
+             */
+            $catRows = [];
+            $allDates = [];
 
             foreach ($categories as $catName => $catMeta) {
-                $tableName = $catMeta['usage'];
-                $stmt = $pdo->query("SELECT * FROM `{$tableName}` ORDER BY reading_date DESC LIMIT 7");
-                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $rows = $pdo->query(
+                    "SELECT * FROM `{$catMeta['usage']}` ORDER BY reading_date DESC LIMIT 14"
+                )->fetchAll(PDO::FETCH_ASSOC);
 
-                $cToday = null;
-                $cYest = null;
-
-                if (!empty($rows[0])) {
-                    $hasData = true;
-                    if ($summary['today_date'] === null) {
-                        $summary['today_date'] = $rows[0]['reading_date'];
-                    }
-                    $vals = array_filter($rows[0], fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
-                    $numericVals = array_filter($vals, 'is_numeric');
-                    if (!empty($numericVals)) {
-                        $cToday = round((float)array_sum($numericVals), 1);
-                        $todaySum += $cToday;
-                    }
-                }
-
-                if (!empty($rows[1])) {
-                    if ($summary['yesterday_date'] === null) {
-                        $summary['yesterday_date'] = $rows[1]['reading_date'];
-                    }
-                    $vals = array_filter($rows[1], fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
-                    $numericVals = array_filter($vals, 'is_numeric');
-                    if (!empty($numericVals)) {
-                        $cYest = round((float)array_sum($numericVals), 1);
-                        $yesterdaySum += $cYest;
-                    }
-                }
-
-                $summary['categories'][$catName] = [
-                    'label'     => $catMeta['label'],
-                    'today'     => $cToday,
-                    'yesterday' => $cYest,
-                ];
+                $catRows[$catName] = $rows;
 
                 foreach ($rows as $r) {
-                    $d = $r['reading_date'];
-                    if (!isset($daysMap[$d])) {
-                        $daysMap[$d] = ['date' => $d, 'kwh' => 0.0, 'by_cat' => []];
-                    }
-                    $vals = array_filter($r, fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
-                    $numericVals = array_filter($vals, 'is_numeric');
-                    $valSum = !empty($numericVals) ? round((float)array_sum($numericVals), 1) : 0.0;
-                    $daysMap[$d]['by_cat'][$catName] = $valSum;
-                    $daysMap[$d]['kwh'] = round($daysMap[$d]['kwh'] + $valSum, 1);
+                    $allDates[$r['reading_date']] = true;
                 }
             }
 
-            if ($hasData) {
-                $summary['available']     = true;
-                $summary['today_kwh']     = round($todaySum, 1);
-                $summary['yesterday_kwh'] = round($yesterdaySum, 1);
+            $dates = array_keys($allDates);
+            rsort($dates);
 
-                ksort($daysMap);
-                $dailyHistory = array_values($daysMap);
+            $reportDate = null;
+            $prevDate = null;
+
+            foreach ($dates as $d) {
+                if ($d >= $today) {
+                    continue;
+                }
+
+                if ($reportDate === null) {
+                    $reportDate = $d;
+                } else {
+                    $prevDate = $d;
+                    break;
+                }
+            }
+
+            /*
+             * Only today's row exists yet (fresh install, or the snapshot has
+             * just run for the first time): report it rather than an empty
+             * card. The client labels it as the last day, not yesterday.
+             */
+            if ($reportDate === null && !empty($dates)) {
+                $reportDate = $dates[0];
+            }
+
+            if ($reportDate !== null) {
+                $reportSum = 0.0;
+                $prevSum = 0.0;
+                $daysMap = [];
+
+                foreach ($categories as $catName => $catMeta) {
+                    $reportRow = null;
+                    $prevRow = null;
+
+                    foreach ($catRows[$catName] as $r) {
+                        if ($r['reading_date'] === $reportDate) {
+                            $reportRow = $r;
+                        } elseif ($r['reading_date'] === $prevDate) {
+                            $prevRow = $r;
+                        }
+                    }
+
+                    $cReport = $reportRow !== null ? $rowSum($reportRow) : null;
+                    $cPrev = $prevRow !== null ? $rowSum($prevRow) : null;
+
+                    if ($cReport !== null) {
+                        $reportSum += $cReport;
+                    }
+                    if ($cPrev !== null) {
+                        $prevSum += $cPrev;
+                    }
+
+                    $summary['categories'][$catName] = [
+                        'label'  => $catMeta['label'],
+                        'report' => $cReport,
+                        'prev'   => $cPrev,
+                    ];
+
+                    /* Today's unfinished row never reaches the chart. */
+                    foreach ($catRows[$catName] as $r) {
+                        $d = $r['reading_date'];
+
+                        if ($d > $reportDate) {
+                            continue;
+                        }
+
+                        if (!isset($daysMap[$d])) {
+                            $daysMap[$d] = ['date' => $d, 'kwh' => 0.0, 'by_cat' => []];
+                        }
+
+                        $valSum = $rowSum($r) ?? 0.0;
+                        $daysMap[$d]['by_cat'][$catName] = $valSum;
+                        $daysMap[$d]['kwh'] = round($daysMap[$d]['kwh'] + $valSum, 1);
+                    }
+                }
+
+                /*
+                 * Trim to the newest seven dates, then put them back in
+                 * chronological order for the chart. The date window is taken
+                 * before summing per day, so a category that lags behind the
+                 * others cannot stretch the window past seven days.
+                 */
+                $windowDates = array_keys($daysMap);
+                rsort($windowDates);
+                $windowDates = array_slice($windowDates, 0, 7);
+                sort($windowDates);
+
+                $dailyHistory = [];
                 $peak = null;
                 $total7d = 0.0;
 
-                foreach ($dailyHistory as &$item) {
-                    $dt = DateTime::createFromFormat('Y-m-d', $item['date']);
-                    $item['label'] = $dt ? $dt->format('d M') : $item['date'];
+                foreach ($windowDates as $d) {
+                    $item = $daysMap[$d];
+                    $dt = DateTime::createFromFormat('Y-m-d', $d);
+
+                    $item['label'] = $dt ? $dt->format('d M') : $d;
                     $item['short_day'] = $dt ? $dt->format('D') : '';
-                    $item['is_today'] = ($item['date'] === $summary['today_date']);
+                    $item['is_latest'] = ($d === $reportDate);
+
                     $total7d += $item['kwh'];
+
                     if ($peak === null || $item['kwh'] > $peak['kwh']) {
                         $peak = [
-                            'date'  => $item['date'],
+                            'date'  => $d,
                             'label' => $item['label'],
-                            'kwh'   => $item['kwh']
+                            'kwh'   => $item['kwh'],
                         ];
                     }
-                }
-                unset($item);
 
+                    $dailyHistory[] = $item;
+                }
+
+                $summary['available']     = true;
+                $summary['report_date']   = $reportDate;
+                $summary['prev_date']     = $prevDate;
+                $summary['report_kwh']    = round($reportSum, 1);
+                $summary['prev_kwh']      = $prevDate !== null ? round($prevSum, 1) : null;
+                $summary['is_yesterday']  = ($reportDate === $yesterday);
                 $summary['daily_history'] = $dailyHistory;
                 $summary['peak_day']      = $peak;
                 $summary['total_7d_kwh']  = round($total7d, 1);
-                $summary['avg_daily_kwh'] = count($dailyHistory) > 0 ? round($total7d / count($dailyHistory), 1) : 0.0;
+                $summary['avg_daily_kwh'] = count($dailyHistory) > 0
+                    ? round($total7d / count($dailyHistory), 1)
+                    : 0.0;
             }
 
             echo json_encode([

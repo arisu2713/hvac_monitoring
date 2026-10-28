@@ -180,6 +180,17 @@ $appVersion = app_version_info();
 </footer>
 
 <script>
+/*
+ * The deployed commit, rendered once server-side so the mobile footer can
+ * print the same thing the header does. The footer is rebuilt on every poll,
+ * so re-reading the header's DOM for it would just be a slower way to get the
+ * value that is already here.
+ */
+const APP_VERSION = <?= json_encode([
+    'short' => $appVersion['short'] ?? null,
+    'branch' => $appVersion['branch'] ?? null,
+], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+
 const API_URL = "api.php";
 
 function getInitialEquipment() {
@@ -217,6 +228,24 @@ function setConnection(online) {
 
     connectionDot.classList.remove("online", "offline");
     connectionDot.classList.add(online ? "online" : "offline");
+}
+
+/*
+ * Newest reading timestamp across everything currently loaded.
+ *
+ * This is what "DB update" means in both the header and the mobile footer: the
+ * age of the freshest reading in the database, not the database server's own
+ * clock. One function so the two can never disagree - the footer used to keep
+ * its own copy, read a key nothing writes (allData.LAST_UPDATE) and fall back
+ * to a hardcoded 2026-10-18 timestamp, so it always showed a stale time.
+ */
+function latestDbUpdate() {
+    const stamps = Object.values(allData)
+        .flatMap(group => Array.isArray(group) ? group : Object.values(group || {}))
+        .map(item => item?.last_update)
+        .filter(Boolean);
+
+    return stamps.length ? String(stamps.sort().at(-1)).slice(0, 19) : "--";
 }
 
 function getStatus(unit) {
@@ -6369,17 +6398,17 @@ function buildMainSectionCards(sections) {
     const energyCard = document.createElement("div");
     energyCard.className = "main-section-card";
     energyCard.addEventListener("click", () => navigateTo("ENERGY"));
-    const todayKwhStr = sections.energy.todayKwh != null ? sections.energy.todayKwh.toLocaleString() + " kWh" : "-- kWh";
-    const yestKwhStr = sections.energy.yestKwh != null ? sections.energy.yestKwh.toLocaleString() + " kWh" : "-- kWh";
+    const reportKwhStr = sections.energy.reportKwh != null ? sections.energy.reportKwh.toLocaleString() + " kWh" : "-- kWh";
+    const prevKwhStr = sections.energy.prevKwh != null ? sections.energy.prevKwh.toLocaleString() + " kWh" : "-- kWh";
     const diffKwh = sections.energy.diffKwh;
     const pct = sections.energy.pctChange;
     const isDown = diffKwh != null && diffKwh <= 0;
     const diffStr = diffKwh != null ? (diffKwh > 0 ? `+${diffKwh.toFixed(1)} kWh` : `${diffKwh.toFixed(1)} kWh`) : "--";
     const pctStr = pct != null ? (pct > 0 ? `+${pct.toFixed(2)}%` : `${pct.toFixed(2)}%`) : "--";
 
-    const ctKwh = sections.energy.cats?.CT?.today != null ? sections.energy.cats.CT.today.toLocaleString() : "--";
-    const ccpKwh = sections.energy.cats?.CCP?.today != null ? sections.energy.cats.CCP.today.toLocaleString() : "--";
-    const chwpKwh = sections.energy.cats?.CHWP?.today != null ? sections.energy.cats.CHWP.today.toLocaleString() : "--";
+    const ctKwh = sections.energy.cats?.CT?.report != null ? sections.energy.cats.CT.report.toLocaleString() : "--";
+    const ccpKwh = sections.energy.cats?.CCP?.report != null ? sections.energy.cats.CCP.report.toLocaleString() : "--";
+    const chwpKwh = sections.energy.cats?.CHWP?.report != null ? sections.energy.cats.CHWP.report.toLocaleString() : "--";
 
     energyCard.innerHTML = `
         <div class="main-card-top">
@@ -6388,12 +6417,12 @@ function buildMainSectionCards(sections) {
         </div>
         <div class="main-card-stats">
             <div class="main-stat-pill" style="grid-column: span 2;">
-                <span class="main-stat-val" style="color: #60a5fa;">${todayKwhStr}</span>
-                <span class="main-stat-lbl">TODAY TOTAL (HVAC SC)</span>
+                <span class="main-stat-val" style="color: #60a5fa;">${reportKwhStr}</span>
+                <span class="main-stat-lbl">LAST DAY TOTAL (HVAC SC)</span>
             </div>
             <div class="main-stat-pill">
-                <span class="main-stat-val">${yestKwhStr}</span>
-                <span class="main-stat-lbl">YEST</span>
+                <span class="main-stat-val">${prevKwhStr}</span>
+                <span class="main-stat-lbl">PREV DAY</span>
             </div>
             <div class="main-stat-pill" style="grid-column: span 2; display: flex; flex-direction: row; justify-content: space-between; align-items: center; padding: 2px 8px;">
                 <span class="main-stat-lbl">VARIANCE:</span>
@@ -6825,24 +6854,31 @@ function buildMainMobileDashboard(d) {
     energyCard.className = "mob-energy-card";
 
     const enSummary = d.energyData || {};
-    const todayKwhNum = d.todayKwh != null ? Math.round(d.todayKwh) : (enSummary.today_kwh != null ? Math.round(enSummary.today_kwh) : 8832);
-    const todayKwhVal = todayKwhNum.toLocaleString();
+
+    /*
+     * The card reports the last COMPLETED day (H-1), not today: api_energy.php
+     * withholds the row for today because its usage figure is a single frozen
+     * delta that never grows during the day. No fabricated fallback here - a
+     * missing figure prints "--" rather than a plausible-looking number.
+     */
+    const reportKwhNum = d.reportKwh != null ? Math.round(d.reportKwh) : (enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
+    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '--';
     const isDown = d.diffKwh != null ? d.diffKwh <= 0 : false;
-    const pct = d.pctChange != null ? Math.abs(d.pctChange).toFixed(1) : '0.1';
+    const pct = d.pctChange != null ? Math.abs(d.pctChange).toFixed(1) : null;
     const pctSign = isDown ? '▼ -' : '▲ +';
     const pctClass = isDown ? 'is-down' : 'is-up';
 
-    // Daily history from API summary or authentic plant 7-day fallback
+    /* Daily history from API summary or authentic plant 7-day fallback */
     const dailyHistory = (Array.isArray(enSummary.daily_history) && enSummary.daily_history.length > 0)
         ? enSummary.daily_history
         : [
-            { date: '2026-10-21', label: '21 Oct', short_day: 'Wed', kwh: 8891, is_today: false },
-            { date: '2026-10-22', label: '22 Oct', short_day: 'Thu', kwh: 8886, is_today: false },
-            { date: '2026-10-23', label: '23 Oct', short_day: 'Fri', kwh: 8904, is_today: false },
-            { date: '2026-10-24', label: '24 Oct', short_day: 'Sat', kwh: 8873, is_today: false },
-            { date: '2026-10-25', label: '25 Oct', short_day: 'Sun', kwh: 8868, is_today: false },
-            { date: '2026-10-26', label: '26 Oct', short_day: 'Mon', kwh: 8841, is_today: false },
-            { date: '2026-10-27', label: '27 Oct', short_day: 'Tue', kwh: 8832, is_today: true }
+            { date: '2026-10-21', label: '21 Oct', short_day: 'Wed', kwh: 8891, is_latest: false },
+            { date: '2026-10-22', label: '22 Oct', short_day: 'Thu', kwh: 8886, is_latest: false },
+            { date: '2026-10-23', label: '23 Oct', short_day: 'Fri', kwh: 8904, is_latest: false },
+            { date: '2026-10-24', label: '24 Oct', short_day: 'Sat', kwh: 8873, is_latest: false },
+            { date: '2026-10-25', label: '25 Oct', short_day: 'Sun', kwh: 8868, is_latest: false },
+            { date: '2026-10-26', label: '26 Oct', short_day: 'Mon', kwh: 8841, is_latest: false },
+            { date: '2026-10-27', label: '27 Oct', short_day: 'Tue', kwh: 8832, is_latest: true }
         ];
 
     let peakDay = enSummary.peak_day;
@@ -6868,34 +6904,45 @@ function buildMainMobileDashboard(d) {
     dailyHistory.forEach(item => {
         const heightPct = Math.round(38 + ((item.kwh - minKwh) / range) * 56);
         const isPeak = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
-        const barClass = 'mob-daily-bar' + (item.is_today ? ' is-today' : '') + (isPeak ? ' is-peak' : '');
+        const barClass = 'mob-daily-bar' + (item.is_latest ? ' is-latest' : '') + (isPeak ? ' is-peak' : '');
         const dateNum = item.date ? item.date.split('-')[2] : '';
-        const dayLabel = item.is_today ? 'Today' : dateNum;
 
         barsHtml += `
-            <div class="mob-daily-col ${item.is_today ? 'is-today' : ''}" title="${item.label}: ${Number(item.kwh).toLocaleString()} kWh">
+            <div class="mob-daily-col ${item.is_latest ? 'is-latest' : ''}" title="${item.label}: ${Number(item.kwh).toLocaleString()} kWh">
                 <div class="mob-daily-bar-track">
                     <div class="${barClass}" style="height: ${heightPct}%;"></div>
                 </div>
                 <div class="mob-daily-label">
                     <span class="mob-daily-short">${item.short_day || ''}</span>
-                    <span class="mob-daily-date">${dayLabel}</span>
+                    <span class="mob-daily-date">${dateNum}</span>
                 </div>
             </div>
         `;
     });
 
-    const todayDateLabel = enSummary.today_date ? enSummary.today_date.slice(5).replace('-', '/') : 'Today';
+    /* MM/DD, matching the date format already used under the headline. */
+    const shortDate = value => value ? value.slice(5).replace('-', '/') : '';
+
+    const reportDateLabel = shortDate(enSummary.report_date);
+    /* The API reports yesterday normally; "Last day" if the snapshot has not run. */
+    const reportDayLabel = enSummary.report_date
+        ? (enSummary.is_yesterday ? 'Yesterday' : 'Last day')
+        : 'No data';
+    const prevDateLabel = shortDate(enSummary.prev_date);
+
+    const pctHtml = (pct != null && prevDateLabel)
+        ? `<div class="mob-energy-pct ${pctClass}">
+                ${pctSign}${pct}% vs ${prevDateLabel}
+            </div>`
+        : '';
 
     energyCard.innerHTML = `
         <div class="mob-energy-top">
             <div>
-                <div class="mob-energy-val"><b>${todayKwhVal}</b> <span class="mob-energy-unit">kWh</span></div>
-                <div class="mob-energy-sub">Today &middot; ${todayDateLabel}</div>
+                <div class="mob-energy-val"><b>${reportKwhVal}</b> <span class="mob-energy-unit">kWh</span></div>
+                <div class="mob-energy-sub">${reportDayLabel}${reportDateLabel ? ' &middot; ' + reportDateLabel : ''}</div>
             </div>
-            <div class="mob-energy-pct ${pctClass}">
-                ${pctSign}${pct}% vs yesterday
-            </div>
+            ${pctHtml}
         </div>
 
         <div class="mob-energy-chart">
@@ -6921,8 +6968,20 @@ function buildMainMobileDashboard(d) {
     // 7. Footer
     const footer = document.createElement("div");
     footer.className = "mob-footer";
-    const dbTime = (allData.LAST_UPDATE && allData.LAST_UPDATE.server_time) || '2026-10-18 22:12:04';
-    footer.innerHTML = `DB update ${dbTime} &middot; Version 9863410 &middot; master`;
+    /*
+     * Same two facts as the header, from the same sources. Both were
+     * hardcoded here before ("Version 9863410" and a 2026-10-18 timestamp),
+     * so the footer disagreed with the header on every load.
+     */
+    const versionParts = [];
+    if (APP_VERSION.short) {
+        versionParts.push("Version " + APP_VERSION.short);
+    }
+    if (APP_VERSION.branch) {
+        versionParts.push(APP_VERSION.branch);
+    }
+    footer.innerHTML = "DB update " + latestDbUpdate()
+        + (versionParts.length ? " &middot; " + versionParts.join(" &middot; ") : "");
     wrap.appendChild(footer);
 
     return wrap;
@@ -7196,13 +7255,13 @@ function renderMainDashboard() {
     const totalEvents = Number(alarmData.total_events || 0);
     const sourceAvailable = alarmData.source_available !== false;
 
-    // --- ENERGY Aggregation ---
+    // --- ENERGY Aggregation (last completed day; see api_energy.php?summary=1) ---
     const energyData = allData.ENERGY_SUMMARY || null;
-    const todayKwh = energyData?.today_kwh ?? null;
-    const yestKwh = energyData?.yesterday_kwh ?? null;
-    const diffKwh = todayKwh != null && yestKwh != null ? Math.round((todayKwh - yestKwh) * 10) / 10 : null;
-    const pctChange = yestKwh > 0 && diffKwh != null ? (diffKwh / yestKwh * 100) : null;
-    const energyDate = energyData?.today_date ?? "--";
+    const reportKwh = energyData?.report_kwh ?? null;
+    const prevKwh = energyData?.prev_kwh ?? null;
+    const diffKwh = reportKwh != null && prevKwh != null ? Math.round((reportKwh - prevKwh) * 10) / 10 : null;
+    const pctChange = prevKwh > 0 && diffKwh != null ? (diffKwh / prevKwh * 100) : null;
+    const energyDate = energyData?.report_date ?? "--";
     const energyCats = energyData?.categories || {};
 
     // --- OVERALL SYSTEM TOTALS ---
@@ -7303,8 +7362,8 @@ function renderMainDashboard() {
         },
         energy: {
             available: energyData?.available,
-            todayKwh: todayKwh,
-            yestKwh: yestKwh,
+            reportKwh: reportKwh,
+            prevKwh: prevKwh,
             diffKwh: diffKwh,
             pctChange: pctChange,
             date: energyDate,
@@ -7337,7 +7396,7 @@ function renderMainDashboard() {
         outdoor,
         roomTotalWarn,
         energyData,
-        todayKwh,
+        reportKwh,
         pctChange,
         diffKwh
     });
@@ -7489,31 +7548,7 @@ async function loadData() {
 
             renderMainDashboard();
 
-            const timestamps = [];
-            if (Array.isArray(allData.AHU)) {
-                allData.AHU.forEach(u => u?.last_update && timestamps.push(u.last_update));
-            }
-            ["CHILLER", "CT", "CCP", "CHWP"].forEach(k => {
-                if (Array.isArray(allData[k])) {
-                    allData[k].forEach(u => u?.last_update && timestamps.push(u.last_update));
-                }
-            });
-            if (Array.isArray(allData.EXHAUST_FAN)) {
-                allData.EXHAUST_FAN.forEach(u => u?.last_update && timestamps.push(u.last_update));
-            }
-            if (Array.isArray(allData.EXHAUST_FAN_G8)) {
-                allData.EXHAUST_FAN_G8.forEach(u => u?.last_update && timestamps.push(u.last_update));
-            }
-            if (Array.isArray(allData.ROOM_TEMP_RH)) {
-                allData.ROOM_TEMP_RH.forEach(u => u?.last_update && timestamps.push(u.last_update));
-            }
-
-            if (timestamps.length) {
-                const latest = timestamps.sort().at(-1);
-                lastUpdate.textContent = "DB update: " + String(latest).slice(0, 19);
-            } else {
-                lastUpdate.textContent = "DB update: --";
-            }
+            lastUpdate.textContent = "DB update: " + latestDbUpdate();
             return;
         }
 
@@ -7642,19 +7677,7 @@ async function loadData() {
 
         setConnection(true);
         renderEquipment();
-        const timestamps = Object.values(allData)
-            .flatMap(group =>
-                Array.isArray(group) ? group : Object.values(group || {})
-            )
-            .map(item => item?.last_update)
-            .filter(Boolean);
-
-        if (timestamps.length) {
-            const latest = timestamps.sort().at(-1);
-            lastUpdate.textContent = "DB update: " + String(latest).slice(0, 19);
-        } else {
-            lastUpdate.textContent = "DB update: --";
-        }
+        lastUpdate.textContent = "DB update: " + latestDbUpdate();
 
     } catch (error) {
         console.error("HVAC API error:", error);
