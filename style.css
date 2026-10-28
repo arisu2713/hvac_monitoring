@@ -4784,8 +4784,51 @@ body.is-main-view footer {
         flex-direction: column !important;
     }
 
-    body.is-main-view .topbar,
-    body.is-main-view .equipment-nav,
+    body.is-main-view .topbar {
+        display: flex !important;
+        height: auto !important;
+        min-height: 48px !important;
+        padding: 6px 14px !important;
+        box-sizing: border-box !important;
+    }
+    body.is-main-view .title {
+        font-size: 16px !important;
+    }
+    body.is-main-view .subtitle {
+        font-size: 10.5px !important;
+    }
+    /*
+     * All eight tabs must be on screen at once on a phone.
+     *
+     * The topbar and the nav used to be in the `display: none` group below, so
+     * the main view on a phone had no tabs at all; letting them scroll
+     * sideways instead only ever showed four of the eight (MAIN DASHBOARD …
+     * ROOM TEMP & RH), with EXHAUST FAN / AHU / EF G8 / ALARM / ENERGY behind
+     * a swipe nothing advertised. It also overrode the wrap rule the 600px
+     * breakpoint sets for every other page, because this block comes later and
+     * uses !important.
+     *
+     * Wrapping shows every tab at once and removes the nested sideways
+     * scroller. Buttons keep `flex: 0 0 auto` so they size to their labels and
+     * stay touch-friendly, and `min-width: 0` is deliberately NOT set - a button
+     * must be allowed to exceed a narrow row and wrap rather than shrink to an
+     * unreadable sliver.
+     */
+    body.is-main-view .equipment-nav {
+        display: flex !important;
+        padding: 4px 10px 6px !important;
+        overflow-x: visible !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        box-sizing: border-box !important;
+    }
+    body.is-main-view .nav-button {
+        flex: 0 0 auto !important;
+        white-space: nowrap !important;
+        padding: 5px 12px !important;
+        font-size: 11.5px !important;
+    }
+
     body.is-main-view .section-header,
     body.is-main-view > footer {
         display: none !important;
