@@ -79,8 +79,8 @@ try {
 
     /*
      * Fast summary mode for Main Dashboard:
-     * Returns today's and yesterday's energy totals across CT, CCP, and CHWP
-     * without querying or transferring 31 days of historical readings.
+     * Returns today's and yesterday's energy totals plus past 7 days daily history
+     * across CT, CCP, and CHWP without querying or transferring all 31 days of readings.
      */
     if (isset($_GET['summary'])) {
         $summary = [
@@ -89,17 +89,22 @@ try {
             'yesterday_date' => null,
             'today_kwh'      => null,
             'yesterday_kwh'  => null,
-            'categories'     => []
+            'categories'     => [],
+            'daily_history'  => [],
+            'peak_day'       => null,
+            'avg_daily_kwh'  => null,
+            'total_7d_kwh'   => null
         ];
 
         try {
             $todaySum = 0.0;
             $yesterdaySum = 0.0;
             $hasData = false;
+            $daysMap = [];
 
             foreach ($categories as $catName => $catMeta) {
                 $tableName = $catMeta['usage'];
-                $stmt = $pdo->query("SELECT * FROM `{$tableName}` ORDER BY reading_date DESC LIMIT 2");
+                $stmt = $pdo->query("SELECT * FROM `{$tableName}` ORDER BY reading_date DESC LIMIT 7");
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 $cToday = null;
@@ -135,12 +140,50 @@ try {
                     'today'     => $cToday,
                     'yesterday' => $cYest,
                 ];
+
+                foreach ($rows as $r) {
+                    $d = $r['reading_date'];
+                    if (!isset($daysMap[$d])) {
+                        $daysMap[$d] = ['date' => $d, 'kwh' => 0.0, 'by_cat' => []];
+                    }
+                    $vals = array_filter($r, fn($k) => $k !== 'reading_date', ARRAY_FILTER_USE_KEY);
+                    $numericVals = array_filter($vals, 'is_numeric');
+                    $valSum = !empty($numericVals) ? round((float)array_sum($numericVals), 1) : 0.0;
+                    $daysMap[$d]['by_cat'][$catName] = $valSum;
+                    $daysMap[$d]['kwh'] = round($daysMap[$d]['kwh'] + $valSum, 1);
+                }
             }
 
             if ($hasData) {
                 $summary['available']     = true;
                 $summary['today_kwh']     = round($todaySum, 1);
                 $summary['yesterday_kwh'] = round($yesterdaySum, 1);
+
+                ksort($daysMap);
+                $dailyHistory = array_values($daysMap);
+                $peak = null;
+                $total7d = 0.0;
+
+                foreach ($dailyHistory as &$item) {
+                    $dt = DateTime::createFromFormat('Y-m-d', $item['date']);
+                    $item['label'] = $dt ? $dt->format('d M') : $item['date'];
+                    $item['short_day'] = $dt ? $dt->format('D') : '';
+                    $item['is_today'] = ($item['date'] === $summary['today_date']);
+                    $total7d += $item['kwh'];
+                    if ($peak === null || $item['kwh'] > $peak['kwh']) {
+                        $peak = [
+                            'date'  => $item['date'],
+                            'label' => $item['label'],
+                            'kwh'   => $item['kwh']
+                        ];
+                    }
+                }
+                unset($item);
+
+                $summary['daily_history'] = $dailyHistory;
+                $summary['peak_day']      = $peak;
+                $summary['total_7d_kwh']  = round($total7d, 1);
+                $summary['avg_daily_kwh'] = count($dailyHistory) > 0 ? round($total7d / count($dailyHistory), 1) : 0.0;
             }
 
             echo json_encode([

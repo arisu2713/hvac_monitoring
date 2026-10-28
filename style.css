@@ -4766,108 +4766,547 @@ body.is-main-view footer {
     }
 }
 
-/* Responsive adjustments specifically for Mobile Viewports (<= 600px) */
-@media (max-width: 600px) {
-    body.is-main-view .topbar {
-        padding: 6px 12px !important;
+/* Desktop and Mobile View Toggles */
+.desktop-only {
+    display: flex !important;
+}
+.mobile-only {
+    display: none !important;
+}
+
+/* Responsive adjustments specifically for Mobile Viewports (<= 768px) */
+@media (max-width: 768px) {
+    .desktop-only {
+        display: none !important;
     }
-    body.is-main-view .title {
-        font-size: 16px !important;
+    .mobile-only {
+        display: flex !important;
+        flex-direction: column !important;
     }
-    body.is-main-view .equipment-nav {
-        padding: 3px 12px !important;
+
+    body.is-main-view .topbar,
+    body.is-main-view .equipment-nav,
+    body.is-main-view .section-header,
+    body.is-main-view > footer {
+        display: none !important;
     }
+
     body.is-main-view .main-view {
-        padding: 0 10px 12px !important;
+        padding: 12px 14px 28px !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        background: #0f1216 !important;
     }
 
-    /* Stack MAIN DASHBOARD and System Overview vertically, centered, no overlap */
-    body.is-main-view .section-header {
-        position: static !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 2px !important;
-        padding: 6px 12px 4px !important;
-        min-height: auto !important;
-        text-align: center !important;
-    }
-    body.is-main-view #sectionTitle {
-        font-size: 19px !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.5px !important;
-        text-align: center !important;
-        line-height: 1.2 !important;
-    }
-    body.is-main-view #unitCount {
-        position: static !important;
-        transform: none !important;
-        font-size: 11px !important;
-        color: #8b98a8 !important;
-        text-align: center !important;
+    /* Mobile Dashboard Container matching executive mobile design */
+    .main-dashboard-mobile {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        width: 100%;
+        box-sizing: border-box;
+        color: #fff;
     }
 
-    /* Global KPI Bar on mobile: 3 columns x 2 rows, compact, no horizontal overflow */
-    .main-kpi-bar {
-        padding: 8px 10px !important;
-        gap: 8px !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
+    /* 1. Mobile Header */
+    .mob-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 2px 2px 0;
     }
-    .main-kpi-group {
-        display: grid !important;
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-        gap: 5px !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
+    .mob-head-title {
+        font-size: 24px;
+        font-weight: 700;
+        color: #ffffff;
+        margin: 0;
+        letter-spacing: -0.02em;
     }
-    .main-hero-tile,
-    .main-kpi-tile {
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 2px !important;
-        padding: 4px 4px !important;
-        min-width: 0 !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
+    .mob-live-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #94a3b8;
     }
-    .main-hero-tile-value,
-    .main-kpi-val {
-        font-size: 15px !important;
-    }
-    .main-hero-tile-label,
-    .main-kpi-lbl {
-        font-size: 8.5px !important;
-        text-align: center !important;
-        letter-spacing: 0.02em !important;
-    }
-    .main-hero-ops {
-        display: flex !important;
-        flex-wrap: wrap !important;
-        gap: 6px 12px !important;
-        font-size: 11px !important;
-        white-space: normal !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
+    .mob-live-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
     }
 
-    /* Group headers on mobile */
-    .main-group-header {
-        flex-wrap: wrap !important;
-        gap: 4px !important;
+    /* 2. Hero Status Banner */
+    .mob-hero-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        box-sizing: border-box;
     }
-    .main-group-title {
-        font-size: 12px !important;
+    .mob-hero-banner.is-warn {
+        background: #1a150c;
+        border: 1px solid #3d2c0e;
+    }
+    .mob-hero-banner.is-crit {
+        background: #200c0e;
+        border: 1px solid #4d181c;
+    }
+    .mob-hero-banner.is-norm {
+        background: #0c1a13;
+        border: 1px solid #1a3d2b;
+    }
+    .mob-hero-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        font-weight: 800;
+        flex-shrink: 0;
+    }
+    .mob-hero-banner.is-warn .mob-hero-icon {
+        background: #332007;
+        color: #f59e0b;
+        border: 1px solid #633e08;
+    }
+    .mob-hero-banner.is-crit .mob-hero-icon {
+        background: #381114;
+        color: #ef4444;
+        border: 1px solid #6e1c22;
+    }
+    .mob-hero-banner.is-norm .mob-hero-icon {
+        background: #113320;
+        color: #22c55e;
+        border: 1px solid #1e5a38;
+    }
+    .mob-hero-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .mob-hero-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #ffffff;
+    }
+    .mob-hero-sub {
+        font-size: 12px;
+        color: #94a3b8;
     }
 
-    /* Cards on mobile */
-    .main-section-card {
-        min-height: auto !important;
-        padding: 8px 10px !important;
-        gap: 6px !important;
+    /* 3. 2x2 KPI Grid */
+    .mob-kpi-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .mob-kpi-card {
+        padding: 12px 14px;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        box-sizing: border-box;
+        cursor: pointer;
+        transition: transform 0.1s ease;
+    }
+    .mob-kpi-card:active {
+        transform: scale(0.98);
+    }
+    .mob-kpi-card.is-crit {
+        background: #200b0c;
+        border: 1px solid #4a1517;
+    }
+    .mob-kpi-card.is-crit .mob-kpi-num {
+        color: #f87171;
+    }
+    .mob-kpi-card.is-crit .mob-kpi-label {
+        color: #ef4444;
+    }
+
+    .mob-kpi-card.is-warn {
+        background: #231707;
+        border: 1px solid #57340b;
+    }
+    .mob-kpi-card.is-warn .mob-kpi-num {
+        color: #f59e0b;
+    }
+    .mob-kpi-card.is-warn .mob-kpi-label {
+        color: #d97706;
+    }
+
+    .mob-kpi-card.is-stopped,
+    .mob-kpi-card.is-alarm {
+        background: #14181f;
+        border: 1px solid #232c37;
+    }
+    .mob-kpi-card.is-stopped .mob-kpi-num,
+    .mob-kpi-card.is-alarm .mob-kpi-num {
+        color: #ffffff;
+    }
+    .mob-kpi-card.is-stopped .mob-kpi-label,
+    .mob-kpi-card.is-alarm .mob-kpi-label {
+        color: #8b98a8;
+    }
+
+    .mob-kpi-num {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 26px;
+        font-weight: 800;
+        line-height: 1;
+    }
+    .mob-kpi-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+
+    /* 4. Sections & Headers */
+    .mob-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .mob-sec-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 2px;
+    }
+    .mob-sec-title {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: #8b98a8;
+        text-transform: uppercase;
+    }
+    .mob-sec-link {
+        font-size: 12px;
+        font-weight: 600;
+        color: #60a5fa;
+        text-decoration: none;
+    }
+    .mob-sec-hint {
+        font-size: 11px;
+        color: #64748b;
+    }
+
+    /* 5. Needs Attention Card List */
+    .mob-card-list {
+        background: #14181f;
+        border: 1px solid #222c38;
+        border-radius: 12px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+    .mob-issue-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 12px;
+        border-bottom: 1px solid #1c2430;
+        cursor: pointer;
+        transition: background 0.12s ease;
+    }
+    .mob-issue-item:last-child {
+        border-bottom: none;
+    }
+    .mob-issue-item:active {
+        background: #1b212b;
+    }
+    .mob-issue-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 800;
+        flex-shrink: 0;
+    }
+    .mob-issue-icon.is-warn {
+        background: #2d1e08;
+        color: #f59e0b;
+        border: 1px solid #5c3808;
+    }
+    .mob-issue-icon.is-crit {
+        background: #2b0d0e;
+        color: #ef4444;
+        border: 1px solid #5c1618;
+    }
+    .mob-issue-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+        min-width: 0;
+    }
+    .mob-issue-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #ffffff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mob-issue-desc {
+        font-size: 11.5px;
+        color: #8b98a8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mob-issue-time {
+        font-size: 11px;
+        color: #64748b;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* 6. Systems 2-Column Grid */
+    .mob-systems-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .mob-sys-card {
+        background: #14181f;
+        border: 1px solid #222c38;
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        cursor: pointer;
+        box-sizing: border-box;
+        transition: transform 0.1s ease;
+    }
+    .mob-sys-card:active {
+        transform: scale(0.98);
+    }
+    .mob-sys-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 2px;
+    }
+    .mob-sys-name {
+        font-size: 12px;
+        color: #94a3b8;
+        font-weight: 500;
+    }
+    .mob-sys-arrow {
+        font-size: 12px;
+        color: #64748b;
+    }
+    .mob-sys-val {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 20px;
+        font-weight: 700;
+        color: #ffffff;
+        line-height: 1.1;
+    }
+    .mob-sys-tot {
+        font-size: 13px;
+        font-weight: 500;
+        color: #8b98a8;
+    }
+    .mob-sys-status {
+        font-size: 11px;
+        color: #8b98a8;
+        margin-top: 2px;
+        margin-bottom: 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mob-sys-bar {
+        height: 4px;
+        background: #202732;
+        border-radius: 2px;
+        display: flex;
+        overflow: hidden;
+        margin-top: auto;
+    }
+    .mob-bar-seg.is-green { background: #22c55e; }
+    .mob-bar-seg.is-amber { background: #f59e0b; }
+    .mob-bar-seg.is-red { background: #ef4444; }
+
+    /* 7. Energy Today Card */
+    .mob-energy-card {
+        background: #14181f;
+        border: 1px solid #222c38;
+        border-radius: 12px;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        box-sizing: border-box;
+    }
+    .mob-energy-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .mob-energy-val {
+        font-size: 22px;
+        font-weight: 800;
+        color: #ffffff;
+        line-height: 1.1;
+    }
+    .mob-energy-unit {
+        font-size: 13px;
+        font-weight: 500;
+        color: #8b98a8;
+    }
+    .mob-energy-sub {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 2px;
+    }
+    .mob-energy-pct {
+        font-size: 11px;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+    }
+    .mob-energy-pct.is-up {
+        color: #f59e0b;
+    }
+    .mob-energy-pct.is-down {
+        color: #22c55e;
+    }
+
+    /* Daily Bar Chart (7 Days) */
+    .mob-energy-chart {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .mob-daily-chart-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 5px;
+        align-items: stretch;
+    }
+    .mob-daily-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        cursor: default;
+    }
+    .mob-daily-bar-track {
+        height: 68px;
+        width: 100%;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.02);
+        border-radius: 6px;
+        padding: 0 1px;
+        box-sizing: border-box;
+    }
+    .mob-daily-bar {
+        width: 100%;
+        max-width: 28px;
+        background: linear-gradient(180deg, #38bdf8 0%, #2563eb 100%);
+        border-radius: 4px 4px 2px 2px;
+        min-height: 6px;
+        transition: height 0.3s ease;
+        opacity: 0.85;
+    }
+    .mob-daily-bar.is-peak {
+        background: linear-gradient(180deg, #60a5fa 0%, #1d4ed8 100%);
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.35);
+        opacity: 0.95;
+    }
+    .mob-daily-bar.is-today {
+        background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
+        box-shadow: 0 0 8px rgba(34, 197, 94, 0.35);
+        opacity: 1;
+    }
+    .mob-daily-label {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        text-align: center;
+        line-height: 1.1;
+    }
+    .mob-daily-short {
+        font-size: 9px;
+        color: #64748b;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    .mob-daily-date {
+        font-size: 10px;
+        color: #94a3b8;
+        font-weight: 600;
+    }
+    .mob-daily-col.is-today .mob-daily-short {
+        color: #4ade80;
+    }
+    .mob-daily-col.is-today .mob-daily-date {
+        color: #ffffff;
+        font-weight: 700;
+    }
+
+    /* Energy Mini Stat Boxes */
+    .mob-energy-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    .mob-energy-stat-box {
+        background: #0f131a;
+        border: 1px solid #1a222c;
+        border-radius: 8px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .mob-stat-box-lbl {
+        font-size: 10px;
+        color: #64748b;
+    }
+    .mob-stat-box-val {
+        font-size: 13px;
+        color: #ffffff;
+    }
+    .mob-stat-box-sub {
+        font-size: 11px;
+        color: #8b98a8;
+        font-weight: normal;
+        margin-left: 2px;
+    }
+
+    /* 8. Footer */
+    .mob-footer {
+        font-size: 10.5px;
+        color: #475569;
+        text-align: center;
+        padding: 8px 0 16px;
     }
 }
 
