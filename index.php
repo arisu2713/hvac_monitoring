@@ -1799,76 +1799,512 @@ function fitExhaustFanToViewport() {
      */
     apply(MIN_CARD_H);
 }
-function setRoomReading(el, raw, unitText) {
-    const has = raw !== null && raw !== undefined;
+/* =========================================================
+   ROOM TEMP & RH — CURRENT VIEW (severity dashboard)
+   =========================================================
 
-    const num = document.createElement("span");
-    num.className = "rv-num";
-    num.textContent = has ? Number(raw).toFixed(1) : "--";
+   Same page vocabulary as the AHU dashboard so one colour means one thing:
+   summary tiles, "Issues First" / "All N" chips, a search box, and a WARNING
+   section drawn before the normal ones. Only what has no AHU equivalent is new:
+   the .rt-* tile (temperature + RH + a short reason line).
 
-    const u = document.createElement("span");
-    u.className = "rv-unit";
-    u.textContent = " " + unitText;
+   Health rule (unchanged from the old cards): a unit is WARNING when its
+   temperature or RH is above the *_max limit api_room.php sends with it.
+   OUTDOOR units carry no limit, so they are reference readings and can never
+   be WARNING. A unit with neither reading is UNKNOWN, never "normal".
+   ========================================================= */
 
-    el.textContent = "";
-    el.appendChild(num);
-    el.appendChild(u);
-}
+const ROOM_FILTER_ISSUES = "issues";
+const ROOM_FILTER_ALL = "all";
 
-function createRoomCard(unit, index) {
-    const card = document.createElement("div");
-    card.id = "roomcard" + (index + 1);
+/*
+ * View state lives outside the DOM, like ahuView, so the poll's re-render
+ * cannot reset the reader's filter or search text. searchFocused is captured at
+ * the top of renderEquipment() for the same reason it is on the AHU page.
+ */
+const roomFilter = {
+    mode: ROOM_FILTER_ISSUES,
+    searchRaw: "",
+    search: "",
+    searchFocused: false
+};
 
-    const isWarning = isOutOfRange(unit.temp, null, unit.temp_max)
-        || isOutOfRange(unit.rh, null, unit.rh_max);
+let roomSectionsHost = null;
+let roomUnits = [];
 
-    card.className = "unit-card room-card"
-        + (unit.type === "OUTDOOR" ? " room-outdoor" : "")
-        + (isWarning ? " is-warning" : "");
+/*
+ * Wide screens (desktop / wall display) draw one panel per building side by
+ * side; narrower ones keep the stacked WARNING + building sections. The query
+ * is read at render time, and a change (window resized, device rotated) redraws
+ * just the sections - the controls and the search caret are left alone.
+ */
+const ROOM_WIDE_QUERY = window.matchMedia("(min-width: 1100px)");
 
-    if (isWarning) {
-        card.dataset.band = "warning";
+ROOM_WIDE_QUERY.addEventListener("change", () => {
+    if (roomSectionsHost && roomSectionsHost.isConnected) {
+        roomRenderSections();
+    }
+});
+
+/*
+ * Building groups. device_id decides the group: 10203 = G1-G2, 10202 = G3,
+ * "daikin" = G8 (AHU 96 / 97 read from daikin_current). Anything else lands in
+ * "Other" so a new sensor is never silently dropped.
+ */
+const ROOM_GROUP_DEFS = [
+    { key: "G1-G2", label: "G1-G2 Building", subtitle: "Device 10203 · 5 rooms + outdoor", match: u => u.device_id === 10203 },
+    { key: "G3",    label: "G3 Building",    subtitle: "Device 10202 · 3 rooms + outdoor", match: u => u.device_id === 10202 },
+    { key: "G8",    label: "G8 Building",    subtitle: "Daikin AHU 96 & 97",               match: u => u.device_id === "daikin" }
+];
+
+const ROOM_GROUP_OTHER = { key: "Other", label: "Other", subtitle: "Uncategorised units" };
+
+/* null / "" / NaN stay null, so a missing reading is never treated as 0. */
+function roomNum(value) {
+    if (value === null || value === undefined || value === "") {
+        return null;
     }
 
-    const name = document.createElement("div");
-    name.className = "unit-name";
+    const n = Number(value);
 
-    const prefix = unit.type === "OUTDOOR" ? "OUTDOOR " : "ROOM ";
-    const rawName = unit.name ?? "";
+    return Number.isFinite(n) ? n : null;
+}
 
-    /*
-     * Daikin AHU 96-97 arrive already named "AHU 96" / "AHU 97". That is the
-     * identity the API sent, so it is displayed verbatim — prefixing it with
-     * "ROOM " would mislabel them. Existing ROOM / OUTDOOR names are
-     * unchanged.
-     */
-    const upperName = rawName.toUpperCase();
-    const isPrefixed = upperName.startsWith("ROOM")
-        || upperName.startsWith("OUTDOOR")
-        || upperName.startsWith("AHU");
+function roomFmt(value) {
+    const n = roomNum(value);
 
-    const displayName = isPrefixed ? rawName : prefix + rawName;
+    return n === null ? "--" : n.toFixed(1);
+}
 
-    name.textContent = displayName;
-    card.appendChild(name);
+function roomIsOutdoor(unit) {
+    return unit.type === "OUTDOOR";
+}
 
-    const tempVal = document.createElement("div");
-    tempVal.className = "unit-value room-temp";
-    setRoomReading(tempVal, unit.temp, "°C");
-    applyAlarmClass(tempVal, unit.temp, null, unit.temp_max);
-    card.appendChild(tempVal);
-
-    const rhVal = document.createElement("div");
-    rhVal.className = "unit-value room-rh";
-    setRoomReading(rhVal, unit.rh, "% RH");
-    applyAlarmClass(rhVal, unit.rh, null, unit.rh_max);
-    card.appendChild(rhVal);
-
-    return card;
+function roomGroupOf(unit) {
+    return ROOM_GROUP_DEFS.find(g => g.match(unit)) || ROOM_GROUP_OTHER;
 }
 
 /*
- * ROOM TEMP & RH hosts two views under one nav tab: the live room cards and
+ * Daikin AHU 96-97 arrive already named "AHU 96" / "AHU 97" and are shown
+ * verbatim; prefixing "ROOM " would mislabel them. Every other name is
+ * prefixed only when the API did not already do it.
+ */
+function roomDisplayName(unit) {
+    const raw = unit.name ?? "";
+    const upper = raw.toUpperCase();
+
+    if (upper.startsWith("ROOM") || upper.startsWith("OUTDOOR") || upper.startsWith("AHU")) {
+        return raw;
+    }
+
+    return (roomIsOutdoor(unit) ? "OUTDOOR " : "ROOM ") + raw;
+}
+
+/* Which of the unit's two readings are above their own limit. */
+function roomOver(unit) {
+    return {
+        temp: isOutOfRange(unit.temp, null, unit.temp_max),
+        rh: isOutOfRange(unit.rh, null, unit.rh_max)
+    };
+}
+
+/* Short reason text, e.g. "Temp 30.2 > 30.0 °C". Empty array when healthy. */
+function roomReasons(unit) {
+    const over = roomOver(unit);
+    const reasons = [];
+
+    if (over.temp) {
+        reasons.push("Temp " + roomFmt(unit.temp) + " > " + roomFmt(unit.temp_max) + " °C");
+    }
+
+    if (over.rh) {
+        reasons.push("RH " + roomFmt(unit.rh) + " > " + roomFmt(unit.rh_max) + " %");
+    }
+
+    return reasons;
+}
+
+/* HEALTH band: warning > unknown (nothing measured) > normal. */
+function roomBandOf(unit) {
+    if (roomReasons(unit).length > 0) {
+        return "warning";
+    }
+
+    if (roomNum(unit.temp) === null && roomNum(unit.rh) === null) {
+        return "unknown";
+    }
+
+    return "normal";
+}
+
+/* How far past its limit the worst reading is, as a fraction of that limit. */
+function roomSeverity(unit) {
+    let worst = 0;
+
+    [["temp", "temp_max"], ["rh", "rh_max"]].forEach(pair => {
+        const value = roomNum(unit[pair[0]]);
+        const max = roomNum(unit[pair[1]]);
+
+        if (value !== null && max !== null && max > 0 && value > max) {
+            worst = Math.max(worst, (value - max) / max);
+        }
+    });
+
+    return worst;
+}
+
+function roomMatchesSearch(unit) {
+    if (!roomFilter.search) {
+        return true;
+    }
+
+    const haystack = (roomDisplayName(unit) + " " + roomGroupOf(unit).label).toLowerCase();
+
+    return haystack.includes(roomFilter.search);
+}
+
+/* Min / max / avg of one field over a list; null when nothing was measured. */
+function roomStats(units, field) {
+    const values = units.map(u => roomNum(u[field])).filter(v => v !== null);
+
+    if (!values.length) {
+        return null;
+    }
+
+    return {
+        min: Math.min(...values),
+        max: Math.max(...values),
+        avg: values.reduce((a, b) => a + b, 0) / values.length
+    };
+}
+
+/*
+ * One room tile: name, temperature (the main value), RH with a bar, and a
+ * reason line only when the unit is WARNING. The warning band is drawn on the
+ * tile and the reason is written out, so it never depends on colour alone.
+ */
+function roomBuildTile(unit, showGroup) {
+    const band = roomBandOf(unit);
+    const over = roomOver(unit);
+
+    const tile = document.createElement("div");
+    tile.className = "rt-tile is-" + band + (roomIsOutdoor(unit) ? " is-outdoor" : "");
+
+    /* ---- Header: name (+ building when listed outside its building) ---- */
+    const head = document.createElement("div");
+    head.className = "rt-head";
+
+    const name = document.createElement("span");
+    name.className = "rt-name";
+    name.textContent = roomDisplayName(unit) + (showGroup ? " · " + roomGroupOf(unit).key : "");
+    head.appendChild(name);
+
+    if (roomIsOutdoor(unit)) {
+        const tag = document.createElement("span");
+        tag.className = "rt-tag";
+        tag.textContent = "REF";
+        tag.title = "Outdoor reference - not evaluated against a limit";
+        head.appendChild(tag);
+    }
+
+    tile.appendChild(head);
+
+    /* ---- Temperature ---- */
+    const temp = document.createElement("div");
+    temp.className = "rt-temp" + (over.temp ? " is-over" : "");
+
+    const tempNum = document.createElement("span");
+    tempNum.className = "rt-num";
+    tempNum.textContent = roomFmt(unit.temp);
+    temp.appendChild(tempNum);
+
+    const tempUnit = document.createElement("span");
+    tempUnit.className = "rt-unit";
+    tempUnit.textContent = " °C";
+    temp.appendChild(tempUnit);
+
+    tile.appendChild(temp);
+
+    /* ---- RH: value plus a thin bar with a tick at the limit ---- */
+    const rh = document.createElement("div");
+    rh.className = "rt-rh" + (over.rh ? " is-over" : "");
+
+    const rhVal = document.createElement("span");
+    rhVal.className = "rt-rh-val";
+    rhVal.textContent = roomFmt(unit.rh) + " % RH";
+    rh.appendChild(rhVal);
+
+    const rhNum = roomNum(unit.rh);
+
+    if (rhNum !== null) {
+        const bar = document.createElement("span");
+        bar.className = "rt-bar";
+
+        const fill = document.createElement("i");
+        fill.className = "rt-fill";
+        fill.style.width = Math.max(0, Math.min(100, rhNum)) + "%";
+        bar.appendChild(fill);
+
+        const rhMax = roomNum(unit.rh_max);
+
+        if (rhMax !== null) {
+            const limit = document.createElement("u");
+            limit.className = "rt-limit";
+            limit.style.left = Math.max(0, Math.min(100, rhMax)) + "%";
+            bar.appendChild(limit);
+        }
+
+        rh.appendChild(bar);
+    }
+
+    tile.appendChild(rh);
+
+    /* ---- Reason line (WARNING only) ---- */
+    if (band === "warning") {
+        const why = document.createElement("div");
+        why.className = "rt-why";
+        why.textContent = "▲ " + roomReasons(unit).join(" · ");
+        tile.appendChild(why);
+    }
+
+    return tile;
+}
+
+/*
+ * A section = header (title, optional subtitle, optional note on the right) and
+ * a grid of tiles. The AHU section classes are reused, so is-warning gives the
+ * same amber title the AHU page uses.
+ */
+function roomBuildSection(opts, units, showGroup) {
+    const section = document.createElement("section");
+    section.className = "ahu-section" + (opts.cls ? " " + opts.cls : "");
+
+    const head = document.createElement("div");
+    head.className = "ahu-section-head";
+
+    const title = document.createElement("h2");
+    title.className = "ahu-section-title";
+    title.textContent = opts.title;
+
+    if (opts.subtitle) {
+        const sub = document.createElement("span");
+        sub.className = "rt-sub";
+        sub.textContent = opts.subtitle;
+        title.appendChild(sub);
+    }
+
+    head.appendChild(title);
+
+    if (opts.note) {
+        const note = document.createElement("span");
+        note.className = "ahu-section-note";
+        note.textContent = opts.note;
+        head.appendChild(note);
+    }
+
+    section.appendChild(head);
+
+    const tiles = document.createElement("div");
+    tiles.className = "rt-tiles";
+    units.forEach(unit => tiles.appendChild(roomBuildTile(unit, showGroup)));
+    section.appendChild(tiles);
+
+    return section;
+}
+
+/* "Temp 28.9-33.8 °C avg 30.3 · RH 47.4-59.0 % avg 54.3" for a building. */
+function roomGroupNote(units) {
+    const t = roomStats(units, "temp");
+    const h = roomStats(units, "rh");
+    const parts = [];
+
+    if (t) {
+        parts.push("Temp " + t.min.toFixed(1) + "–" + t.max.toFixed(1) + " °C · avg " + t.avg.toFixed(1));
+    }
+
+    if (h) {
+        parts.push("RH " + h.min.toFixed(1) + "–" + h.max.toFixed(1) + " % · avg " + h.avg.toFixed(1));
+    }
+
+    return parts.join("  |  ");
+}
+
+/*
+ * One building panel for wide screens: header (name, subtitle, health badge),
+ * a two-metric stats strip, then the tiles in two columns. The badge counts the
+ * whole building, not just the tiles that pass the search, so it stays true
+ * while the reader filters.
+ */
+function roomBuildPanel(group, members, whole) {
+    const panel = document.createElement("section");
+    panel.className = "rt-panel";
+
+    /* ---- Header ---- */
+    const head = document.createElement("div");
+    head.className = "rt-panel-head";
+
+    const titles = document.createElement("div");
+    titles.className = "rt-panel-titles";
+
+    const title = document.createElement("h2");
+    title.className = "rt-panel-title";
+    title.textContent = group.label.toUpperCase();
+    titles.appendChild(title);
+
+    const sub = document.createElement("span");
+    sub.className = "rt-panel-sub";
+    sub.textContent = group.subtitle;
+    titles.appendChild(sub);
+
+    head.appendChild(titles);
+
+    const warnCount = whole.filter(u => roomBandOf(u) === "warning").length;
+    const badge = document.createElement("span");
+    badge.className = "rt-badge " + (warnCount > 0 ? "is-warning" : "is-ok");
+    badge.textContent = warnCount > 0 ? "▲ " + warnCount + " WARNING" : "ALL NORMAL";
+    head.appendChild(badge);
+
+    panel.appendChild(head);
+
+    /* ---- Stats strip: temperature and RH range over the whole building ---- */
+    const stats = document.createElement("div");
+    stats.className = "rt-panel-stats";
+
+    [
+        { label: "TEMP", data: roomStats(whole, "temp"), unit: "°C" },
+        { label: "RH", data: roomStats(whole, "rh"), unit: "%" }
+    ].forEach(item => {
+        const box = document.createElement("div");
+        box.className = "rt-stat";
+
+        const label = document.createElement("span");
+        label.className = "rt-stat-label";
+        label.textContent = item.label;
+        box.appendChild(label);
+
+        const range = document.createElement("span");
+        range.className = "rt-stat-range";
+        range.textContent = item.data
+            ? item.data.min.toFixed(1) + "–" + item.data.max.toFixed(1) + " " + item.unit
+            : "--";
+        box.appendChild(range);
+
+        const avg = document.createElement("span");
+        avg.className = "rt-stat-avg";
+        avg.textContent = item.data ? "avg " + item.data.avg.toFixed(1) : "";
+        box.appendChild(avg);
+
+        stats.appendChild(box);
+    });
+
+    panel.appendChild(stats);
+
+    /* ---- Tiles ---- */
+    const tiles = document.createElement("div");
+    tiles.className = "rt-tiles";
+    members.forEach(unit => tiles.appendChild(roomBuildTile(unit, false)));
+    panel.appendChild(tiles);
+
+    return panel;
+}
+
+/*
+ * Rebuilds only the sections, leaving the controls (and the search box's focus
+ * and caret) untouched, exactly like ahuRenderSections().
+ */
+function roomRenderSections() {
+    if (!roomSectionsHost) {
+        return;
+    }
+
+    roomSectionsHost.innerHTML = "";
+
+    const visible = roomUnits.filter(roomMatchesSearch);
+
+    if (visible.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "ahu-empty";
+        empty.textContent = roomFilter.search
+            ? "No units match your search."
+            : "No room units to display.";
+        roomSectionsHost.appendChild(empty);
+        return;
+    }
+
+    /*
+     * Wide layout: one panel per building, side by side. Warnings are not lifted
+     * into a separate section here (the panels already sit on one screen); under
+     * Issues First they are sorted to the top of their own panel instead, worst
+     * first. All keeps the API's tile order.
+     */
+    if (ROOM_WIDE_QUERY.matches) {
+        const panels = document.createElement("div");
+        panels.className = "rt-panels";
+
+        ROOM_GROUP_DEFS.concat([ROOM_GROUP_OTHER]).forEach(group => {
+            let members = visible.filter(u => roomGroupOf(u) === group);
+
+            if (members.length === 0) {
+                return;
+            }
+
+            if (roomFilter.mode === ROOM_FILTER_ISSUES) {
+                /* Array.sort is stable, so equal severities keep the API order. */
+                members = members.slice().sort((a, b) => roomSeverity(b) - roomSeverity(a));
+            }
+
+            panels.appendChild(roomBuildPanel(
+                group,
+                members,
+                roomUnits.filter(u => roomGroupOf(u) === group)
+            ));
+        });
+
+        roomSectionsHost.appendChild(panels);
+        return;
+    }
+
+    let remaining = visible;
+
+    /* Issues First: every WARNING unit, worst first, before any building. */
+    if (roomFilter.mode === ROOM_FILTER_ISSUES) {
+        const warnings = visible
+            .filter(u => roomBandOf(u) === "warning")
+            .sort((a, b) => roomSeverity(b) - roomSeverity(a)
+                || roomDisplayName(a).localeCompare(roomDisplayName(b), undefined, { numeric: true }));
+
+        if (warnings.length) {
+            roomSectionsHost.appendChild(roomBuildSection({
+                cls: "is-warning",
+                title: "WARNING",
+                note: warnings.length + (warnings.length === 1 ? " unit" : " units") + " above limit"
+            }, warnings, true));
+        }
+
+        remaining = visible.filter(u => roomBandOf(u) !== "warning");
+    }
+
+    /* Then one section per building, keeping the API's own tile order. */
+    ROOM_GROUP_DEFS.concat([ROOM_GROUP_OTHER]).forEach(group => {
+        const members = remaining.filter(u => roomGroupOf(u) === group);
+
+        if (members.length === 0) {
+            return;
+        }
+
+        /* Stats describe the whole building, not just the tiles shown. */
+        const whole = roomUnits.filter(u => roomGroupOf(u) === group);
+
+        roomSectionsHost.appendChild(roomBuildSection({
+            title: group.label.toUpperCase(),
+            subtitle: group.subtitle,
+            note: roomGroupNote(whole)
+        }, members, false));
+    });
+}
+
+/*
+ * ROOM TEMP & RH hosts two views under one nav tab: the live room tiles and
  * the hourly history table. The switch is rendered first and the grid is
  * cleared here (rather than only in renderEquipment) because switching views
  * re-renders this page directly, without going through renderEquipment.
@@ -1883,13 +2319,14 @@ function renderRoomTempRh() {
     ], roomView, selectRoomView);
 
     grid.innerHTML = "";
+    roomSectionsHost = null;
 
     if (roomView === ROOM_VIEW_HOURLY) {
         renderRoomHourly();
         return;
     }
 
-    /* Current view has no filters — the switch is the only control. */
+    /* The Current view's own controls live inside the page, not the filter bar. */
     clearPageFilters();
 
     const data = allData.ROOM_TEMP_RH;
@@ -1899,132 +2336,96 @@ function renderRoomTempRh() {
         return;
     }
 
+    roomUnits = data;
     unitCount.textContent = data.length + " units";
 
-    /*
-     * -----------------------------------------------------------------------
-     * GROUP DEFINITION
-     *  G1-G2  → device_id 10203  (ROOM 1056, 1422, 8302, OVC, SE 41 + OUTDOOR G1)
-     *  G3     → device_id 10202  (ROOM 20014, 20110, 9652 + OUTDOOR G3)
-     *  G8     → device_id 'daikin' (AHU 96, AHU 97 from daikin_current)
-     * -----------------------------------------------------------------------
-     */
-    const GROUP_DEFS = [
-        {
-            key: "G1-G2", label: "G1-G2 Building", subtitle: "Device 10203 · 5 rooms + outdoor",
-            icon: "🏢", match: u => u.device_id === 10203
-        },
-        {
-            key: "G3",    label: "G3 Building",    subtitle: "Device 10202 · 3 rooms + outdoor",
-            icon: "🏢", match: u => u.device_id === 10202
-        },
-        {
-            key: "G8",    label: "G8 Building",    subtitle: "Daikin AHU 96 & 97",
-            icon: "❄️", match: u => u.device_id === "daikin"
-        },
-    ];
+    /* ---- Counts ---- */
+    const counts = { warning: 0, normal: 0, unknown: 0 };
+    data.forEach(unit => { counts[roomBandOf(unit)] += 1; });
 
-    /* Bucket each unit into a group; uncategorised fall into "Other" */
-    const buckets = {};
-    GROUP_DEFS.forEach(g => { buckets[g.key] = []; });
-    buckets["Other"] = [];
+    /* Indoor averages exclude OUTDOOR reference sensors. */
+    const indoor = data.filter(u => !roomIsOutdoor(u));
+    const avgTemp = roomStats(indoor, "temp");
+    const avgRh = roomStats(indoor, "rh");
 
-    data.forEach(unit => {
-        const grp = GROUP_DEFS.find(g => g.match(unit));
-        if (grp) buckets[grp.key].push(unit);
-        else     buckets["Other"].push(unit);
+    const page = document.createElement("div");
+    page.className = "room-dashboard";
+
+    /* ---- Summary tiles ---- */
+    const summary = document.createElement("div");
+    summary.className = "ahu-summary rt-summary";
+    summary.appendChild(ahuBuildTile("WARNING", counts.warning, "is-warning"));
+    summary.appendChild(ahuBuildTile("NORMAL", counts.normal, "is-normal"));
+    summary.appendChild(ahuBuildTile("UNKNOWN", counts.unknown, "is-unknown"));
+    summary.appendChild(ahuBuildTile("INDOOR AVG TEMP", avgTemp ? avgTemp.avg.toFixed(1) + " °C" : "--", "rt-avg"));
+    summary.appendChild(ahuBuildTile("INDOOR AVG RH", avgRh ? avgRh.avg.toFixed(1) + " %" : "--", "rt-avg"));
+    page.appendChild(summary);
+
+    /* ---- Chips + search ---- */
+    const controls = document.createElement("div");
+    controls.className = "ahu-controls";
+
+    [
+        { mode: ROOM_FILTER_ISSUES, label: "Issues First" },
+        { mode: ROOM_FILTER_ALL, label: "All " + data.length }
+    ].forEach(chip => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ahu-chip" + (roomFilter.mode === chip.mode ? " is-on" : "");
+        button.textContent = chip.label;
+        button.addEventListener("click", () => {
+            if (roomFilter.mode === chip.mode) {
+                return;
+            }
+
+            roomFilter.mode = chip.mode;
+            controls.querySelectorAll(".ahu-chip").forEach(other => {
+                other.classList.toggle("is-on", other === button);
+            });
+            roomRenderSections();
+        });
+        controls.appendChild(button);
     });
 
-    /* Compute per-group stats — null/NaN values are excluded */
-    function computeStats(units, field) {
-        const vals = units.map(u => u[field]).filter(v => v !== null && v !== undefined && !isNaN(v));
-        if (!vals.length) return null;
-        const min = Math.min(...vals);
-        const max = Math.max(...vals);
-        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-        return { min, max, avg };
-    }
-
-    /* Build one KPI panel for a single metric (temp or rh) */
-    function buildStatsMetric(cssClass, labelText, stats, unitStr) {
-        if (!stats) return "";
-        const f = (v, d) => v.toFixed(d);
-        const dec = unitStr.includes("RH") ? 1 : 1;
-        return `
-        <div class="room-stats-metric ${cssClass}">
-            <div class="room-stats-metric-label">${labelText}</div>
-            <div class="room-stats-values">
-                <div class="room-kpi kpi-min">
-                    <span class="room-kpi-label">MIN</span>
-                    <span class="room-kpi-value">${f(stats.min, dec)}</span>
-                    <span class="room-kpi-unit">${unitStr}</span>
-                </div>
-                <div class="room-kpi kpi-avg">
-                    <span class="room-kpi-label">AVG</span>
-                    <span class="room-kpi-value">${f(stats.avg, dec)}</span>
-                    <span class="room-kpi-unit">${unitStr}</span>
-                </div>
-                <div class="room-kpi kpi-max">
-                    <span class="room-kpi-label">MAX</span>
-                    <span class="room-kpi-value">${f(stats.max, dec)}</span>
-                    <span class="room-kpi-unit">${unitStr}</span>
-                </div>
-            </div>
-        </div>`;
-    }
-
-    /* Build one complete group section */
-    function buildGroupSection(gDef, units) {
-        if (!units.length) return null;
-
-        const tempStats = computeStats(units, "temp");
-        const rhStats   = computeStats(units, "rh");
-
-        const section = document.createElement("div");
-        section.className = "room-group-section";
-        section.dataset.group = gDef.key;
-
-        /* Header */
-        const header = document.createElement("div");
-        header.className = "room-group-header";
-        header.innerHTML = `
-            <div class="room-group-badge">${gDef.icon}</div>
-            <div class="room-group-info">
-                <span class="room-group-title">${gDef.label}</span>
-                <span class="room-group-subtitle">${gDef.subtitle || ""}</span>
-            </div>
-            <span class="room-group-count">${units.length} unit${units.length !== 1 ? "s" : ""}</span>
-        `;
-        section.appendChild(header);
-
-        /* Stats panel */
-        const statsPanel = document.createElement("div");
-        statsPanel.className = "room-stats-panel";
-        statsPanel.innerHTML =
-            buildStatsMetric("is-temp", "TEMPERATURE", tempStats, "°C") +
-            buildStatsMetric("is-rh",   "HUMIDITY",    rhStats,   "% RH");
-        section.appendChild(statsPanel);
-
-        /* Cards grid */
-        const cardsGrid = document.createElement("div");
-        cardsGrid.className = "room-group-cards";
-        units.forEach((unit, idx) => cardsGrid.appendChild(createRoomCard(unit, idx)));
-        section.appendChild(cardsGrid);
-
-        return section;
-    }
-
-    /* Render groups in defined order */
-    GROUP_DEFS.forEach(gDef => {
-        const sec = buildGroupSection(gDef, buckets[gDef.key]);
-        if (sec) grid.appendChild(sec);
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "ahu-search room-search";
+    search.placeholder = "Search…";
+    search.value = roomFilter.searchRaw;
+    search.setAttribute("aria-label", "Search room units");
+    search.addEventListener("input", () => {
+        roomFilter.searchRaw = search.value;
+        roomFilter.search = search.value.trim().toLowerCase();
+        roomRenderSections();
     });
+    controls.appendChild(search);
 
-    /* Uncategorised fallback */
-    if (buckets["Other"].length) {
-        const otherDef = { key: "Other", label: "Other", subtitle: "Uncategorised units", icon: "📍" };
-        const sec = buildGroupSection(otherDef, buckets["Other"]);
-        if (sec) grid.appendChild(sec);
+    page.appendChild(controls);
+
+    /* ---- Sections ---- */
+    const host = document.createElement("div");
+    roomSectionsHost = host;
+    page.appendChild(host);
+
+    /* ---- Footnote: the limits in force, read from the data itself ---- */
+    const limited = data.find(u => !roomIsOutdoor(u) && roomNum(u.temp_max) !== null);
+
+    if (limited) {
+        const note = document.createElement("div");
+        note.className = "rt-note";
+        note.textContent = "Limits: temp ≤ " + roomFmt(limited.temp_max) + " °C, RH ≤ "
+            + roomFmt(limited.rh_max) + " %. Outdoor (REF) sensors are not evaluated.";
+        page.appendChild(note);
+    }
+
+    grid.appendChild(page);
+
+    roomRenderSections();
+
+    /* The poll rebuilds this subtree; hand the caret back if it was in the box. */
+    if (roomFilter.searchFocused) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
     }
 }
 
@@ -8097,6 +8498,8 @@ function renderEquipment() {
         && active.classList.contains("ahu-search"));
     hvacScView.searchFocused = !!(active && active.classList
         && active.classList.contains("hsc-search"));
+    roomFilter.searchFocused = !!(active && active.classList
+        && active.classList.contains("room-search"));
 
     grid.innerHTML = "";
 

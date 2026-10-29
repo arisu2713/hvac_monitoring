@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    HVAC MONITORING
    TV / SCADA WALL DISPLAY
    ========================================================= */
@@ -169,140 +169,6 @@ body {
     margin-top: 6px;
     font-size: 12px;
     font-weight: 700;
-}
-
-/* =========================================================
-   ROOM TEMP & RH SECTION STYLES
-   ========================================================= */
-
-/* Dedicated responsive grid for Room cards (flat/ungrouped fallback) */
-.equipment-grid:has(.room-card):not(:has(.room-group-section)) {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
-    gap: 12px !important;
-    padding: 0 20px 24px !important;
-}
-
-/* Card Container (Clean SCADA Theme, no ON-OFF status colors) */
-.unit-card.room-card {
-    background: #1c1f24;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 12px 10px;
-    min-height: 88px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-
-.unit-card.room-card:hover {
-    background: #22272e;
-    border-color: #58a6ff;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(88, 166, 255, 0.15);
-}
-
-/* Room / Outdoor Name */
-.room-card .unit-name {
-    color: #58a6ff;
-    font-size: 15px;
-    font-weight: 800;
-    line-height: 1.2;
-    padding-bottom: 6px;
-    margin-bottom: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    letter-spacing: 0.5px;
-    width: 100%;
-}
-
-/* Sensor Values */
-.room-card .unit-value {
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1.35;
-    width: 100%;
-}
-
-.room-card .room-temp {
-    color: #f0f6fc;
-    margin-top: 2px;
-}
-
-.room-card .room-rh {
-    color: #79c0ff;
-    margin-top: 3px;
-}
-
-/* Responsive Desktop (min-width: 1024px) */
-@media (min-width: 1024px) {
-    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
-        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)) !important;
-        gap: 16px !important;
-    }
-
-    .unit-card.room-card {
-        min-height: 96px;
-        padding: 14px 12px;
-    }
-
-    .room-card .unit-name {
-        font-size: 16px;
-    }
-
-    .room-card .unit-value {
-        font-size: 14px;
-    }
-}
-
-/* Large Display / SCADA Wall Display (min-width: 1600px) */
-@media (min-width: 1600px) {
-    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
-        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)) !important;
-        gap: 18px !important;
-        padding: 0 30px 30px !important;
-    }
-
-    .unit-card.room-card {
-        min-height: 104px;
-        padding: 16px 14px;
-    }
-
-    .room-card .unit-name {
-        font-size: 17px;
-    }
-
-    .room-card .unit-value {
-        font-size: 15px;
-    }
-}
-
-/* Responsive Mobile (max-width: 650px) */
-@media (max-width: 650px) {
-    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
-        grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)) !important;
-        gap: 8px !important;
-        padding: 0 12px 16px !important;
-    }
-
-    .unit-card.room-card {
-        min-height: 80px;
-        padding: 8px 6px;
-        border-radius: 6px;
-    }
-
-    .room-card .unit-name {
-        font-size: 13.5px;
-        margin-bottom: 4px;
-        padding-bottom: 4px;
-    }
-
-    .room-card .unit-value {
-        font-size: 12px;
-    }
 }
 
 /* =========================================================
@@ -705,6 +571,24 @@ footer {
     }
 
     body:has(.ahu-dashboard) {
+        height: auto;
+    }
+
+    /*
+     * ROOM TEMP & RH severity dashboard: same clip, same escape hatch as the
+     * AHU dashboard above. The summary row, the controls row and one section
+     * per building are taller than the flat grid they replace, so on a short
+     * wall display html/body (pinned to the viewport height with
+     * overflow-y: hidden in this band) would hide the last building.
+     * Scoped to .room-dashboard, which only the Current view emits, so the
+     * hourly history page and every other page keep the clip they have.
+     */
+    html:has(.room-dashboard) {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    body:has(.room-dashboard) {
         height: auto;
     }
 
@@ -1444,31 +1328,6 @@ footer {
 }
 
 
-/* ROOM TEMP & RH - teal theme */
-.unit-card.room-card {
-    background: linear-gradient(160deg, #0f3a40 0%, #0b2a30 100%);
-    border: 1px solid #1f7a86;
-}
-
-.unit-card.room-card:hover {
-    background: #124650;
-    border-color: #2dd4bf;
-    box-shadow: 0 4px 12px rgba(45, 212, 191, 0.2);
-}
-
-.room-card .unit-name {
-    color: #5eead4;
-    border-bottom-color: rgba(94, 234, 212, 0.2);
-}
-
-.room-card .room-temp {
-    color: #ffffff;
-}
-
-.room-card .room-rh {
-    color: #7dd3fc;
-}
-
 
 /* DB update shown in topbar (always visible, even if footer is pushed off-screen) */
 .connection {
@@ -1536,27 +1395,6 @@ footer {
     .app-version {
         font-size: 9px;
     }
-}
-
-/* OUTDOOR cards - indigo theme */
-.unit-card.room-card.room-outdoor {
-    background: linear-gradient(160deg, #2a2f5c 0%, #1c2044 100%);
-    border: 1px solid #5561c9;
-}
-
-.unit-card.room-card.room-outdoor:hover {
-    background: #333a72;
-    border-color: #818cf8;
-    box-shadow: 0 4px 12px rgba(129, 140, 248, 0.25);
-}
-
-.room-card.room-outdoor .unit-name {
-    color: #a5b4fc;
-    border-bottom-color: rgba(165, 180, 252, 0.2);
-}
-
-.room-card.room-outdoor .room-rh {
-    color: #c7d2fe;
 }
 
 /* =========================================================
@@ -3969,278 +3807,395 @@ html:has(.alarm-page) .alarm-page {
 .switch-button:last-child { border-radius: 0 12px 12px 0; border-left: 0; }
 .switch-button.is-active { background: #e6ecf3; color: #0e1319; border-color: #e6ecf3; }
 
-/* ---- Current: room cards ---- */
-.equipment-grid:has(.room-card) .unit-card.room-card {
-    align-items: flex-start;
-    text-align: left;
-    justify-content: flex-start;
-    background: #151b22;
-    border: 1px solid #232d38;
-    border-radius: 16px;
-    padding: 14px;
-    min-height: 0;
-}
-.equipment-grid:has(.room-card) .unit-card.room-card:hover {
-    background: #19212a;
-    border-color: #35506b;
-    transform: none;
-    box-shadow: none;
-}
-.equipment-grid:has(.room-card) .unit-card.room-card.room-outdoor {
-    background: #171a2a;
-    border-color: #2d3358;
-}
-.room-card .unit-name {
-    color: #8b98a8;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .08em;
-    border-bottom: 0;
-    padding: 0;
-    margin: 0 0 8px;
-}
-.room-card.room-outdoor .unit-name { color: #a5b4fc; }
-.room-card .room-temp { color: #e6ecf3; margin: 0; line-height: 1.1; }
-.room-card .room-rh { color: #79b8ff; margin-top: 8px; line-height: 1.1; }
-.room-card.room-outdoor .room-rh { color: #a9b6ff; }
-.room-card .rv-num {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-weight: 600;
-}
-.room-card .room-temp .rv-num { font-size: 28px; }
-.room-card .room-rh .rv-num { font-size: 18px; }
-.room-card .rv-unit { font-size: 12px; font-weight: 500; color: #8b98a8; }
+/* =========================================================
+   ROOM TEMP & RH - CURRENT VIEW (severity dashboard)
+   =========================================================
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   ROOM TEMP & RH â€” CURRENT VIEW: Group sections + Power BI-style stats
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   Built from the AHU dashboard's own parts (.ahu-summary / .ahu-tile /
+   .ahu-controls / .ahu-chip / .ahu-search / .ahu-section) so the amber WARNING
+   means exactly what it means on the AHU page. Only what has no AHU equivalent
+   is defined here: the room tile (.rt-*), the 5-tile summary row and the
+   footnote. The old .room-card / .room-group-* / .room-kpi-* rules were removed
+   with the code that emitted them.
+   ========================================================= */
 
-/* Override grid default when we use group sections (grid becomes a plain flex column) */
-.equipment-grid:has(.room-group-section) {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 20px !important;
-    padding: 0 0 24px !important;
-    grid-template-columns: none !important;
+.equipment-grid:has(.room-dashboard) {
+    display: block;
+    padding: 0 20px 20px;
 }
 
-/* --- Group section wrapper --- */
-.room-group-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    border-radius: 16px;
-    overflow: hidden;
-    border: 1px solid #1e2d3d;
-    background: #0c1118;
+/* Five summary tiles: WARNING / NORMAL / UNKNOWN / INDOOR AVG TEMP / INDOOR AVG RH. */
+.ahu-summary.rt-summary {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
-/* --- Group header bar --- */
-.room-group-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 18px;
-    border-bottom: 1px solid #1e2d3d;
-    position: relative;
-}
-/* accent left stripe â€” colour set per-group via data-group attr */
-.room-group-header::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 4px;
-    border-radius: 0;
-}
-.room-group-section[data-group="G1-G2"] .room-group-header { background: linear-gradient(90deg, #0d1f35 0%, #0c1118 60%); }
-.room-group-section[data-group="G1-G2"] .room-group-header::before { background: #2563eb; }
-.room-group-section[data-group="G3"] .room-group-header { background: linear-gradient(90deg, #0f1f16 0%, #0c1118 60%); }
-.room-group-section[data-group="G3"] .room-group-header::before { background: #16a34a; }
-.room-group-section[data-group="G8"] .room-group-header { background: linear-gradient(90deg, #1a1226 0%, #0c1118 60%); }
-.room-group-section[data-group="G8"] .room-group-header::before { background: #9333ea; }
-.room-group-section[data-group="Other"] .room-group-header { background: linear-gradient(90deg, #1a1610 0%, #0c1118 60%); }
-.room-group-section[data-group="Other"] .room-group-header::before { background: #ca8a04; }
-
-.room-group-badge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px; height: 32px;
-    border-radius: 8px;
-    font-size: 16px;
-    line-height: 1;
-    flex-shrink: 0;
-}
-.room-group-section[data-group="G1-G2"] .room-group-badge { background: rgba(37,99,235,.18); }
-.room-group-section[data-group="G3"]    .room-group-badge { background: rgba(22,163,74,.18); }
-.room-group-section[data-group="G8"]    .room-group-badge { background: rgba(147,51,234,.18); }
-.room-group-section[data-group="Other"] .room-group-badge { background: rgba(202,138,4,.18); }
-
-.room-group-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.room-group-title {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: .1em;
+.ahu-tile.rt-avg .ahu-tile-value {
     color: #e6ecf3;
-    text-transform: uppercase;
-    line-height: 1;
 }
-.room-group-subtitle {
-    font-size: 10px;
+
+.ahu-tile.rt-avg .ahu-tile-label {
+    color: #9aa7b3;
+}
+
+/* Building subtitle, shown beside the building name in the section header. */
+.room-dashboard .ahu-section-head {
+    flex-wrap: wrap;
+}
+
+.rt-sub {
+    margin-left: 10px;
     font-weight: 500;
-    color: #4d6478;
-    letter-spacing: .04em;
-}
-.room-group-count {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 10px;
-    border-radius: 20px;
-    background: rgba(255,255,255,.05);
-    border: 1px solid #232d38;
-    font-size: 11px;
-    font-weight: 600;
-    color: #8b98a8;
-    letter-spacing: .04em;
-    white-space: nowrap;
+    letter-spacing: 0;
+    color: #6f7c88;
 }
 
-/* --- Power BI-style stats panel --- */
-.room-stats-panel {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0;
-    border-bottom: 1px solid #1e2d3d;
-}
-.room-stats-metric {
-    padding: 12px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.room-stats-metric + .room-stats-metric {
-    border-left: 1px solid #1e2d3d;
-}
-.room-stats-metric-label {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: .14em;
-    text-transform: uppercase;
-    color: #4d6478;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.room-stats-metric-label::before {
-    content: "";
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-}
-.room-stats-metric.is-temp .room-stats-metric-label::before { background: #e6ecf3; }
-.room-stats-metric.is-rh  .room-stats-metric-label::before { background: #58a6ff; }
-
-.room-stats-values {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid #1e2d3d;
-}
-.room-kpi {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 6px;
-    gap: 2px;
-    position: relative;
-}
-.room-kpi + .room-kpi {
-    border-left: 1px solid #1e2d3d;
-}
-.room-kpi.kpi-min { background: #08111e; }
-.room-kpi.kpi-avg { background: #0a150f; }
-.room-kpi.kpi-max { background: #131006; }
-
-.room-kpi-label {
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-}
-.room-kpi.kpi-min .room-kpi-label { color: #2563eb; }
-.room-kpi.kpi-avg .room-kpi-label { color: #16a34a; }
-.room-kpi.kpi-max .room-kpi-label { color: #d97706; }
-
-.room-kpi-value {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1;
-}
-.room-kpi.kpi-min .room-kpi-value { color: #58a6ff; }
-.room-kpi.kpi-avg .room-kpi-value { color: #56d364; }
-.room-kpi.kpi-max .room-kpi-value { color: #f5b83d; }
-
-.room-kpi-unit {
-    font-size: 9px;
-    font-weight: 500;
-    color: #4d6478;
-}
-
-/* --- Cards grid inside each group --- */
-.room-group-cards {
-    padding: 14px;
+/* auto-fill: as many tiles per row as the width allows, no per-breakpoint maths. */
+.rt-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 10px;
-    background: #0c1118;
-}
-@media (min-width: 1280px) {
-    .room-group-cards {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    }
-    .room-kpi-value { font-size: 20px; }
-    .room-stats-panel { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 650px) {
-    .room-stats-panel { grid-template-columns: 1fr; }
-    .room-stats-metric + .room-stats-metric { border-left: none; border-top: 1px solid #1e2d3d; }
-    .room-group-cards { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 10px; }
-    .room-kpi-value { font-size: 15px; }
+    gap: 8px;
 }
 
-/* ---- Current: room card WARNING (aligned with AHU dashboard warning) ---- */
-.equipment-grid:has(.room-card) .unit-card.room-card.is-warning {
+/* --- Tile surface: one per health band --- */
+.rt-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #151b22;
+    border: 1px solid #222b34;
+}
+
+.rt-tile.is-warning {
+    padding: 9px 11px;
     background: #f5b83d;
     border: 2px solid #ffd98a;
     color: #1a1300;
 }
-.equipment-grid:has(.room-card) .unit-card.room-card.is-warning:hover {
-    background: #e5a82d;
-    border-color: #ffd98a;
+
+.rt-tile.is-unknown {
+    background: #1b222a;
+    border: 1px dashed #2c3640;
 }
-.room-card.is-warning .unit-name {
+
+/* OUTDOOR is reference only: dashed indigo, never evaluated. */
+.rt-tile.is-outdoor:not(.is-warning) {
+    background: #171a2a;
+    border: 1px dashed #2d3358;
+}
+
+.rt-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.rt-name {
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: #9aa7b3;
+    overflow-wrap: anywhere;
+}
+
+.rt-tile.is-warning .rt-name {
     color: #1a1300;
 }
-.room-card.is-warning .room-temp {
+
+.rt-tile.is-outdoor .rt-name {
+    color: #a5b4fc;
+}
+
+.rt-tag {
+    flex: none;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .38);
+    color: #a5b4fc;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 1;
+}
+
+/* Temperature is the tile's main value. */
+.rt-temp {
+    color: #e6ecf3;
+    line-height: 1.1;
+}
+
+.rt-num {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 26px;
+    font-weight: 600;
+}
+
+.rt-unit {
+    font-size: 12px;
+    font-weight: 500;
+    color: #8b98a8;
+}
+
+.rt-tile.is-warning .rt-temp {
     color: #1a1300;
 }
-.room-card.is-warning .room-rh {
-    color: #2e2205;
-}
-.room-card.is-warning .rv-unit {
+
+.rt-tile.is-warning .rt-unit {
     color: #5a450e;
 }
+
+/* The reading that broke its limit is underlined, so it is found at a glance. */
+.rt-temp.is-over .rt-num,
+.rt-rh.is-over .rt-rh-val {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+}
+
+/* RH: value on the left, a thin bar with a tick at the limit on the right. */
+.rt-rh {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #79b8ff;
+}
+
+.rt-rh-val {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.rt-tile.is-warning .rt-rh {
+    color: #2e2205;
+}
+
+.rt-bar {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 24px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, .1);
+}
+
+.rt-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 2px;
+    background: #58a6ff;
+}
+
+.rt-limit {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+    background: #e6ecf3;
+    text-decoration: none;
+    opacity: .75;
+}
+
+.rt-tile.is-warning .rt-bar {
+    background: rgba(0, 0, 0, .18);
+}
+
+.rt-tile.is-warning .rt-fill,
+.rt-tile.is-warning .rt-limit {
+    background: #1a1300;
+}
+
+/* Written reason, so a warning never depends on colour alone. */
+.rt-why {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    line-height: 1.25;
+    color: #1a1300;
+}
+
+.rt-note {
+    margin-top: 14px;
+    padding: 0 2px;
+    color: #9aa7b3;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+@media (min-width: 1100px) {
+    .rt-tiles {
+        grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .equipment-grid:has(.room-dashboard) {
+        padding: 0 10px 16px;
+    }
+
+    .ahu-summary.rt-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 600px) {
+    .equipment-grid:has(.room-dashboard) {
+        padding: 0 8px 12px;
+    }
+
+    .ahu-summary.rt-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    /* An odd tile out takes the full row instead of leaving a hole. */
+    .ahu-summary.rt-summary .ahu-tile:last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+    }
+
+    .rt-tiles {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .rt-num {
+        font-size: 24px;
+    }
+}
+
+
+/* --- Wide screens: one panel per building, side by side --- */
+
+.rt-panels {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.rt-panel {
+    min-width: 0;
+    border: 1px solid #222b34;
+    border-radius: 12px;
+    background: #11171d;
+    overflow: hidden;
+}
+
+.rt-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 10px;
+}
+
+.rt-panel-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.rt-panel-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: #e6ecf3;
+}
+
+.rt-panel-sub {
+    font-size: 11px;
+    color: #6f7c88;
+}
+
+/* Health badge: written text plus colour, never colour alone. */
+.rt-badge {
+    flex: none;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    white-space: nowrap;
+}
+
+.rt-badge.is-warning {
+    background: #f5b83d;
+    color: #1a1300;
+}
+
+.rt-badge.is-ok {
+    border: 1px solid #1f3a2b;
+    background: rgba(74, 222, 128, .08);
+    color: #4ade80;
+}
+
+.rt-panel-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid #1c242c;
+    border-bottom: 1px solid #1c242c;
+}
+
+.rt-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 14px;
+}
+
+.rt-stat + .rt-stat {
+    border-left: 1px solid #1c242c;
+}
+
+.rt-stat-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: #6f7c88;
+}
+
+.rt-stat-range {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: #e6ecf3;
+}
+
+.rt-stat-avg {
+    font-size: 11px;
+    color: #9aa7b3;
+}
+
+/* Tiles inside a panel: two columns, however wide the screen is. */
+.rt-panel .rt-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px;
+}
+
+/* Desktop: keep the summary tiles and the search box a sensible size. */
+@media (min-width: 1100px) {
+    .ahu-summary.rt-summary {
+        grid-template-columns: repeat(5, minmax(0, 230px));
+        justify-content: start;
+    }
+
+    .room-dashboard .ahu-search {
+        flex: 0 1 320px;
+    }
+
+    .rt-panel .rt-num {
+        font-size: 28px;
+    }
+}
+
 
 /* ---- Hourly history: compact table with a sticky Hour column ---- */
 .history-page.is-room-history .history-table-wrap {
