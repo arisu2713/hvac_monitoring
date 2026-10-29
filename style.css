@@ -4011,6 +4011,144 @@ html:has(.alarm-page) .alarm-page {
 .room-card .room-rh .rv-num { font-size: 18px; }
 .room-card .rv-unit { font-size: 12px; font-weight: 500; color: #8b98a8; }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   ROOM TEMP & RH — CURRENT VIEW: Group sections + Power BI-style stats
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Override grid default when we use group sections (grid becomes a plain column) */
+.equipment-grid:has(.room-group-section) {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    padding: 0;
+}
+
+/* --- Group section wrapper --- */
+.room-group-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* --- Group header --- */
+.room-group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: #0d1117;
+    border: 1px solid #232d38;
+    border-radius: 12px;
+}
+.room-group-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+.room-group-title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: #c9d1d9;
+    text-transform: uppercase;
+}
+.room-group-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: #4d6478;
+    letter-spacing: .05em;
+}
+
+/* --- Power BI-style stats bar --- */
+.room-stats-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #0d1117;
+    border: 1px solid #1c2730;
+    border-radius: 10px;
+}
+.room-stat-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.room-stat-group + .room-stat-group {
+    padding-left: 14px;
+    border-left: 1px solid #232d38;
+}
+.room-stat-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: #4d6478;
+    text-transform: uppercase;
+    min-width: 32px;
+}
+.room-stat-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.room-stat-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.room-stat-chip .chip-key {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .7;
+}
+.room-stat-chip .chip-val {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    font-size: 12px;
+}
+.room-stat-chip .chip-unit {
+    font-size: 9px;
+    font-weight: 500;
+    opacity: .7;
+    margin-left: 2px;
+}
+/* MIN chip — cool blue */
+.room-stat-chip.stat-min {
+    background: #0e1e30;
+    border-color: #1e3a55;
+    color: #58a6ff;
+}
+.room-stat-chip.stat-min .chip-key { color: #79b8ff; }
+/* AVG chip — neutral / accent */
+.room-stat-chip.stat-avg {
+    background: #141e1a;
+    border-color: #1d3328;
+    color: #56d364;
+}
+.room-stat-chip.stat-avg .chip-key { color: #3fb950; }
+/* MAX chip — warm amber */
+.room-stat-chip.stat-max {
+    background: #1e180a;
+    border-color: #3a2e0a;
+    color: #f5b83d;
+}
+.room-stat-chip.stat-max .chip-key { color: #d29922; }
+
+/* --- Cards grid inside each group --- */
+.room-group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+}
+
 /* ---- Current: room card WARNING (aligned with AHU dashboard warning) ---- */
 .equipment-grid:has(.room-card) .unit-card.room-card.is-warning {
     background: #f5b83d;

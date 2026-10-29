@@ -1901,9 +1901,121 @@ function renderRoomTempRh() {
 
     unitCount.textContent = data.length + " units";
 
-    data.forEach((unit, index) => {
-        grid.appendChild(createRoomCard(unit, index));
+    /*
+     * -----------------------------------------------------------------------
+     * GROUP DEFINITION
+     *  G1-G2  → device_id 10203  (ROOM 1056, 1422, 8302, OVC, SE 41 + OUTDOOR G1)
+     *  G3     → device_id 10202  (ROOM 20014, 20110, 9652 + OUTDOOR G3)
+     *  G8     → device_id 'daikin' (AHU 96, AHU 97 from daikin_current)
+     * -----------------------------------------------------------------------
+     */
+    const GROUP_DEFS = [
+        { key: "G1-G2", label: "G1-G2 Building", icon: "🏢", match: u => u.device_id === 10203 },
+        { key: "G3",    label: "G3 Building",    icon: "🏢", match: u => u.device_id === 10202 },
+        { key: "G8",    label: "G8 Building (Daikin AHU)", icon: "❄️", match: u => u.device_id === "daikin" },
+    ];
+
+    /* Bucket each unit into a group; uncategorised fall into "Other" */
+    const buckets = {};
+    GROUP_DEFS.forEach(g => { buckets[g.key] = []; });
+    buckets["Other"] = [];
+
+    data.forEach(unit => {
+        const grp = GROUP_DEFS.find(g => g.match(unit));
+        if (grp) buckets[grp.key].push(unit);
+        else      buckets["Other"].push(unit);
     });
+
+    /*
+     * Helper: compute per-group Power BI-style stats from numeric values.
+     * Null / undefined values are excluded from calculations.
+     */
+    function computeStats(units, field) {
+        const vals = units.map(u => u[field]).filter(v => v !== null && v !== undefined && !isNaN(v));
+        if (!vals.length) return null;
+        const min = Math.min(...vals);
+        const max = Math.max(...vals);
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+        return { min, max, avg, count: vals.length };
+    }
+
+    function fmtTemp(v) { return v !== null ? v.toFixed(1) : "—"; }
+    function fmtRh(v)   { return v !== null ? v.toFixed(1) : "—"; }
+
+    /* Build one group section including header + stats bar + cards grid */
+    function buildGroupSection(gDef, units) {
+        if (!units.length) return null;
+
+        const section = document.createElement("div");
+        section.className = "room-group-section";
+
+        /* --- Header --- */
+        const header = document.createElement("div");
+        header.className = "room-group-header";
+        header.innerHTML = `
+            <span class="room-group-icon">${gDef.icon}</span>
+            <span class="room-group-title">${gDef.label}</span>
+            <span class="room-group-count">${units.length} unit${units.length !== 1 ? "s" : ""}</span>
+        `;
+        section.appendChild(header);
+
+        /* --- Stats bar --- */
+        const tempStats = computeStats(units, "temp");
+        const rhStats   = computeStats(units, "rh");
+
+        const statsBar = document.createElement("div");
+        statsBar.className = "room-stats-bar";
+
+        function statChip(label, stats, unit, decimals) {
+            if (!stats) return "";
+            const fmt = v => v.toFixed(decimals);
+            return `
+                <div class="room-stat-group">
+                    <span class="room-stat-label">${label}</span>
+                    <div class="room-stat-chips">
+                        <span class="room-stat-chip stat-min" title="Minimum">
+                            <span class="chip-key">MIN</span>
+                            <span class="chip-val">${fmt(stats.min)}<span class="chip-unit">${unit}</span></span>
+                        </span>
+                        <span class="room-stat-chip stat-avg" title="Average">
+                            <span class="chip-key">AVG</span>
+                            <span class="chip-val">${fmt(stats.avg)}<span class="chip-unit">${unit}</span></span>
+                        </span>
+                        <span class="room-stat-chip stat-max" title="Maximum">
+                            <span class="chip-key">MAX</span>
+                            <span class="chip-val">${fmt(stats.max)}<span class="chip-unit">${unit}</span></span>
+                        </span>
+                    </div>
+                </div>`;
+        }
+
+        statsBar.innerHTML = statChip("TEMP", tempStats, "°C", 1) + statChip("RH", rhStats, "% RH", 1);
+        section.appendChild(statsBar);
+
+        /* --- Cards grid --- */
+        const cardsGrid = document.createElement("div");
+        cardsGrid.className = "room-group-grid";
+
+        units.forEach((unit, idx) => {
+            cardsGrid.appendChild(createRoomCard(unit, idx));
+        });
+
+        section.appendChild(cardsGrid);
+        return section;
+    }
+
+    /* Render groups in order */
+    GROUP_DEFS.forEach(gDef => {
+        const sec = buildGroupSection(gDef, buckets[gDef.key]);
+        if (sec) grid.appendChild(sec);
+    });
+
+    /* Uncategorised fallback */
+    if (buckets["Other"].length) {
+        const otherDef = { key: "Other", label: "Other / Uncategorised", icon: "📍" };
+        const sec = buildGroupSection(otherDef, buckets["Other"]);
+        if (sec) grid.appendChild(sec);
+    }
 }
 
 /*

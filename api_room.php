@@ -43,6 +43,7 @@ try {
     $sql = "
         SELECT
             p.point_id,
+            p.device_id,
             p.point_name,
             ai.value,
             ai.read_at
@@ -102,6 +103,7 @@ try {
             $units[$key] = [
                 'type'        => $type,
                 'name'        => $name,
+                'device_id'   => (int)($row['device_id'] ?? 0),
                 'temp'        => null,
                 'rh'          => null,
                 'temp_unit'   => '°C',
@@ -173,6 +175,7 @@ try {
             $daikinRooms[$name] = [
                 'type'        => 'ROOM',
                 'name'        => $name,
+                'device_id'   => 'daikin',
                 'temp'        => null,
                 'rh'          => null,
                 'temp_unit'   => '°C',
