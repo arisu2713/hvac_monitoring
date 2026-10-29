@@ -1910,9 +1910,18 @@ function renderRoomTempRh() {
      * -----------------------------------------------------------------------
      */
     const GROUP_DEFS = [
-        { key: "G1-G2", label: "G1-G2 Building", icon: "🏢", match: u => u.device_id === 10203 },
-        { key: "G3",    label: "G3 Building",    icon: "🏢", match: u => u.device_id === 10202 },
-        { key: "G8",    label: "G8 Building (Daikin AHU)", icon: "❄️", match: u => u.device_id === "daikin" },
+        {
+            key: "G1-G2", label: "G1-G2 Building", subtitle: "Device 10203 · 5 rooms + outdoor",
+            icon: "🏢", match: u => u.device_id === 10203
+        },
+        {
+            key: "G3",    label: "G3 Building",    subtitle: "Device 10202 · 3 rooms + outdoor",
+            icon: "🏢", match: u => u.device_id === 10202
+        },
+        {
+            key: "G8",    label: "G8 Building",    subtitle: "Daikin AHU 96 & 97",
+            icon: "❄️", match: u => u.device_id === "daikin"
+        },
     ];
 
     /* Bucket each unit into a group; uncategorised fall into "Other" */
@@ -1923,88 +1932,89 @@ function renderRoomTempRh() {
     data.forEach(unit => {
         const grp = GROUP_DEFS.find(g => g.match(unit));
         if (grp) buckets[grp.key].push(unit);
-        else      buckets["Other"].push(unit);
+        else     buckets["Other"].push(unit);
     });
 
-    /*
-     * Helper: compute per-group Power BI-style stats from numeric values.
-     * Null / undefined values are excluded from calculations.
-     */
+    /* Compute per-group stats — null/NaN values are excluded */
     function computeStats(units, field) {
         const vals = units.map(u => u[field]).filter(v => v !== null && v !== undefined && !isNaN(v));
         if (!vals.length) return null;
         const min = Math.min(...vals);
         const max = Math.max(...vals);
         const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-        return { min, max, avg, count: vals.length };
+        return { min, max, avg };
     }
 
-    function fmtTemp(v) { return v !== null ? v.toFixed(1) : "—"; }
-    function fmtRh(v)   { return v !== null ? v.toFixed(1) : "—"; }
+    /* Build one KPI panel for a single metric (temp or rh) */
+    function buildStatsMetric(cssClass, labelText, stats, unitStr) {
+        if (!stats) return "";
+        const f = (v, d) => v.toFixed(d);
+        const dec = unitStr.includes("RH") ? 1 : 1;
+        return `
+        <div class="room-stats-metric ${cssClass}">
+            <div class="room-stats-metric-label">${labelText}</div>
+            <div class="room-stats-values">
+                <div class="room-kpi kpi-min">
+                    <span class="room-kpi-label">MIN</span>
+                    <span class="room-kpi-value">${f(stats.min, dec)}</span>
+                    <span class="room-kpi-unit">${unitStr}</span>
+                </div>
+                <div class="room-kpi kpi-avg">
+                    <span class="room-kpi-label">AVG</span>
+                    <span class="room-kpi-value">${f(stats.avg, dec)}</span>
+                    <span class="room-kpi-unit">${unitStr}</span>
+                </div>
+                <div class="room-kpi kpi-max">
+                    <span class="room-kpi-label">MAX</span>
+                    <span class="room-kpi-value">${f(stats.max, dec)}</span>
+                    <span class="room-kpi-unit">${unitStr}</span>
+                </div>
+            </div>
+        </div>`;
+    }
 
-    /* Build one group section including header + stats bar + cards grid */
+    /* Build one complete group section */
     function buildGroupSection(gDef, units) {
         if (!units.length) return null;
 
+        const tempStats = computeStats(units, "temp");
+        const rhStats   = computeStats(units, "rh");
+
         const section = document.createElement("div");
         section.className = "room-group-section";
+        section.dataset.group = gDef.key;
 
-        /* --- Header --- */
+        /* Header */
         const header = document.createElement("div");
         header.className = "room-group-header";
         header.innerHTML = `
-            <span class="room-group-icon">${gDef.icon}</span>
-            <span class="room-group-title">${gDef.label}</span>
+            <div class="room-group-badge">${gDef.icon}</div>
+            <div class="room-group-info">
+                <span class="room-group-title">${gDef.label}</span>
+                <span class="room-group-subtitle">${gDef.subtitle || ""}</span>
+            </div>
             <span class="room-group-count">${units.length} unit${units.length !== 1 ? "s" : ""}</span>
         `;
         section.appendChild(header);
 
-        /* --- Stats bar --- */
-        const tempStats = computeStats(units, "temp");
-        const rhStats   = computeStats(units, "rh");
+        /* Stats panel */
+        const statsPanel = document.createElement("div");
+        statsPanel.className = "room-stats-panel";
+        statsPanel.innerHTML =
+            buildStatsMetric("is-temp", "TEMPERATURE", tempStats, "°C") +
+            buildStatsMetric("is-rh",   "HUMIDITY",    rhStats,   "% RH");
+        section.appendChild(statsPanel);
 
-        const statsBar = document.createElement("div");
-        statsBar.className = "room-stats-bar";
-
-        function statChip(label, stats, unit, decimals) {
-            if (!stats) return "";
-            const fmt = v => v.toFixed(decimals);
-            return `
-                <div class="room-stat-group">
-                    <span class="room-stat-label">${label}</span>
-                    <div class="room-stat-chips">
-                        <span class="room-stat-chip stat-min" title="Minimum">
-                            <span class="chip-key">MIN</span>
-                            <span class="chip-val">${fmt(stats.min)}<span class="chip-unit">${unit}</span></span>
-                        </span>
-                        <span class="room-stat-chip stat-avg" title="Average">
-                            <span class="chip-key">AVG</span>
-                            <span class="chip-val">${fmt(stats.avg)}<span class="chip-unit">${unit}</span></span>
-                        </span>
-                        <span class="room-stat-chip stat-max" title="Maximum">
-                            <span class="chip-key">MAX</span>
-                            <span class="chip-val">${fmt(stats.max)}<span class="chip-unit">${unit}</span></span>
-                        </span>
-                    </div>
-                </div>`;
-        }
-
-        statsBar.innerHTML = statChip("TEMP", tempStats, "°C", 1) + statChip("RH", rhStats, "% RH", 1);
-        section.appendChild(statsBar);
-
-        /* --- Cards grid --- */
+        /* Cards grid */
         const cardsGrid = document.createElement("div");
-        cardsGrid.className = "room-group-grid";
-
-        units.forEach((unit, idx) => {
-            cardsGrid.appendChild(createRoomCard(unit, idx));
-        });
-
+        cardsGrid.className = "room-group-cards";
+        units.forEach((unit, idx) => cardsGrid.appendChild(createRoomCard(unit, idx)));
         section.appendChild(cardsGrid);
+
         return section;
     }
 
-    /* Render groups in order */
+    /* Render groups in defined order */
     GROUP_DEFS.forEach(gDef => {
         const sec = buildGroupSection(gDef, buckets[gDef.key]);
         if (sec) grid.appendChild(sec);
@@ -2012,7 +2022,7 @@ function renderRoomTempRh() {
 
     /* Uncategorised fallback */
     if (buckets["Other"].length) {
-        const otherDef = { key: "Other", label: "Other / Uncategorised", icon: "📍" };
+        const otherDef = { key: "Other", label: "Other", subtitle: "Uncategorised units", icon: "📍" };
         const sec = buildGroupSection(otherDef, buckets["Other"]);
         if (sec) grid.appendChild(sec);
     }

@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    HVAC MONITORING
    TV / SCADA WALL DISPLAY
    ========================================================= */
@@ -175,8 +175,8 @@ body {
    ROOM TEMP & RH SECTION STYLES
    ========================================================= */
 
-/* Dedicated responsive grid for Room cards */
-.equipment-grid:has(.room-card) {
+/* Dedicated responsive grid for Room cards (flat/ungrouped fallback) */
+.equipment-grid:has(.room-card):not(:has(.room-group-section)) {
     display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
     gap: 12px !important;
@@ -239,7 +239,7 @@ body {
 
 /* Responsive Desktop (min-width: 1024px) */
 @media (min-width: 1024px) {
-    .equipment-grid:has(.room-card) {
+    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
         grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)) !important;
         gap: 16px !important;
     }
@@ -260,7 +260,7 @@ body {
 
 /* Large Display / SCADA Wall Display (min-width: 1600px) */
 @media (min-width: 1600px) {
-    .equipment-grid:has(.room-card) {
+    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
         grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)) !important;
         gap: 18px !important;
         padding: 0 30px 30px !important;
@@ -282,7 +282,7 @@ body {
 
 /* Responsive Mobile (max-width: 650px) */
 @media (max-width: 650px) {
-    .equipment-grid:has(.room-card) {
+    .equipment-grid:has(.room-card):not(:has(.room-group-section)) {
         grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)) !important;
         gap: 8px !important;
         padding: 0 12px 16px !important;
@@ -611,15 +611,15 @@ footer {
      * table is simply cut off.
      *
      * Only these two declarations are needed. `height: auto` undoes the
-     * `height: 100%` above — without it body would get a nested scrollbar of
-     * its own — and `overflow-y: auto` undoes the clip. min-height is already
+     * `height: 100%` above â€” without it body would get a nested scrollbar of
+     * its own â€” and `overflow-y: auto` undoes the clip. min-height is already
      * 100% on html/body from the base rule, so it is not repeated here.
      *
      * Scoped to .history-chart-stack, which only ROOM TEMP & RH emits, and
      * deliberately NOT to .history-page: ENERGY also emits .history-page and
      * this rule must not touch it. Measured, ENERGY's document is 42px taller
      * than the viewport when its chart is open, but every part of it is
-     * reachable today — its table owns an internal scroll, and its footer is
+     * reachable today â€” its table owns an internal scroll, and its footer is
      * cosmetic. That is a pre-existing, separate condition and is left exactly
      * as it was. Mobile and tablet never had this problem: the rule stops at
      * 2499px, and the 900/650/600/380px breakpoints leave overflow alone.
@@ -637,7 +637,7 @@ footer {
      * emits that class, and ENERGY's chartless page was already reachable
      * without a scroll. But the hybrid view adds a mode switch and a taller
      * chart area, and in the 1600-2499px band html/body are pinned to exactly
-     * the viewport height and clipped — so with Overview's eleven panels open,
+     * the viewport height and clipped â€” so with Overview's eleven panels open,
      * the table below them became unreachable, and ENERGY's table owns only an
      * internal scroll, not a page scroll.
      *
@@ -687,7 +687,7 @@ footer {
      * it is taller than the flat grid it replaces. Measured at 1600x900 with
      * the real 97-unit payload: the last card sat at y 1091 against a 900px
      * viewport, 36 cards were below the fold, and html scrollHeight ===
-     * clientHeight === 900 with overflow-y:hidden — nothing could scroll, so
+     * clientHeight === 900 with overflow-y:hidden â€” nothing could scroll, so
      * those 36 units were unreachable. The old flat grid fitted that same
      * viewport (last card at y 869), so this is a regression the dashboard
      * introduced and it has to be paid for here.
@@ -715,12 +715,12 @@ footer {
      * controls row, which is far taller than one screen. The old matrix it
      * replaces was a two-column block that also exceeded the viewport, but it
      * was reachable because this media query's clip only bites when the content
-     * is shorter than nothing to scroll — measured at 1600x900 with the real
+     * is shorter than nothing to scroll â€” measured at 1600x900 with the real
      * 49-unit payload, html scrollHeight === clientHeight === 900 with
      * overflow-y:hidden, so the tail of the list could not be reached at all.
      *
      * Scoped to .hvac-sc-dashboard, which only the HVAC SC tab's issues view
-     * emits — the "All Units" matrix and every other page keep the wall
+     * emits â€” the "All Units" matrix and every other page keep the wall
      * display's never-scroll behaviour exactly as it was.
      */
     html:has(.hvac-sc-dashboard) {
@@ -879,13 +879,13 @@ footer {
  * The floor is per equipment kind, because the two kinds need very different
  * widths and one shared number forced both to the wider one's size:
  *
- *   chiller — six two-part chips (widest "CE 32.6 °C" = 83px, so two per row
+ *   chiller â€” six two-part chips (widest "CE 32.6 Â°C" = 83px, so two per row
  *             need ~285px with padding) and a name row of dot + "Chiller 1" +
- *             the 122px "▲ OUT OF RANGE" badge, which needs ~315px. At 280px
+ *             the 122px "â–² OUT OF RANGE" badge, which needs ~315px. At 280px
  *             the badge wraps to its own line (see .hsc-card-row below) and the
  *             chips flow three-up; below that the card is a single column.
  *
- *   compact — three short chips (widest "Drv Tmp 51.9 °C" = 113px) and no
+ *   compact â€” three short chips (widest "Drv Tmp 51.9 Â°C" = 113px) and no
  *             badge on a healthy card. 150px fits two chips per row, which is
  *             what lets pumps, CCPs and tower cells sit two-up on a 390px
  *             phone instead of one full-width card each.
@@ -931,7 +931,7 @@ footer {
  * .unit-card.hvac-card / .compact-card were removed with the last card that
  * emitted them. The AHU / EF G8 page was that card, and it now builds its
  * cards from .ahu-card, so leaving these behind would have been dead CSS
- * pointing at nothing — the same reason .hvac-card-badge and .chiller-card
+ * pointing at nothing â€” the same reason .hvac-card-badge and .chiller-card
  * were removed before them.
  *
  * .hvac-card-header / .hvac-card-title are NOT dead: the G8 cards still emit
@@ -962,7 +962,7 @@ footer {
 /*
  * .hvac-card-badge was removed with the AHU / EF G8 top-right RUN badge it
  * existed for. That badge duplicated the card's own status background, and
- * the G8 card header was its only emitter — leaving the rule behind would
+ * the G8 card header was its only emitter â€” leaving the rule behind would
  * have been dead CSS pointing at nothing.
  */
 
@@ -972,7 +972,7 @@ footer {
  * emitter, so the rules would have been dead CSS pointing at nothing.
  */
 
-/* Compact Metrics — label-left / value-right rows, used by the G8 cards. */
+/* Compact Metrics â€” label-left / value-right rows, used by the G8 cards. */
 .compact-metrics {
     display: flex;
     flex-direction: column;
@@ -1059,7 +1059,7 @@ footer {
    vocabulary rather than a second design:
 
      .ahu-section / .ahu-section-head / .ahu-section-title / .ahu-section-note
-         the group header — title left, unit count right
+         the group header â€” title left, unit count right
      .ahu-card / .is-normal / .is-warning / .is-critical / .is-unknown
          the card surface and its health band
      .ahu-run-dot / .ahu-run-label
@@ -1112,7 +1112,7 @@ footer {
  * UNKNOWN is the one band still drawn on the card, and it keeps the AHU page's
  * own dashed surface: "nothing was read" is a statement about the card as a
  * whole, so there is no single value to mark instead. That surface is not
- * restated here — .ahu-card.is-unknown already draws it, and a G8 card with no
+ * restated here â€” .ahu-card.is-unknown already draws it, and a G8 card with no
  * reading should look exactly like an AHU card with no reading.
  */
 .g8-card {
@@ -1190,7 +1190,7 @@ footer {
  * A reading outside its configured limit is marked on the VALUE, not on the
  * card.
  *
- * The AHU page fills the whole card amber because its card IS the reading —
+ * The AHU page fills the whole card amber because its card IS the reading â€”
  * one unit, one number. A G8 card holds up to thirteen readings across three
  * fans and a table, so filling it said "this unit is bad" without saying which
  * of the thirteen was bad, and the reader still had to hunt for it. Marking the
@@ -1259,7 +1259,7 @@ footer {
  * the same row, and it holds the pale green and red at a steady contrast
  * wherever the value lands.
  *
- * Only the words get the pill. The "—" placeholder is already subdued and
+ * Only the words get the pill. The "â€”" placeholder is already subdued and
  * needs no backing; filling a column of dashes with pills turns the table
  * into a barcode.
  */
@@ -1291,7 +1291,7 @@ footer {
 
 /*
  * An EC fan TRIP is the only CRITICAL this page can show, and it is painted on
- * the single cell that reported it — not on its row, not on the table, not on
+ * the single cell that reported it â€” not on its row, not on the table, not on
  * the card.
  *
  * The pale red the word carries elsewhere is sized for a word on a dark
@@ -1345,7 +1345,7 @@ footer {
 }
 
 /*
- * The AHU page has no OFF tile — it keeps operating state on its own row, on a
+ * The AHU page has no OFF tile â€” it keeps operating state on its own row, on a
  * separate axis from health. Here the summary answers one question, so OFF is a
  * tile; it takes the same red as the operating dot and the OFF label, as a
  * colour on the value rather than a filled tile, because filling it would make
@@ -1357,7 +1357,7 @@ footer {
 
 /*
  * The counting rule, on the page. A summary whose arithmetic is invisible is a
- * summary nobody can check, and this rule is not guessable from the numbers —
+ * summary nobody can check, and this rule is not guessable from the numbers â€”
  * a stopped unit with a bad reading is counted as WARNING, which is the one
  * case a reader would otherwise get wrong.
  */
@@ -1412,7 +1412,7 @@ footer {
  * Shrinking the type to fit six columns put the table at 8px, which is below a
  * readable size, so below 380px the name becomes its own row and the five
  * measurements stack under it. Every value then has a 38px track at the
- * original 10.5px type — no clipping, nothing hidden, and the columns still
+ * original 10.5px type â€” no clipping, nothing hidden, and the columns still
  * line up because the header row uses the same five tracks.
  */
 @media (max-width: 380px) {
@@ -1578,7 +1578,7 @@ footer {
 /*
  * OFF cards are themselves red (#b51d1d), so red-on-red is unreadable.
  * On those cards the alarm value switches to black but keeps the same
- * blink-alarm animation. Only the text colour changes — the card's own
+ * blink-alarm animation. Only the text colour changes â€” the card's own
  * background/border/status styling is untouched.
  */
 .status-off .value-alarm {
@@ -1594,7 +1594,7 @@ footer {
 
 /* =========================================================
    AHU CARD TYPOGRAPHY
-   Internal text only — card size/position/grid are untouched.
+   Internal text only â€” card size/position/grid are untouched.
    Scope: .unit-card:not(.room-card) is exactly the AHU cards
    (room cards always carry .room-card; HVAC SC / EF cards use
    their own .hvac-card / .ef-card classes and .m-val / .ef-name).
@@ -1643,7 +1643,7 @@ footer {
 
     /* Same fix as mobile: the generic .unit-name shrinks to 13px at the
      * tablet breakpoint while .ef-name holds at 17px. Restore it here so
-     * AHU and EF stay visually aligned between 601–900px. */
+     * AHU and EF stay visually aligned between 601â€“900px. */
     .unit-card:not(.room-card) .unit-name {
         font-size: 15px;
         font-weight: 900;
@@ -1659,7 +1659,7 @@ footer {
      * AHU name must keep pace with the EF name on the same screen.
      * The generic .unit-name drops to 11px at this breakpoint (line 538)
      * while .ef-name stays at 16px (ef.css:212), so a 45% readability gap
-     * opens up. Lift the AHU name back up — weight 900 matches EF so the
+     * opens up. Lift the AHU name back up â€” weight 900 matches EF so the
      * two sections feel like peers; 14px leaves the 12px temperature
      * clearly subordinate without looking diminished.
      */
@@ -1688,7 +1688,7 @@ footer {
 }
 
 /* =========================================================
-   GLOBAL ALARM — STICKY CHROME + FULL-PAGE SCROLL
+   GLOBAL ALARM â€” STICKY CHROME + FULL-PAGE SCROLL
    =========================================================
 
    The alarm list is unbounded: one row per event, 400+ in a normal day and 602
@@ -2175,7 +2175,7 @@ html:has(.alarm-page) .alarm-page {
 }
 
 /* =========================================================
-   HISTORY PAGES — ENERGY / TEMP & RH HOURLY
+   HISTORY PAGES â€” ENERGY / TEMP & RH HOURLY
    Real <div>-based tables (the app has no <table> markup
    anywhere). Shared by both pages.
    ========================================================= */
@@ -2184,7 +2184,7 @@ html:has(.alarm-page) .alarm-page {
 
 /*
  * Without this the base .equipment-grid rule (auto-fill, minmax(120px,1fr))
- * still applies, and a grid item will not shrink below its content — so the
+ * still applies, and a grid item will not shrink below its content â€” so the
  * wide table would overflow the PAGE instead of scrolling inside its own
  * wrapper. Same treatment the alarm page gets.
  */
@@ -2499,13 +2499,13 @@ html:has(.alarm-page) .alarm-page {
 }
 
 /* =========================================================
-   HISTORY PAGES — VERTICAL SCROLLING (desktop fix)
+   HISTORY PAGES â€” VERTICAL SCROLLING (desktop fix)
    =========================================================
 
    The table wrapper already had overflow-x:auto, but the wrapper itself was
-   allowed to grow to its content height (ROOM TEMP & RH = 100 rows ≈ 3530px).
+   allowed to grow to its content height (ROOM TEMP & RH = 100 rows â‰ˆ 3530px).
    At the 1600-2499px fullscreen breakpoint the page is height:100% with
-   overflow-y:hidden, so every row past the fold was simply unreachable —
+   overflow-y:hidden, so every row past the fold was simply unreachable â€”
    there was nothing to scroll, on the wrapper OR the page.
 
    The fix caps the wrapper at the height left below it in the viewport and
@@ -2542,7 +2542,7 @@ html:has(.alarm-page) .alarm-page {
 }
 
 /* =========================================================
-   HISTORY PAGES — CHART PANEL + EXPORT
+   HISTORY PAGES â€” CHART PANEL + EXPORT
    =========================================================
 
    Deliberately plain: a hairline ring on the same dark surfaces the table
@@ -2920,7 +2920,7 @@ html:has(.alarm-page) .alarm-page {
    flat .unit-card grid and its .status-* colours still apply
    to them exactly as before.
 
-   Bands come from data the API already sends — never from a
+   Bands come from data the API already sends â€” never from a
    new threshold:
      CRITICAL  unit.alarm === 1        (native device alarm)
      WARNING   temp outside its own bounds (temp_min/temp_max)
@@ -3350,7 +3350,7 @@ html:has(.alarm-page) .alarm-page {
             warning  bg #2B230F border #F5B83D
      rows   min-height 44px, 6px green dot, one container
 
-   Bands come from data the API already sends — never from a
+   Bands come from data the API already sends â€” never from a
    new threshold:
      CRITICAL  unit.alarm === 1        (native device alarm)
      WARNING   a metric outside its own configured bound
@@ -3584,7 +3584,7 @@ html:has(.alarm-page) .alarm-page {
 
 /*
  * The UNKNOWN health band: no alarm point and no readings, so there is no
- * evidence for calling the unit healthy. Dashed border, neutral surface —
+ * evidence for calling the unit healthy. Dashed border, neutral surface â€”
  * visibly "not measured", never green.
  */
 .hsc-card.is-unknown {
@@ -3602,7 +3602,7 @@ html:has(.alarm-page) .alarm-page {
  *
  * Here every unit gets the same dark neutral surface and a restrained left
  * accent stripe instead of the issues view's full 2px coloured border and
- * tinted fill — 49 solid red/green cards is exactly what this view is meant
+ * tinted fill â€” 49 solid red/green cards is exactly what this view is meant
  * to stop doing.
  *
  * The .hsc-card.hsc-u.is-* selectors are deliberately three classes deep so
@@ -3642,7 +3642,7 @@ html:has(.alarm-page) .alarm-page {
 
 /*
  * flex-wrap is what makes a narrow track safe. The badge is 122px wide and
- * nowrap ("▲ OUT OF RANGE"), so on a 150px compact card the name row cannot
+ * nowrap ("â–² OUT OF RANGE"), so on a 150px compact card the name row cannot
  * hold dot + name + badge on one line. Without wrapping the row would exceed
  * the card and produce horizontal overflow; with it the badge drops to a
  * second line inside the card instead.
@@ -3694,7 +3694,7 @@ html:has(.alarm-page) .alarm-page {
  *
  * Red for stopped is deliberate and is the point of the exercise: an operator
  * must be able to see "this unit is OFF" on a card that is also amber or red
- * for a health reason. Grey means the status point never reported — it is not
+ * for a health reason. Grey means the status point never reported â€” it is not
  * a quieter red, and it is never used for a unit known to be stopped.
  */
 .hsc-run-dot {
@@ -3753,7 +3753,7 @@ html:has(.alarm-page) .alarm-page {
     color: #1a1300;
 }
 
-/* No reading — dashed, never dressed up as a number. */
+/* No reading â€” dashed, never dressed up as a number. */
 .hsc-v.n {
     background: transparent;
     border: 1px dashed #7b8794;
@@ -3918,9 +3918,9 @@ html:has(.alarm-page) .alarm-page {
 /*
  * Scoped to the Issues First view. Unscoped, `nowrap` overrode the base
  * .hsc-card-row rule above and reached the All Units view, where a compact
- * 150px card cannot hold dot + name + the 122px "▲ OUT OF RANGE" badge on one
+ * 150px card cannot hold dot + name + the 122px "â–² OUT OF RANGE" badge on one
  * line: the name (flex:1, min-width:0) collapsed to zero width and vanished.
- * That was latent until a compact unit could actually raise a warning — CT
+ * That was latent until a compact unit could actually raise a warning â€” CT
  * Ret Tmp is the first one that does. All Units keeps the wrapping rule.
  */
 .hvac-sc-dashboard:not(.is-all) .hsc-card-row { flex-wrap: nowrap; gap: 10px; }
@@ -4011,142 +4011,212 @@ html:has(.alarm-page) .alarm-page {
 .room-card .room-rh .rv-num { font-size: 18px; }
 .room-card .rv-unit { font-size: 12px; font-weight: 500; color: #8b98a8; }
 
-/* ════════════════════════════════════════════════════════════════════════════
-   ROOM TEMP & RH — CURRENT VIEW: Group sections + Power BI-style stats
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   ROOM TEMP & RH â€” CURRENT VIEW: Group sections + Power BI-style stats
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-/* Override grid default when we use group sections (grid becomes a plain column) */
+/* Override grid default when we use group sections (grid becomes a plain flex column) */
 .equipment-grid:has(.room-group-section) {
-    display: flex;
-    flex-direction: column;
-    gap: 28px;
-    padding: 0;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 20px !important;
+    padding: 0 0 24px !important;
+    grid-template-columns: none !important;
 }
 
 /* --- Group section wrapper --- */
 .room-group-section {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid #1e2d3d;
+    background: #0c1118;
 }
 
-/* --- Group header --- */
+/* --- Group header bar --- */
 .room-group-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 14px;
-    background: #0d1117;
-    border: 1px solid #232d38;
-    border-radius: 12px;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid #1e2d3d;
+    position: relative;
 }
-.room-group-icon {
-    font-size: 18px;
+/* accent left stripe â€” colour set per-group via data-group attr */
+.room-group-header::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    border-radius: 0;
+}
+.room-group-section[data-group="G1-G2"] .room-group-header { background: linear-gradient(90deg, #0d1f35 0%, #0c1118 60%); }
+.room-group-section[data-group="G1-G2"] .room-group-header::before { background: #2563eb; }
+.room-group-section[data-group="G3"] .room-group-header { background: linear-gradient(90deg, #0f1f16 0%, #0c1118 60%); }
+.room-group-section[data-group="G3"] .room-group-header::before { background: #16a34a; }
+.room-group-section[data-group="G8"] .room-group-header { background: linear-gradient(90deg, #1a1226 0%, #0c1118 60%); }
+.room-group-section[data-group="G8"] .room-group-header::before { background: #9333ea; }
+.room-group-section[data-group="Other"] .room-group-header { background: linear-gradient(90deg, #1a1610 0%, #0c1118 60%); }
+.room-group-section[data-group="Other"] .room-group-header::before { background: #ca8a04; }
+
+.room-group-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    font-size: 16px;
     line-height: 1;
+    flex-shrink: 0;
+}
+.room-group-section[data-group="G1-G2"] .room-group-badge { background: rgba(37,99,235,.18); }
+.room-group-section[data-group="G3"]    .room-group-badge { background: rgba(22,163,74,.18); }
+.room-group-section[data-group="G8"]    .room-group-badge { background: rgba(147,51,234,.18); }
+.room-group-section[data-group="Other"] .room-group-badge { background: rgba(202,138,4,.18); }
+
+.room-group-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 .room-group-title {
-    flex: 1;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: .1em;
-    color: #c9d1d9;
+    color: #e6ecf3;
     text-transform: uppercase;
+    line-height: 1;
+}
+.room-group-subtitle {
+    font-size: 10px;
+    font-weight: 500;
+    color: #4d6478;
+    letter-spacing: .04em;
 }
 .room-group-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid #232d38;
     font-size: 11px;
     font-weight: 600;
-    color: #4d6478;
-    letter-spacing: .05em;
+    color: #8b98a8;
+    letter-spacing: .04em;
+    white-space: nowrap;
 }
 
-/* --- Power BI-style stats bar --- */
-.room-stats-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 10px 14px;
-    background: #0d1117;
-    border: 1px solid #1c2730;
-    border-radius: 10px;
+/* --- Power BI-style stats panel --- */
+.room-stats-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid #1e2d3d;
 }
-.room-stat-group {
+.room-stats-metric {
+    padding: 12px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.room-stats-metric + .room-stats-metric {
+    border-left: 1px solid #1e2d3d;
+}
+.room-stats-metric-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #4d6478;
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-.room-stat-group + .room-stat-group {
-    padding-left: 14px;
-    border-left: 1px solid #232d38;
-}
-.room-stat-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: .1em;
-    color: #4d6478;
-    text-transform: uppercase;
-    min-width: 32px;
-}
-.room-stat-chips {
-    display: flex;
     gap: 6px;
-    flex-wrap: wrap;
 }
-.room-stat-chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    font-size: 11px;
-    line-height: 1.4;
+.room-stats-metric-label::before {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
 }
-.room-stat-chip .chip-key {
-    font-size: 9px;
+.room-stats-metric.is-temp .room-stats-metric-label::before { background: #e6ecf3; }
+.room-stats-metric.is-rh  .room-stats-metric-label::before { background: #58a6ff; }
+
+.room-stats-values {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #1e2d3d;
+}
+.room-kpi {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 6px;
+    gap: 2px;
+    position: relative;
+}
+.room-kpi + .room-kpi {
+    border-left: 1px solid #1e2d3d;
+}
+.room-kpi.kpi-min { background: #08111e; }
+.room-kpi.kpi-avg { background: #0a150f; }
+.room-kpi.kpi-max { background: #131006; }
+
+.room-kpi-label {
+    font-size: 8px;
     font-weight: 700;
-    letter-spacing: .08em;
+    letter-spacing: .12em;
     text-transform: uppercase;
-    opacity: .7;
 }
-.room-stat-chip .chip-val {
+.room-kpi.kpi-min .room-kpi-label { color: #2563eb; }
+.room-kpi.kpi-avg .room-kpi-label { color: #16a34a; }
+.room-kpi.kpi-max .room-kpi-label { color: #d97706; }
+
+.room-kpi-value {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-weight: 600;
-    font-size: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
 }
-.room-stat-chip .chip-unit {
+.room-kpi.kpi-min .room-kpi-value { color: #58a6ff; }
+.room-kpi.kpi-avg .room-kpi-value { color: #56d364; }
+.room-kpi.kpi-max .room-kpi-value { color: #f5b83d; }
+
+.room-kpi-unit {
     font-size: 9px;
     font-weight: 500;
-    opacity: .7;
-    margin-left: 2px;
+    color: #4d6478;
 }
-/* MIN chip — cool blue */
-.room-stat-chip.stat-min {
-    background: #0e1e30;
-    border-color: #1e3a55;
-    color: #58a6ff;
-}
-.room-stat-chip.stat-min .chip-key { color: #79b8ff; }
-/* AVG chip — neutral / accent */
-.room-stat-chip.stat-avg {
-    background: #141e1a;
-    border-color: #1d3328;
-    color: #56d364;
-}
-.room-stat-chip.stat-avg .chip-key { color: #3fb950; }
-/* MAX chip — warm amber */
-.room-stat-chip.stat-max {
-    background: #1e180a;
-    border-color: #3a2e0a;
-    color: #f5b83d;
-}
-.room-stat-chip.stat-max .chip-key { color: #d29922; }
 
 /* --- Cards grid inside each group --- */
-.room-group-grid {
+.room-group-cards {
+    padding: 14px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 10px;
+    background: #0c1118;
+}
+@media (min-width: 1280px) {
+    .room-group-cards {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    }
+    .room-kpi-value { font-size: 20px; }
+    .room-stats-panel { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 650px) {
+    .room-stats-panel { grid-template-columns: 1fr; }
+    .room-stats-metric + .room-stats-metric { border-left: none; border-top: 1px solid #1e2d3d; }
+    .room-group-cards { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 10px; }
+    .room-kpi-value { font-size: 15px; }
 }
 
 /* ---- Current: room card WARNING (aligned with AHU dashboard warning) ---- */
@@ -4940,7 +5010,7 @@ body.is-main-view footer {
      *
      * The topbar and the nav used to be in the `display: none` group below, so
      * the main view on a phone had no tabs at all; letting them scroll
-     * sideways instead only ever showed four of the eight (MAIN DASHBOARD …
+     * sideways instead only ever showed four of the eight (MAIN DASHBOARD â€¦
      * ROOM TEMP & RH), with EXHAUST FAN / AHU / EF G8 / ALARM / ENERGY behind
      * a swipe nothing advertised. It also overrode the wrap rule the 600px
      * breakpoint sets for every other page, because this block comes later and
