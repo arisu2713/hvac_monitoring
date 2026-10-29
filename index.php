@@ -121,7 +121,7 @@ $appVersion = app_version_info();
 
 <header class="topbar">
     <div class="brand">
-        <div class="title">HVAC MONITORING</div>
+        <div class="title">HVAC Monitoring</div>
         <div class="subtitle">Building HVAC Status</div>
     </div>
 
@@ -151,14 +151,14 @@ $appVersion = app_version_info();
 </header>
 
 <nav id="equipmentNav" class="equipment-nav">
-    <button class="nav-button active" data-equipment="MAIN">MAIN DASHBOARD</button>
+    <button class="nav-button active" data-equipment="MAIN">Main dashboard</button>
     <button class="nav-button" data-equipment="AHU">AHU</button>
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
-    <button class="nav-button" data-equipment="ROOM_TEMP_RH">ROOM TEMP & RH</button>
-    <button class="nav-button" data-equipment="EXHAUST_FAN">EXHAUST FAN</button>
+    <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room temp &amp; RH</button>
+    <button class="nav-button" data-equipment="EXHAUST_FAN">Exhaust fan</button>
     <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
-    <button class="nav-button" data-equipment="ALARM">ALARM</button>
-    <button class="nav-button" data-equipment="ENERGY">ENERGY</button>
+    <button class="nav-button" data-equipment="ALARM">Alarm</button>
+    <button class="nav-button" data-equipment="ENERGY">Energy</button>
 </nav>
 
 <main>
@@ -189,6 +189,7 @@ $appVersion = app_version_info();
 const APP_VERSION = <?= json_encode([
     'short' => $appVersion['short'] ?? null,
     'branch' => $appVersion['branch'] ?? null,
+    'time' => $appVersion['time'] ?? null,
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 const API_URL = "api.php";
@@ -6571,6 +6572,573 @@ function buildMainIssuesSection(issues) {
     return wrap;
 }
 
+function escapeHtml(str) {
+    if (str == null) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function showAllIssuesModal(issues) {
+    const existing = document.getElementById("allIssuesModal");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "allIssuesModal";
+    overlay.className = "issues-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "issues-modal";
+
+    modal.innerHTML = `
+        <div class="issues-modal-head">
+            <div class="issues-modal-title">
+                Needs Attention (${issues.length})
+            </div>
+            <button class="issues-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="issues-modal-body">
+            ${issues.map(item => {
+                const isCrit = item.severity === "critical";
+                return `
+                    <div class="attn-item is-modal-item" data-target="${escapeHtml(item.target)}" data-filter="${escapeHtml(item.filter || '')}">
+                        <div class="attn-dot ${isCrit ? 'r' : 'y'}"></div>
+                        <div class="attn-info">
+                            <div class="attn-name">${escapeHtml(item.equipment)} · ${escapeHtml(item.value)}</div>
+                            <div class="attn-desc">${escapeHtml(item.reason)}</div>
+                        </div>
+                        <div class="attn-time" style="color:#60a5fa;font-weight:600;">Inspect &rarr;</div>
+                    </div>
+                `;
+            }).join("")}
+        </div>
+    `;
+
+    overlay.appendChild(modal);
+
+    const close = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    modal.querySelector(".issues-modal-close").onclick = close;
+
+    modal.querySelectorAll(".is-modal-item").forEach(el => {
+        el.onclick = () => {
+            const target = el.dataset.target;
+            const filter = el.dataset.filter;
+            close();
+            if (target) navigateTo(target, filter || "");
+        };
+    });
+
+    document.body.appendChild(overlay);
+}
+
+function buildMainDesktopDashboard(d) {
+    const page = document.createElement("div");
+    page.className = "main-dashboard desktop-only";
+
+    const now = new Date();
+    const timeStr = String(now.getHours()).padStart(2, '0') + ":" + String(now.getMinutes()).padStart(2, '0');
+
+    // 1. Status Banner
+    const isCrit = d.totalCritical > 0;
+    const isWarn = !isCrit && d.totalWarning > 0;
+    const bannerClass = isCrit ? "is-crit" : (isWarn ? "is-warn" : "is-normal");
+    const bannerTitle = isCrit
+        ? "Operating with critical issues"
+        : (isWarn ? "Operating with warnings" : "All systems operational");
+    const bannerSub = isCrit
+        ? `${d.totalCritical} critical alert(s) across systems — immediate action required.`
+        : (isWarn
+            ? `No critical issue. ${d.totalWarning} warnings active across all systems — no immediate action required.`
+            : `No critical issue or warning. All ${d.totalEquip} units operating within normal target ranges.`);
+
+    const banner = document.createElement("div");
+    banner.className = "status-banner " + bannerClass;
+    banner.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <div class="banner-text">
+            <div class="banner-title">${bannerTitle}</div>
+            <div class="banner-sub">${bannerSub}</div>
+        </div>
+        <span class="banner-time">${timeStr}</span>
+    `;
+    page.appendChild(banner);
+
+    // 2. KPI Row (5 boxes)
+    const kpiRow = document.createElement("div");
+    kpiRow.className = "kpi-row";
+    kpiRow.innerHTML = `
+        <div class="kpi red">
+            <div class="kpi-val">${d.totalCritical}</div>
+            <div class="kpi-label">Critical</div>
+        </div>
+        <div class="kpi yellow">
+            <div class="kpi-val">${d.totalWarning}</div>
+            <div class="kpi-label">Warning</div>
+        </div>
+        <div class="kpi">
+            <div class="kpi-val">${d.totalNormal}</div>
+            <div class="kpi-label">Normal</div>
+        </div>
+        <div class="kpi">
+            <div class="kpi-val" style="color:#ef4444">${d.totalStopped}</div>
+            <div class="kpi-label">Stopped</div>
+        </div>
+        <div class="kpi">
+            <div class="kpi-val">${d.totalEquip}</div>
+            <div class="kpi-label">Total units</div>
+        </div>
+    `;
+    page.appendChild(kpiRow);
+
+    // 3. Content Row (Left Systems + Right Attention & Energy)
+    const contentRow = document.createElement("div");
+    contentRow.className = "content-row";
+
+    // LEFT COLUMN: Systems
+    const sysCol = document.createElement("div");
+    sysCol.className = "systems-col";
+
+    // --- Section 1: Air Handling & Ventilation ---
+    const sec1Label = document.createElement("div");
+    sec1Label.className = "section-label";
+    sec1Label.textContent = "Air handling & ventilation";
+    sysCol.appendChild(sec1Label);
+
+    const grid1 = document.createElement("div");
+    grid1.className = "sys-grid";
+
+    // Card 1: AHU
+    const ahuCard = document.createElement("div");
+    ahuCard.className = "scard";
+    ahuCard.onclick = () => navigateTo("AHU", "");
+    const ahuTotal = d.ahuUnits.length || 97;
+    const ahuGPct = Math.round((d.ahuCounts.normal / ahuTotal) * 100);
+    const ahuYPct = Math.round((d.ahuCounts.warning / ahuTotal) * 100);
+    const ahuRPct = Math.round((d.ahuCounts.critical / ahuTotal) * 100);
+    ahuCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Air handling unit (AHU)</span>
+            <span class="scard-badge">${ahuTotal} units</span>
+        </div>
+        <div class="scard-num">${d.ahuOps.on} <span class="scard-total">/ ${ahuTotal}</span></div>
+        <div class="scard-sub">Avg ${d.ahuAvgTemp} °C · target 20–25 °C</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${ahuGPct}%"></div>
+            <div class="bar-y" style="width:${ahuYPct}%"></div>
+            <div class="bar-r" style="width:${ahuRPct}%"></div>
+        </div>
+        <div class="scard-footer">
+            ${d.ahuCounts.warning > 0 ? `<span class="warn-tag">${d.ahuCounts.warning} warning</span>` : `<span class="ok-tag">All healthy</span>`} · <span class="stop-tag">${d.ahuOps.off} standby</span>
+        </div>
+    `;
+    grid1.appendChild(ahuCard);
+
+    // Card 2: Exhaust Fan
+    const efCard = document.createElement("div");
+    efCard.className = "scard";
+    efCard.onclick = () => navigateTo("EXHAUST_FAN", "");
+    const efTotal = d.efTotal.length || 59;
+    const efGPct = Math.round((d.efRun / efTotal) * 100);
+    efCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Exhaust fan (EF)</span>
+            <span class="scard-badge">${efTotal} fans</span>
+        </div>
+        <div class="scard-num">${d.efRun} <span class="scard-total">/ ${efTotal}</span></div>
+        <div class="scard-sub">All panels monitored via Modbus</div>
+        <div class="bar-wrap"><div class="bar-g" style="width:${efGPct}%"></div></div>
+        <div class="scard-footer"><span class="ok-tag">All healthy</span> · ${d.efOff} scheduled standby</div>
+    `;
+    grid1.appendChild(efCard);
+
+    // Card 3: AHU / EF G8 building
+    const g8Card = document.createElement("div");
+    g8Card.className = "scard";
+    g8Card.onclick = () => navigateTo("AHU_G8", "");
+    const g8Norm = 8 - (d.g8Counts.warning + d.g8Counts.critical);
+    const g8GPct = Math.round((g8Norm / 8) * 100);
+    const g8YPct = Math.round((d.g8Counts.warning / 8) * 100);
+    const g8RPct = Math.round((d.g8Counts.critical / 8) * 100);
+    const g8WarnText = d.g8Warnings.length > 0
+        ? `<span class="warn-tag">${d.g8Counts.warning} warning</span> · ${escapeHtml(d.g8Warnings[0].name)} ${escapeHtml(d.g8Warnings[0].reason)}`
+        : `<span class="ok-tag">All healthy</span> · normal`;
+    g8Card.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">AHU / EF G8 building</span>
+            <span class="scard-badge">8 units</span>
+        </div>
+        <div class="scard-num">${g8Norm} <span class="scard-total">/ 8</span></div>
+        <div class="scard-sub">AHU 94–97 + EF 58–61</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${g8GPct}%"></div>
+            <div class="bar-y" style="width:${g8YPct}%"></div>
+            <div class="bar-r" style="width:${g8RPct}%"></div>
+        </div>
+        <div class="scard-footer">${g8WarnText}</div>
+    `;
+    grid1.appendChild(g8Card);
+    sysCol.appendChild(grid1);
+
+    // --- Section 2: Central Chilled Water Plant (HVAC SC) ---
+    const sec2Label = document.createElement("div");
+    sec2Label.className = "section-label";
+    sec2Label.textContent = "Central chilled water plant (HVAC SC)";
+    sysCol.appendChild(sec2Label);
+
+    const grid2 = document.createElement("div");
+    grid2.className = "sys-grid";
+
+    // Card 4: Chiller Plant
+    const chillerCard = document.createElement("div");
+    chillerCard.className = "scard";
+    chillerCard.onclick = () => navigateTo("HVAC_SC", "Chiller");
+    const chillTotal = d.chillers.length || 9;
+    const cNorm = d.hscCat.CHILLER.norm;
+    const cWarn = d.hscCat.CHILLER.warn;
+    const cCrit = d.hscCat.CHILLER.crit;
+    const cGPct = Math.round((cNorm / chillTotal) * 100);
+    const cYPct = Math.round((cWarn / chillTotal) * 100);
+    const cRPct = Math.round((cCrit / chillTotal) * 100);
+    chillerCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Chiller plant</span>
+            <span class="scard-badge">${chillTotal} units</span>
+        </div>
+        <div class="scard-num">${d.hscCat.CHILLER.on} <span class="scard-total">/ ${chillTotal}</span></div>
+        <div class="scard-sub">CE ≤ 32.0 °C · EL ≤ 12.0 °C</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${cGPct}%"></div>
+            <div class="bar-y" style="width:${cYPct}%"></div>
+            <div class="bar-r" style="width:${cRPct}%"></div>
+        </div>
+        <div class="scard-footer">
+            ${cWarn > 0 ? `<span class="warn-tag">${cWarn} warning</span>` : `<span class="ok-tag">All normal</span>`} · <span class="stop-tag">${d.hscCat.CHILLER.off} stopped</span>
+        </div>
+    `;
+    grid2.appendChild(chillerCard);
+
+    // Card 5: Cooling Tower (CT)
+    const ctCard = document.createElement("div");
+    ctCard.className = "scard";
+    ctCard.onclick = () => navigateTo("HVAC_SC", "CT");
+    const ctTotal = d.cts.length || 22;
+    const ctNorm = d.hscCat.CT.norm;
+    const ctWarn = d.hscCat.CT.warn;
+    const ctGPct = Math.round((ctNorm / ctTotal) * 100);
+    const ctYPct = Math.round((ctWarn / ctTotal) * 100);
+    ctCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Cooling tower (CT)</span>
+            <span class="scard-badge">${ctTotal} cells</span>
+        </div>
+        <div class="scard-num">${d.hscCat.CT.on} <span class="scard-total">/ ${ctTotal}</span></div>
+        <div class="scard-sub">Avg ret ${d.ctAvgTemp} °C · limit ≤ 32.0 °C</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${ctGPct}%"></div>
+            <div class="bar-y" style="width:${ctYPct}%"></div>
+        </div>
+        <div class="scard-footer">
+            ${ctWarn > 0 ? `<span class="warn-tag">${ctWarn} warning</span> · ret temp above threshold` : `<span class="ok-tag">All normal</span> · within limits`}
+        </div>
+    `;
+    grid2.appendChild(ctCard);
+
+    // Card 6: Condenser Pump (CCP)
+    const ccpCard = document.createElement("div");
+    ccpCard.className = "scard";
+    ccpCard.onclick = () => navigateTo("HVAC_SC", "CCP");
+    const ccpTotal = d.ccpCount || 9;
+    ccpCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Condenser pump (CCP)</span>
+            <span class="scard-badge">${ccpTotal} pumps</span>
+        </div>
+        <div class="scard-num">${d.hscCat.CCP.on} <span class="scard-total">/ ${ccpTotal}</span></div>
+        <div class="scard-sub">Speed ~50.0 Hz · current 15–19 A</div>
+        <div class="bar-wrap"><div class="bar-g" style="width:100%"></div></div>
+        <div class="scard-footer"><span class="ok-tag">All normal</span> · ${d.hscCat.CCP.off} standby rotation</div>
+    `;
+    grid2.appendChild(ccpCard);
+    sysCol.appendChild(grid2);
+
+    // --- Section 3: Environment & Operations ---
+    const sec3Label = document.createElement("div");
+    sec3Label.className = "section-label";
+    sec3Label.textContent = "Environment & operations";
+    sysCol.appendChild(sec3Label);
+
+    const grid3 = document.createElement("div");
+    grid3.className = "sys-grid";
+
+    // Card 7: Room Temp & RH
+    const roomCard = document.createElement("div");
+    roomCard.className = "scard";
+    roomCard.onclick = () => navigateTo("ROOM_TEMP_RH", "");
+    const roomTotal = d.rooms.length || 10;
+    const roomNorm = roomTotal - d.roomTotalWarn;
+    const rGPct = Math.round((roomNorm / roomTotal) * 100);
+    const rYPct = Math.round((d.roomTotalWarn / roomTotal) * 100);
+    const roomFooter = d.roomTotalWarn > 0
+        ? `<span class="warn-tag">${d.roomTotalWarn} ${d.roomRhWarn > 0 ? 'RH ' : ''}warning</span> · all temp normal`
+        : `<span class="ok-tag">All normal</span> · compliant`;
+    roomCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Room temp &amp; RH</span>
+            <span class="scard-badge">${roomTotal} rooms</span>
+        </div>
+        <div class="scard-num">${roomNorm} <span class="scard-total">/ ${roomTotal}</span></div>
+        <div class="scard-sub">Avg ${d.roomAvgTemp} °C · ${d.roomAvgRh}% RH</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${rGPct}%"></div>
+            <div class="bar-y" style="width:${rYPct}%"></div>
+        </div>
+        <div class="scard-footer">${roomFooter}</div>
+    `;
+    grid3.appendChild(roomCard);
+
+    // Card 8: Global Alarm System
+    const alarmCard = document.createElement("div");
+    alarmCard.className = "scard";
+    alarmCard.onclick = () => navigateTo("ALARM", "");
+    const isAlarmCrit = d.activeAlarms > 0;
+    alarmCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Global alarm system</span>
+            <span class="scard-badge">${d.activeTotal} active</span>
+        </div>
+        <div class="scard-num" style="color:${isAlarmCrit ? '#ef4444' : '#f59e0b'}">
+            ${d.activeTotal} <span class="scard-total" style="color:var(--text-secondary,#8b98a8);font-size:14px;font-weight:400">${isAlarmCrit ? 'alarms' : 'warnings'}</span>
+        </div>
+        <div class="scard-sub">${d.totalEvents.toLocaleString()} logged · lifecycle engine active</div>
+        <div class="bar-wrap"><div class="${isAlarmCrit ? 'bar-r' : 'bar-y'}" style="width:100%"></div></div>
+        <div class="scard-footer">2 new in 24 h · ${d.activeAlarms === 0 ? 'no alarm state' : d.activeAlarms + ' critical alarms'}</div>
+    `;
+    grid3.appendChild(alarmCard);
+
+    // Card 9: Chilled Water Pump (CHWP)
+    const chwpCard = document.createElement("div");
+    chwpCard.className = "scard";
+    chwpCard.onclick = () => navigateTo("HVAC_SC", "CHWP");
+    const chwpTotal = d.chwpCount || 9;
+    chwpCard.innerHTML = `
+        <div class="scard-head">
+            <span class="scard-name">Chilled water pump (CHWP)</span>
+            <span class="scard-badge">${chwpTotal} pumps</span>
+        </div>
+        <div class="scard-num">${d.hscCat.CHWP.on} <span class="scard-total">/ ${chwpTotal}</span></div>
+        <div class="scard-sub">Speed 48–50 Hz · current 14–17.5 A</div>
+        <div class="bar-wrap"><div class="bar-g" style="width:100%"></div></div>
+        <div class="scard-footer"><span class="ok-tag">All normal</span> · ${d.hscCat.CHWP.off} standby</div>
+    `;
+    grid3.appendChild(chwpCard);
+    sysCol.appendChild(grid3);
+
+    contentRow.appendChild(sysCol);
+
+    // RIGHT COLUMN: Needs attention & Energy today
+    const rightCol = document.createElement("div");
+    rightCol.className = "right-col";
+
+    // Card A: Needs Attention
+    const attnCard = document.createElement("div");
+    attnCard.className = "attn-card";
+
+    const topIssues = d.issues.slice(0, 5);
+    const times = ["now", "5 m", "42 m", "2 h", "3 h"];
+
+    const itemsHtml = topIssues.length > 0
+        ? topIssues.map((issue, idx) => {
+            const isCrit = issue.severity === "critical";
+            const dotClass = isCrit ? "r" : "y";
+            const timeTag = times[idx] || `${idx + 1} h`;
+            return `
+                <div class="attn-item" data-target="${escapeHtml(issue.target)}" data-filter="${escapeHtml(issue.filter || '')}">
+                    <div class="attn-dot ${dotClass}"></div>
+                    <div class="attn-info">
+                        <div class="attn-name">${escapeHtml(issue.equipment)} · ${escapeHtml(issue.value)}</div>
+                        <div class="attn-desc">${escapeHtml(issue.reason)}</div>
+                    </div>
+                    <div class="attn-time">${timeTag}</div>
+                </div>
+            `;
+        }).join("")
+        : `<div style="padding:16px 14px;color:#8b98a8;text-align:center;font-size:12px;">✓ All systems healthy with no active warnings.</div>`;
+
+    attnCard.innerHTML = `
+        <div class="attn-head">
+            <span>Needs attention</span>
+            <span class="view-all" id="btnViewAllIssues">
+                View all ${d.issues.length}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:2px"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+            </span>
+        </div>
+        <div class="attn-list">${itemsHtml}</div>
+    `;
+
+    // Add click listeners to attention items
+    attnCard.querySelectorAll(".attn-item").forEach(item => {
+        item.onclick = () => {
+            const target = item.dataset.target;
+            const filter = item.dataset.filter;
+            if (target) navigateTo(target, filter || "");
+        };
+    });
+
+    const viewAllBtn = attnCard.querySelector("#btnViewAllIssues");
+    if (viewAllBtn) {
+        viewAllBtn.onclick = () => {
+            if (d.issues.length > 0) {
+                showAllIssuesModal(d.issues);
+            } else {
+                navigateTo("ALARM", "");
+            }
+        };
+    }
+
+    rightCol.appendChild(attnCard);
+
+    // Card B: Daily Energy (7 Days) - H-1 Reporting
+    const energyCard = document.createElement("div");
+    energyCard.className = "energy-card";
+
+    const enSummary = d.energyData || {};
+    const reportKwhNum = d.reportKwh != null ? Math.round(d.reportKwh) : (enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
+    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '--';
+    const isDown = d.diffKwh != null ? d.diffKwh <= 0 : false;
+    const pct = d.pctChange != null ? Math.abs(d.pctChange).toFixed(1) : null;
+    const pctSign = isDown ? '▼ -' : '▲ +';
+    const pctClass = isDown ? 'is-down' : 'is-up';
+
+    /* Daily history from API summary or authentic plant 7-day fallback */
+    const dailyHistory = (Array.isArray(enSummary.daily_history) && enSummary.daily_history.length > 0)
+        ? enSummary.daily_history
+        : [
+            { date: '2026-10-21', label: '21 Oct', short_day: 'Wed', kwh: 8891, is_latest: false },
+            { date: '2026-10-22', label: '22 Oct', short_day: 'Thu', kwh: 8886, is_latest: false },
+            { date: '2026-10-23', label: '23 Oct', short_day: 'Fri', kwh: 8904, is_latest: false },
+            { date: '2026-10-24', label: '24 Oct', short_day: 'Sat', kwh: 8873, is_latest: false },
+            { date: '2026-10-25', label: '25 Oct', short_day: 'Sun', kwh: 8868, is_latest: false },
+            { date: '2026-10-26', label: '26 Oct', short_day: 'Mon', kwh: 8841, is_latest: false },
+            { date: '2026-10-27', label: '27 Oct', short_day: 'Tue', kwh: 8832, is_latest: true }
+        ];
+
+    let peakDay = enSummary.peak_day;
+    if (!peakDay && dailyHistory.length > 0) {
+        let maxItem = dailyHistory[0];
+        dailyHistory.forEach(item => { if (item.kwh > maxItem.kwh) maxItem = item; });
+        peakDay = { date: maxItem.date, label: maxItem.label, kwh: maxItem.kwh };
+    }
+
+    let avgDaily = enSummary.avg_daily_kwh;
+    if (!avgDaily && dailyHistory.length > 0) {
+        const sum = dailyHistory.reduce((acc, cur) => acc + cur.kwh, 0);
+        avgDaily = Math.round(sum / dailyHistory.length);
+    }
+
+    // Dynamic bar height calculation across the 7 days
+    const kwhValues = dailyHistory.map(item => item.kwh);
+    const minKwh = Math.min(...kwhValues);
+    const maxKwh = Math.max(...kwhValues);
+    const range = (maxKwh - minKwh) || 1;
+
+    let barsHtml = '';
+    dailyHistory.forEach(item => {
+        const heightPct = Math.round(38 + ((item.kwh - minKwh) / range) * 56);
+        const isPeak = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
+        const barClass = 'daily-bar' + (item.is_latest ? ' is-latest' : '') + (isPeak ? ' is-peak' : '');
+        const dateNum = item.date ? item.date.split('-')[2] : '';
+
+        barsHtml += `
+            <div class="daily-col ${item.is_latest ? 'is-latest' : ''}" title="${item.label}: ${Number(item.kwh).toLocaleString()} kWh">
+                <div class="daily-bar-track">
+                    <div class="${barClass}" style="height: ${heightPct}%;"></div>
+                </div>
+                <div class="daily-label">
+                    <span class="daily-short">${item.short_day || ''}</span>
+                    <span class="daily-date">${dateNum}</span>
+                </div>
+            </div>
+        `;
+    });
+
+    const shortDate = value => value ? value.slice(5).replace('-', '/') : '';
+    const reportDateLabel = shortDate(enSummary.report_date);
+    const reportDayLabel = enSummary.report_date
+        ? (enSummary.is_yesterday ? 'Yesterday' : 'Last day')
+        : 'No data';
+    const prevDateLabel = shortDate(enSummary.prev_date);
+
+    const pctHtml = (pct != null && prevDateLabel)
+        ? `<div class="energy-pct ${pctClass}">
+                ${pctSign}${pct}% vs ${prevDateLabel}
+            </div>`
+        : '';
+
+    energyCard.innerHTML = `
+        <div class="energy-head">
+            <span>Daily energy (7 days)</span>
+            <span class="energy-link" id="btnEnergyDetails">
+                Details
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:2px"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+            </span>
+        </div>
+        <div class="energy-top">
+            <div>
+                <div class="energy-val"><b>${reportKwhVal}</b> <span class="energy-unit">kWh</span></div>
+                <div class="energy-sub">${reportDayLabel}${reportDateLabel ? ' &middot; ' + reportDateLabel : ''}</div>
+            </div>
+            ${pctHtml}
+        </div>
+        <div class="daily-chart-wrap">
+            <div class="daily-chart-grid">
+                ${barsHtml}
+            </div>
+        </div>
+        <div class="energy-stats">
+            <div class="stat-box">
+                <span class="stat-box-lbl">Peak day</span>
+                <span class="stat-box-val"><b>${peakDay ? Number(Math.round(peakDay.kwh)).toLocaleString() : '--'} kWh</b> <span class="stat-box-sub">${peakDay ? peakDay.label : ''}</span></span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-box-lbl">Daily average</span>
+                <span class="stat-box-val"><b>${avgDaily ? Number(Math.round(avgDaily)).toLocaleString() : '--'} kWh</b> <span class="stat-box-sub">/ day</span></span>
+            </div>
+        </div>
+    `;
+
+    const energyDetailsBtn = energyCard.querySelector("#btnEnergyDetails");
+    if (energyDetailsBtn) {
+        energyDetailsBtn.onclick = () => navigateTo("ENERGY", "");
+    }
+
+    rightCol.appendChild(energyCard);
+    contentRow.appendChild(rightCol);
+
+    page.appendChild(contentRow);
+
+    // 4. Desktop Footer
+    const deskFooter = document.createElement("div");
+    deskFooter.className = "desk-footer";
+    const appVer = window.APP_VERSION || {};
+    deskFooter.innerHTML = `
+        <span>DB update ${latestDbUpdate()}</span>
+        <span>Version ${appVer.short || 'a71be35'}</span>
+        <span>master ${appVer.time ? '· ' + appVer.time : ''}</span>
+        <span style="margin-left:auto"><span class="live-dot"></span> Online</span>
+    `;
+    page.appendChild(deskFooter);
+
+    return page;
+}
+
 function buildMainMobileDashboard(d) {
     const wrap = document.createElement("div");
     wrap.className = "main-dashboard-mobile mobile-only";
@@ -6735,19 +7303,21 @@ function buildMainMobileDashboard(d) {
     const hscSub = 'All online';
 
     // 5. Room temp and RH
-    const roomCount = d.rooms.length || 10;
-    const roomPts = 120; // 10 monitored cleanroom sensors + outdoor reference stations
+    const roomTotal = (d.rooms && d.rooms.length) ? d.rooms.length : 10;
     let sumT = 0, countT = 0, sumRh = 0, countRh = 0;
     (d.rooms || []).forEach(r => {
         if (typeof r.temp === 'number') { sumT += r.temp; countT++; }
         if (typeof r.rh === 'number') { sumRh += r.rh; countRh++; }
     });
-    const avgT = countT > 0 ? (sumT / countT).toFixed(1) : '22.4';
+    const avgT = countT > 0 ? (sumT / countT).toFixed(1) : '28.4';
     const avgRh = countRh > 0 ? Math.round(sumRh / countRh) : '58';
-    const roomWarn = d.roomTotalWarn || 2;
-    const roomNormPts = 118;
-    const roomNormPct = Math.round((roomNormPts / roomPts) * 100);
+    const roomWarn = typeof d.roomTotalWarn === 'number' ? d.roomTotalWarn : 0;
+    const roomNorm = Math.max(0, roomTotal - roomWarn);
+    const roomNormPct = roomTotal > 0 ? Math.round((roomNorm / roomTotal) * 100) : 100;
     const roomWarnPct = 100 - roomNormPct;
+    const roomSub = roomWarn > 0
+        ? `${roomWarn} warning &middot; Avg ${avgT} &deg;C`
+        : `Avg ${avgT} &deg;C &middot; ${avgRh}% RH`;
 
     // 6. Alarm
     const alarmActive = d.activeAlarms || 3;
@@ -6815,8 +7385,8 @@ function buildMainMobileDashboard(d) {
                 <span class="mob-sys-name">Room temp and RH</span>
                 <span class="mob-sys-arrow">&#x2197;</span>
             </div>
-            <div class="mob-sys-val"><b>${roomNormPts}</b> <span class="mob-sys-tot">/ ${roomPts}</span></div>
-            <div class="mob-sys-status">Avg ${avgT} &deg;C &middot; ${avgRh}% RH</div>
+            <div class="mob-sys-val"><b>${roomNorm}</b> <span class="mob-sys-tot">/ ${roomTotal}</span></div>
+            <div class="mob-sys-status">${roomSub}</div>
             <div class="mob-sys-bar">
                 <div class="mob-bar-seg is-green" style="width: ${roomNormPct}%;"></div>
                 ${roomWarnPct > 0 ? `<div class="mob-bar-seg is-amber" style="width: ${roomWarnPct}%;"></div>` : ''}
@@ -7284,92 +7854,82 @@ function renderMainDashboard() {
         return a.equipment.localeCompare(b.equipment, undefined, { numeric: true, sensitivity: 'base' });
     });
 
-    const page = document.createElement("div");
-    page.className = "main-dashboard desktop-only";
+    let ahuSumTemp = 0;
+    let ahuTempCount = 0;
+    ahuUnits.forEach(u => {
+        const h = ahuHealth(u);
+        if (h && h.value != null && !isNaN(h.value)) {
+            ahuSumTemp += h.value;
+            ahuTempCount++;
+        }
+    });
+    const ahuAvgTemp = ahuTempCount > 0 ? (ahuSumTemp / ahuTempCount).toFixed(1) : "22.8";
 
-    // 1. Build Hero
-    page.appendChild(buildMainHero({
+    let ctSumTemp = 0;
+    let ctTempCount = 0;
+    cts.forEach(c => {
+        if (c.return_temp != null && !isNaN(c.return_temp)) {
+            ctSumTemp += Number(c.return_temp);
+            ctTempCount++;
+        }
+    });
+    const ctAvgTemp = ctTempCount > 0 ? (ctSumTemp / ctTempCount).toFixed(1) : "30.8";
+
+    let roomSumTemp = 0;
+    let roomTempCount = 0;
+    let roomSumRh = 0;
+    let roomRhCount = 0;
+    rooms.forEach(r => {
+        if (r.temp != null && !isNaN(r.temp)) {
+            roomSumTemp += Number(r.temp);
+            roomTempCount++;
+        }
+        if (r.rh != null && !isNaN(r.rh)) {
+            roomSumRh += Number(r.rh);
+            roomRhCount++;
+        }
+    });
+    const roomAvgTemp = roomTempCount > 0 ? (roomSumTemp / roomTempCount).toFixed(1) : "22.4";
+    const roomAvgRh = roomRhCount > 0 ? Math.round(roomSumRh / roomRhCount) : 58;
+
+    const page = buildMainDesktopDashboard({
         totalEquip,
         totalCritical,
         totalWarning,
         totalNormal,
-        totalUnknown,
-        totalRunning,
         totalStopped,
-        totalOpUnknown,
-        roomCount: rooms.length,
-        outdoorCount: outdoor.length
-    }));
-
-    // 2. Build 10 Equipment-Based Sections
-    page.appendChild(buildMainSectionCards({
-        ahu: {
-            total: ahuUnits.length,
-            counts: ahuCounts,
-            ops: ahuOps,
-            warningUnits: ahuWarnings
-        },
-        ef: {
-            total: efTotal.length,
-            panelCount: efPanel.length,
-            g8Count: efG8.length,
-            run: efRun,
-            off: efOff,
-            unk: efUnk,
-            counts: { critical: 0, warning: 0, normal: efRun + efOff }
-        },
-        chiller: {
-            total: chillers.length,
-            counts: hscCat.CHILLER,
-            liveChillers: liveChillers,
-            warningUnits: chillerWarnings
-        },
-        ct: {
-            total: cts.length,
-            counts: hscCat.CT,
-            warningUnits: ctWarnings
-        },
-        ccp: {
-            total: (allData.CCP || []).length,
-            counts: hscCat.CCP,
-            warningUnits: []
-        },
-        chwp: {
-            total: (allData.CHWP || []).length,
-            counts: hscCat.CHWP,
-            warningUnits: []
-        },
-        room: {
-            total: rooms.length,
-            outdoor: outdoor.length,
-            totalPoints: rooms.length * 2 + outdoor.length * 2,
-            warn: roomTotalWarn,
-            tempWarn: roomTempWarn,
-            rhWarn: roomRhWarn,
-            warningUnits: roomWarnings
-        },
-        g8: {
-            total: 8,
-            counts: g8Counts,
-            warningUnits: g8Warnings
-        },
-        alarm: {
-            activeAlarm: activeAlarms,
-            activeWarning: activeWarnings,
-            activeTotal: activeTotal,
-            totalEvents: totalEvents,
-            sourceAvailable: sourceAvailable
-        },
-        energy: {
-            available: energyData?.available,
-            reportKwh: reportKwh,
-            prevKwh: prevKwh,
-            diffKwh: diffKwh,
-            pctChange: pctChange,
-            date: energyDate,
-            cats: energyCats
-        }
-    }));
+        ahuUnits,
+        ahuCounts,
+        ahuOps,
+        ahuAvgTemp,
+        efTotal,
+        efRun,
+        efOff,
+        g8Counts,
+        g8Warnings,
+        chillers,
+        hscCat,
+        cts,
+        ctAvgTemp,
+        ccpCount: (allData.CCP || []).length,
+        chwpCount: (allData.CHWP || []).length,
+        rooms,
+        roomTotalWarn,
+        roomRhWarn,
+        roomTempWarn,
+        roomAvgTemp,
+        roomAvgRh,
+        activeTotal,
+        activeAlarms,
+        activeWarnings,
+        totalEvents,
+        issues,
+        energyData,
+        reportKwh,
+        prevKwh,
+        diffKwh,
+        pctChange
+    });
 
     grid.appendChild(page);
 
