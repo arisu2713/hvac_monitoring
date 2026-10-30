@@ -152,6 +152,7 @@ $appVersion = app_version_info();
 
 <nav id="equipmentNav" class="equipment-nav">
     <button class="nav-button active" data-equipment="MAIN">Main dashboard</button>
+    <button class="nav-button" data-equipment="CHILLER">Chiller</button>
     <button class="nav-button" data-equipment="AHU">AHU</button>
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room temp &amp; RH</button>
@@ -196,7 +197,7 @@ const API_URL = "api.php";
 
 function getInitialEquipment() {
     const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
-    const valid = ["MAIN", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
     if (hash && valid.includes(hash)) {
         return hash;
     }
@@ -6431,6 +6432,474 @@ function hvacScMatrixElement() {
 }
 
 /* =========================================================
+   CHILLER MODBUS DASHBOARD
+   ========================================================= */
+
+const chillerView = {
+    filter: "ALL", // "ALL" | "RUNNING" | "STOPPED" | "WARNING" | "OFFLINE" | "NO_DATA"
+    searchRaw: "",
+    search: "",
+    searchFocused: false,
+    expandedAll: false,
+    expandedMap: {}
+};
+
+function chillerFormatVal(val, suffix, decimals) {
+    if (val === null || val === undefined || isNaN(val)) {
+        return "--" + (suffix || "");
+    }
+    const n = Number(val);
+    return (decimals === 0 ? Math.round(n) : n.toFixed(decimals ?? 1)) + (suffix || "");
+}
+
+function chillerCalcApproach(valA, valB) {
+    if (valA === null || valA === undefined || valA === "" || isNaN(Number(valA))) return null;
+    if (valB === null || valB === undefined || valB === "" || isNaN(Number(valB))) return null;
+    const a = Number(valA);
+    const b = Number(valB);
+    return Math.round((a - b) * 10) / 10;
+}
+
+function chillerMatchesFilter(u) {
+    if (chillerView.filter === "RUNNING") return u.status === "RUNNING";
+    if (chillerView.filter === "STOPPED") return u.status === "STOPPED";
+    if (chillerView.filter === "WARNING") return u.is_warning === true;
+    if (chillerView.filter === "OFFLINE") return u.status === "OFFLINE";
+    if (chillerView.filter === "NO_DATA") return u.status === "NO DATA";
+    return true;
+}
+
+function chillerMatchesSearch(u) {
+    if (!chillerView.search) return true;
+    const term = chillerView.search;
+    return (u.name && u.name.toLowerCase().includes(term)) ||
+           (u.status && u.status.toLowerCase().includes(term)) ||
+           (u.equip_type && u.equip_type.toLowerCase().includes(term));
+}
+
+function renderChillerDashboard() {
+    sectionTitle.textContent = "CHILLER";
+
+    const units = Array.isArray(allData.CHILLER_MODBUS)
+        ? allData.CHILLER_MODBUS
+        : (Array.isArray(allData.CHILLER) ? allData.CHILLER : []);
+
+    unitCount.textContent = (units.length || 9) + " units (Modbus)";
+
+    // Hitung summary dari unit aktual
+    const summary = {
+        total: units.length,
+        running: 0,
+        stopped: 0,
+        warning: 0,
+        offline: 0,
+        no_data: 0
+    };
+
+    units.forEach(u => {
+        if (u.status === "NO DATA") {
+            summary.no_data++;
+        } else if (u.status === "OFFLINE") {
+            summary.offline++;
+        } else if (u.status === "RUNNING") {
+            summary.running++;
+            if (u.is_warning) summary.warning++;
+        } else if (u.status === "STOPPED") {
+            summary.stopped++;
+        }
+    });
+
+    const page = document.createElement("div");
+    page.className = "chiller-dashboard";
+
+    // 1. Summary Tiles (6 Tiles)
+    const summaryRow = document.createElement("div");
+    summaryRow.className = "chiller-summary";
+
+    const tileConfigs = [
+        { key: "ALL",      label: "TOTAL CHILLER", count: summary.total,   cls: "is-total" },
+        { key: "RUNNING",  label: "RUNNING",       count: summary.running, cls: "is-running" },
+        { key: "STOPPED",  label: "STOPPED",       count: summary.stopped, cls: "is-stopped" },
+        { key: "WARNING",  label: "WARNING",       count: summary.warning, cls: "is-warning" },
+        { key: "OFFLINE",  label: "OFFLINE",       count: summary.offline, cls: "is-offline" },
+        { key: "NO_DATA",  label: "NO DATA",       count: summary.no_data, cls: "is-nodata" },
+    ];
+
+    tileConfigs.forEach(tc => {
+        const tile = document.createElement("div");
+        tile.className = "chiller-tile " + tc.cls + (chillerView.filter === tc.key ? " is-active" : "");
+        tile.title = "Filter: " + tc.label;
+
+        const valEl = document.createElement("b");
+        valEl.textContent = tc.count;
+        tile.appendChild(valEl);
+
+        const lblEl = document.createElement("span");
+        lblEl.textContent = tc.label;
+        tile.appendChild(lblEl);
+
+        tile.addEventListener("click", () => {
+            chillerView.filter = chillerView.filter === tc.key ? "ALL" : tc.key;
+            renderEquipment();
+        });
+
+        summaryRow.appendChild(tile);
+    });
+
+    page.appendChild(summaryRow);
+
+    // 2. Controls Toolbar (Filter Chips, Search, Expand All)
+    const controls = document.createElement("div");
+    controls.className = "chiller-controls";
+
+    const chipGroup = document.createElement("div");
+    chipGroup.className = "chiller-chip-group";
+
+    const chipConfigs = [
+        { key: "ALL",     label: "All Units (" + summary.total + ")" },
+        { key: "RUNNING", label: "Running (" + summary.running + ")" },
+        { key: "WARNING", label: "Warning (" + summary.warning + ")" },
+        { key: "STOPPED", label: "Stopped (" + summary.stopped + ")" },
+        { key: "OFFLINE", label: "Offline (" + summary.offline + ")" },
+        { key: "NO_DATA", label: "No Data (" + summary.no_data + ")" },
+    ];
+
+    chipConfigs.forEach(cc => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "hsc-chip" + (chillerView.filter === cc.key ? " is-on" : "");
+        btn.textContent = cc.label;
+        btn.addEventListener("click", () => {
+            chillerView.filter = cc.key;
+            renderEquipment();
+        });
+        chipGroup.appendChild(btn);
+    });
+
+    // Expand All / Collapse All Toggle Button
+    const toggleAllBtn = document.createElement("button");
+    toggleAllBtn.type = "button";
+    toggleAllBtn.className = "hsc-chip";
+    toggleAllBtn.textContent = chillerView.expandedAll ? "Collapse Details" : "Expand All Details";
+    toggleAllBtn.addEventListener("click", () => {
+        chillerView.expandedAll = !chillerView.expandedAll;
+        units.forEach(u => {
+            chillerView.expandedMap[u.id] = chillerView.expandedAll;
+        });
+        renderEquipment();
+    });
+    chipGroup.appendChild(toggleAllBtn);
+
+    controls.appendChild(chipGroup);
+
+    // Search Input
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "chiller-search";
+    search.placeholder = "Search Chiller…";
+    search.value = chillerView.searchRaw;
+    search.setAttribute("aria-label", "Search Chiller units");
+    search.addEventListener("input", () => {
+        chillerView.searchRaw = search.value;
+        chillerView.search = search.value.trim().toLowerCase();
+        renderEquipment();
+    });
+    controls.appendChild(search);
+
+    page.appendChild(controls);
+
+    // 3. Chiller Cards Grid
+    const cardsGrid = document.createElement("div");
+    cardsGrid.className = "chiller-cards-grid";
+
+    const filteredUnits = units.filter(u => chillerMatchesFilter(u) && chillerMatchesSearch(u));
+
+    if (filteredUnits.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "chiller-nodata-box";
+        empty.style.gridColumn = "1 / -1";
+        empty.style.textAlign = "center";
+        empty.style.padding = "24px";
+        empty.textContent = "No chiller units match the current filter or search criteria.";
+        cardsGrid.appendChild(empty);
+    } else {
+        filteredUnits.forEach(unit => {
+            cardsGrid.appendChild(chillerBuildCard(unit));
+        });
+    }
+
+    page.appendChild(cardsGrid);
+    grid.appendChild(page);
+
+    if (chillerView.searchFocused) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
+    }
+}
+
+function chillerBuildCard(unit) {
+    const p = unit.points || {};
+    const th = unit.thresholds || {};
+    const isNoData = unit.status === "NO DATA";
+    const isOffline = unit.status === "OFFLINE";
+    const isStopped = unit.status === "STOPPED";
+    const isRunning = unit.status === "RUNNING";
+    const isWarn = unit.is_warning === true;
+
+    const card = document.createElement("div");
+    let cardCls = "chiller-card";
+    if (isNoData) cardCls += " is-nodata";
+    else if (isOffline) cardCls += " is-offline";
+    else if (isWarn) cardCls += " is-warning";
+    else if (isRunning) cardCls += " is-running";
+    else if (isStopped) cardCls += " is-stopped";
+    card.className = cardCls;
+
+    // A. Header Row
+    const header = document.createElement("div");
+    header.className = "chiller-card-header";
+
+    const titleBox = document.createElement("div");
+    titleBox.className = "chiller-card-title-box";
+
+    // Status dot: Green for RUNNING, Slate/Offline for others
+    const dot = document.createElement("span");
+    dot.className = "connection-dot " + (
+        isRunning ? "online" : "offline"
+    );
+    titleBox.appendChild(dot);
+
+    const name = document.createElement("span");
+    name.className = "chiller-card-name";
+    name.textContent = unit.name;
+    titleBox.appendChild(name);
+
+    header.appendChild(titleBox);
+
+    // Status Badges (Alarm & Operational State)
+    const badgesBox = document.createElement("div");
+    badgesBox.className = "chiller-card-badges";
+
+    // 1. Alarm Badge (OUT OF RANGE) - shown independently if isWarn
+    if (isWarn) {
+        const warnBadge = document.createElement("span");
+        warnBadge.className = "chiller-card-badge is-warning";
+        warnBadge.textContent = "▲ OUT OF RANGE";
+        badgesBox.appendChild(warnBadge);
+    }
+
+    // 2. Operational Status Badge (RUNNING, STOPPED, OFFLINE, NO DATA) - ALWAYS PRESERVED
+    const opBadge = document.createElement("span");
+    let opBadgeCls = "chiller-card-badge ";
+    let opBadgeText = unit.status || "UNKNOWN";
+
+    if (isNoData) {
+        opBadgeCls += "is-nodata";
+        opBadgeText = "NO DATA";
+    } else if (isOffline) {
+        opBadgeCls += "is-offline";
+        opBadgeText = "OFFLINE";
+    } else if (isRunning) {
+        opBadgeCls += "is-running";
+        opBadgeText = "RUNNING";
+    } else if (isStopped) {
+        opBadgeCls += "is-stopped";
+        opBadgeText = "STOPPED";
+    } else {
+        opBadgeCls += "is-stopped";
+    }
+    opBadge.className = opBadgeCls;
+    opBadge.textContent = opBadgeText;
+    badgesBox.appendChild(opBadge);
+
+    header.appendChild(badgesBox);
+
+    card.appendChild(header);
+
+    // Meta Row (Device Gateway & Last Update)
+    const metaRow = document.createElement("div");
+    metaRow.className = "chiller-meta-row";
+
+    const devInfo = document.createElement("span");
+    devInfo.textContent = "Gateway " + (unit.device_id || (Number(unit.id) <= 5 ? "11008" : "11007")) + " • Modbus RTU";
+    metaRow.appendChild(devInfo);
+
+    const timeInfo = document.createElement("span");
+    timeInfo.textContent = unit.last_update ? "Updated " + unit.last_update.slice(11, 19) : "--";
+    metaRow.appendChild(timeInfo);
+
+    card.appendChild(metaRow);
+
+    // Banners for Warning or No Data
+    if (isWarn && unit.warning_reasons && unit.warning_reasons.length > 0) {
+        const warnBox = document.createElement("div");
+        warnBox.className = "chiller-warn-box";
+        warnBox.textContent = "⚠ " + unit.warning_reasons.join(" | ");
+        card.appendChild(warnBox);
+    }
+
+    if (isNoData) {
+        const nodataBox = document.createElement("div");
+        nodataBox.className = "chiller-nodata-box";
+        nodataBox.textContent = "ℹ No Modbus analog telemetry available";
+        card.appendChild(nodataBox);
+    }
+
+    // Helper to create a chip
+    function makeChip(label, valStr, isBad, extraCls) {
+        const chip = document.createElement("div");
+        chip.className = "chiller-v" + (isBad ? " is-bad" : "") + (extraCls ? " " + extraCls : "");
+        if (valStr.startsWith("--")) chip.classList.add("is-null");
+
+        const lbl = document.createElement("small");
+        lbl.textContent = label;
+        chip.appendChild(lbl);
+
+        const val = document.createElement("b");
+        val.textContent = valStr;
+        chip.appendChild(val);
+
+        return chip;
+    }
+
+    // B. Group: CORE OPERATION
+    const coreTitle = document.createElement("div");
+    coreTitle.className = "chiller-group-title";
+    coreTitle.textContent = "Core Operation";
+    card.appendChild(coreTitle);
+
+    const coreChips = document.createElement("div");
+    coreChips.className = "chiller-chips";
+
+    coreChips.appendChild(makeChip("Setpoint (SP)", chillerFormatVal(p.setpoint, " °C", 1)));
+    coreChips.appendChild(makeChip("RLA", chillerFormatVal(p.rla, " %", 1)));
+    coreChips.appendChild(makeChip("Starter Power", chillerFormatVal(p.starter_input_power, " kW", 0)));
+    coreChips.appendChild(makeChip("Run Hours", chillerFormatVal(p.run_hour, " h", 0)));
+    card.appendChild(coreChips);
+
+    // C. Group: WATER TEMPERATURES (8 points: Leaving/Entering, Saturation, Approach)
+    const waterTitle = document.createElement("div");
+    waterTitle.className = "chiller-group-title";
+    waterTitle.textContent = "Water Temperatures";
+    card.appendChild(waterTitle);
+
+    const waterChips = document.createElement("div");
+    waterChips.className = "chiller-chips";
+
+    const elBad = isRunning && th.evap_leaving_temp_max !== null && p.evap_leaving_temp !== null && p.evap_leaving_temp > th.evap_leaving_temp_max;
+    const ceBad = isRunning && th.cond_entering_temp_max !== null && p.cond_entering_temp !== null && p.cond_entering_temp > th.cond_entering_temp_max;
+
+    // Approach Temperatures:
+    // Evap Approach Temp = Evap Leaving (EL) - Evap Saturation Temp (Evap Sat Temp)
+    // Cond Approach Temp = Cond Saturation Temp (Cond Sat Temp) - Cond Leaving (CL)
+    const evapAppr = chillerCalcApproach(p.evap_leaving_temp, p.evap_sat_rfgt_temp);
+    const condAppr = chillerCalcApproach(p.cond_sat_rfgt_temp, p.cond_leaving_temp);
+
+    waterChips.appendChild(makeChip("Evap Leaving (EL)", chillerFormatVal(p.evap_leaving_temp, " °C", 1), elBad));
+    waterChips.appendChild(makeChip("Evap Entering (EE)", chillerFormatVal(p.evap_entering_temp, " °C", 1)));
+    waterChips.appendChild(makeChip("Cond Entering (CE)", chillerFormatVal(p.cond_entering_temp, " °C", 1), ceBad));
+    waterChips.appendChild(makeChip("Cond Leaving (CL)", chillerFormatVal(p.cond_leaving_temp, " °C", 1)));
+    waterChips.appendChild(makeChip("Evap Sat Temp", chillerFormatVal(p.evap_sat_rfgt_temp, " °C", 1)));
+    waterChips.appendChild(makeChip("Cond Sat Temp", chillerFormatVal(p.cond_sat_rfgt_temp, " °C", 1)));
+    waterChips.appendChild(makeChip("Evap Approach Temp", chillerFormatVal(evapAppr, " °C", 1), false, "is-approach"));
+    waterChips.appendChild(makeChip("Cond Approach Temp", chillerFormatVal(condAppr, " °C", 1), false, "is-approach"));
+    card.appendChild(waterChips);
+
+    // D. Group: WATER FLOW STATUS
+    const flowTitle = document.createElement("div");
+    flowTitle.className = "chiller-group-title";
+    flowTitle.textContent = "Water Flow";
+    card.appendChild(flowTitle);
+
+    const flowChips = document.createElement("div");
+    flowChips.className = "chiller-chips";
+
+    const cFlowStr = p.cond_water_flow === 1 ? "FLOW" : (p.cond_water_flow === 0 ? "NO FLOW" : "--");
+    const eFlowStr = p.evap_water_flow === 1 ? "FLOW" : (p.evap_water_flow === 0 ? "NO FLOW" : "--");
+    flowChips.appendChild(makeChip("Cond Water Flow", cFlowStr, false, p.cond_water_flow === 1 ? "is-flow-ok" : "is-flow-no"));
+    flowChips.appendChild(makeChip("Evap Water Flow", eFlowStr, false, p.evap_water_flow === 1 ? "is-flow-ok" : "is-flow-no"));
+    card.appendChild(flowChips);
+
+    // E, F, G: EXPANDABLE TECHNICAL DETAILS
+    const isExpanded = chillerView.expandedMap[unit.id] ?? chillerView.expandedAll;
+
+    const expandBtn = document.createElement("button");
+    expandBtn.type = "button";
+    expandBtn.className = "chiller-expand-btn";
+    expandBtn.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+
+    const btnTitle = document.createElement("span");
+    btnTitle.textContent = "Technical Details (17 points)";
+    expandBtn.appendChild(btnTitle);
+
+    const btnIcon = document.createElement("span");
+    btnIcon.textContent = isExpanded ? "▲ Hide" : "▼ Show";
+    expandBtn.appendChild(btnIcon);
+
+    expandBtn.addEventListener("click", () => {
+        chillerView.expandedMap[unit.id] = !isExpanded;
+        renderEquipment();
+    });
+
+    card.appendChild(expandBtn);
+
+    if (isExpanded) {
+        const detailsPanel = document.createElement("div");
+        detailsPanel.className = "chiller-details-panel";
+
+        // Refrigerant & Compressor
+        const refTitle = document.createElement("div");
+        refTitle.className = "chiller-group-title";
+        refTitle.textContent = "Refrigerant & Compressor";
+        detailsPanel.appendChild(refTitle);
+
+        const refChips = document.createElement("div");
+        refChips.className = "chiller-chips";
+        refChips.appendChild(makeChip("Evap Refr P", chillerFormatVal(p.evap_refr_press, "", 0)));
+        refChips.appendChild(makeChip("Cond Refr P", chillerFormatVal(p.cond_refr_press, "", 0)));
+        refChips.appendChild(makeChip("Evap Sat Temp", chillerFormatVal(p.evap_sat_rfgt_temp, " °C", 1)));
+        refChips.appendChild(makeChip("Cond Sat Temp", chillerFormatVal(p.cond_sat_rfgt_temp, " °C", 1)));
+        refChips.appendChild(makeChip("Oil Tank Temp", chillerFormatVal(p.oil_tank_temp, " °C", 1)));
+        refChips.appendChild(makeChip("IGV Position", chillerFormatVal(p.igv_position, " %", 1)));
+        refChips.appendChild(makeChip("Active RLA SP", chillerFormatVal(p.active_setpoint_rla, " %", 0)));
+        detailsPanel.appendChild(refChips);
+
+        // Electrical: Current & Voltage
+        const elecTitle = document.createElement("div");
+        elecTitle.className = "chiller-group-title";
+        elecTitle.textContent = "Electrical (Current & Voltage)";
+        detailsPanel.appendChild(elecTitle);
+
+        const elecChips = document.createElement("div");
+        elecChips.className = "chiller-chips is-3col";
+        elecChips.appendChild(makeChip("Ampere R", chillerFormatVal(p.ampere_r, " A", 0)));
+        elecChips.appendChild(makeChip("Ampere S", chillerFormatVal(p.ampere_s, " A", 0)));
+        elecChips.appendChild(makeChip("Ampere T", chillerFormatVal(p.ampere_t, " A", 0)));
+        elecChips.appendChild(makeChip("Voltage R", chillerFormatVal(p.voltage_r, " V", 0)));
+        elecChips.appendChild(makeChip("Voltage S", chillerFormatVal(p.voltage_s, " V", 0)));
+        elecChips.appendChild(makeChip("Voltage T", chillerFormatVal(p.voltage_t, " V", 0)));
+        detailsPanel.appendChild(elecChips);
+
+        // Motor: Winding Temperatures
+        const motorTitle = document.createElement("div");
+        motorTitle.className = "chiller-group-title";
+        motorTitle.textContent = "Motor Winding Temperatures";
+        detailsPanel.appendChild(motorTitle);
+
+        const motorChips = document.createElement("div");
+        motorChips.className = "chiller-chips is-3col";
+        motorChips.appendChild(makeChip("Winding Temp R", chillerFormatVal(p.winding_temp_r, " °C", 1)));
+        motorChips.appendChild(makeChip("Winding Temp S", chillerFormatVal(p.winding_temp_s, " °C", 1)));
+        motorChips.appendChild(makeChip("Winding Temp T", chillerFormatVal(p.winding_temp_t, " °C", 1)));
+        detailsPanel.appendChild(motorChips);
+
+        card.appendChild(detailsPanel);
+    }
+
+    return card;
+}
+
+/* =========================================================
    MAIN DASHBOARD
    ========================================================= */
 
@@ -8500,6 +8969,8 @@ function renderEquipment() {
         && active.classList.contains("hsc-search"));
     roomFilter.searchFocused = !!(active && active.classList
         && active.classList.contains("room-search"));
+    chillerView.searchFocused = !!(active && active.classList
+        && active.classList.contains("chiller-search"));
 
     grid.innerHTML = "";
 
@@ -8509,7 +8980,8 @@ function renderEquipment() {
      * trailing cleanup, so a class left by the previous page would otherwise
      * stay on the grid and restyle the next one.
      */
-    grid.classList.remove("hvac-view", "ahu-view", "main-view");
+    grid.classList.remove("hvac-view", "ahu-view", "main-view", "chiller-view");
+    document.body.classList.remove("is-chiller-view");
 
     /*
      * Both bars are cleared up front, not at the end: several branches below
@@ -8551,6 +9023,13 @@ function renderEquipment() {
 
     if (currentEquipment === "AHU_G8") {
         renderAhuEfG8();
+        return;
+    }
+
+    if (currentEquipment === "CHILLER") {
+        document.body.classList.add("is-chiller-view");
+        grid.classList.add("chiller-view");
+        renderChillerDashboard();
         return;
     }
 
@@ -8708,13 +9187,15 @@ async function loadData() {
             return;
         }
 
-        const apiUrl = currentEquipment === "AHU" || currentEquipment === "AHU_G8"
-            ? "api_ahu.php"
-            : (currentEquipment === "HVAC_SC"
-                ? "api_hvac_sc.php"
-                : (currentEquipment === "EXHAUST_FAN"
-                    ? "api_ef.php"
-                    : (currentEquipment === "ROOM_TEMP_RH" ? "api_room.php" : API_URL)));
+        const apiUrl = currentEquipment === "CHILLER"
+            ? "api_chiller.php"
+            : (currentEquipment === "AHU" || currentEquipment === "AHU_G8"
+                ? "api_ahu.php"
+                : (currentEquipment === "HVAC_SC"
+                    ? "api_hvac_sc.php"
+                    : (currentEquipment === "EXHAUST_FAN"
+                        ? "api_ef.php"
+                        : (currentEquipment === "ROOM_TEMP_RH" ? "api_room.php" : API_URL))));
         const response = await fetch(apiUrl + "?t=" + Date.now(), {
             cache: "no-store"
         });
@@ -8730,6 +9211,10 @@ async function loadData() {
         }
 
         allData = data.equipment || {};
+        if (currentEquipment === "CHILLER") {
+            allData.CHILLER_SUMMARY = data.summary || null;
+            allData.CHILLER_THRESHOLDS = data.thresholds || null;
+        }
 
         /*
          * AHU / EF G8 is the one page fed by TWO endpoints: its AHU cards come
@@ -8771,7 +9256,7 @@ async function loadData() {
 }
 
 function navigateTo(equipment, filter = "") {
-    const valid = ["MAIN", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
     if (!valid.includes(equipment)) {
         equipment = "MAIN";
     }
@@ -8784,6 +9269,9 @@ function navigateTo(equipment, filter = "") {
     } else if (equipment === "HVAC_SC") {
         hvacScView.searchRaw = filter || "";
         hvacScView.search = (filter || "").trim().toLowerCase();
+    } else if (equipment === "CHILLER") {
+        chillerView.searchRaw = filter || "";
+        chillerView.search = (filter || "").trim().toLowerCase();
     }
 
     document.querySelectorAll(".nav-button").forEach(btn => {

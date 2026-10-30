@@ -6466,3 +6466,518 @@ body.is-main-view footer {
         grid-template-columns: 1fr !important;
     }
 }
+
+/* =========================================================
+   CHILLER MODBUS MONITORING PAGE
+   ========================================================= */
+
+/* Ensure document scrolling for Chiller page */
+body.is-chiller-view,
+html:has(.chiller-dashboard),
+body:has(.chiller-dashboard) {
+    height: auto;
+    overflow-y: auto;
+}
+
+/* Base override for equipment grid container when viewing Chiller */
+.equipment-grid.chiller-view,
+.equipment-grid:has(.chiller-dashboard) {
+    display: block !important;
+    grid-template-columns: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 0 30px 30px;
+}
+
+@media (max-width: 1399px) {
+    .equipment-grid.chiller-view,
+    .equipment-grid:has(.chiller-dashboard) {
+        padding: 0 20px 24px;
+    }
+}
+
+@media (max-width: 768px) {
+    .equipment-grid.chiller-view,
+    .equipment-grid:has(.chiller-dashboard) {
+        padding: 0 10px 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .equipment-grid.chiller-view,
+    .equipment-grid:has(.chiller-dashboard) {
+        padding: 0 8px 16px;
+    }
+}
+
+/* Main Dashboard Wrapper */
+.chiller-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* 1. Summary KPI Tiles (6 Tiles in 1 Row on Desktop) */
+.chiller-summary {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 1100px) {
+    .chiller-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .chiller-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+    }
+}
+
+.chiller-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid #222b34;
+    background: #151b22;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, transform .15s ease;
+    user-select: none;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.chiller-tile:hover {
+    border-color: #384656;
+    background: #1c242e;
+    transform: translateY(-1px);
+}
+
+.chiller-tile.is-active {
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 1px #58a6ff;
+    background: #1c2633;
+}
+
+.chiller-tile b {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+    color: #e6ebf0;
+}
+
+.chiller-tile span {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: #8b98a8;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+}
+
+@media (max-width: 480px) {
+    .chiller-tile {
+        padding: 8px 10px;
+        gap: 2px;
+    }
+    .chiller-tile b {
+        font-size: 20px;
+    }
+    .chiller-tile span {
+        font-size: 9.5px;
+        letter-spacing: .03em;
+    }
+}
+
+.chiller-tile.is-total b { color: #58a6ff; }
+.chiller-tile.is-running b { color: #4ade80; }
+.chiller-tile.is-stopped b { color: #9aa7b3; }
+.chiller-tile.is-warning b { color: #f5b83d; }
+.chiller-tile.is-offline b { color: #f87171; }
+.chiller-tile.is-nodata b { color: #8b98a8; }
+
+/* 2. Controls Toolbar (Filter Chips + Search) */
+.chiller-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.chiller-chip-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.chiller-search {
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid #2c3640;
+    border-radius: 20px;
+    background: #151b22;
+    color: #e6ebf0;
+    font-size: 13px;
+    outline: none;
+    transition: border-color .15s;
+    width: 240px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.chiller-search:focus {
+    border-color: #58a6ff;
+}
+
+@media (max-width: 900px) {
+    .chiller-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .chiller-chip-group {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 6px;
+        scrollbar-width: thin;
+    }
+    .chiller-chip-group::-webkit-scrollbar {
+        height: 4px;
+    }
+    .chiller-chip-group::-webkit-scrollbar-thumb {
+        background: #2a3440;
+        border-radius: 2px;
+    }
+    .chiller-chip-group .hsc-chip {
+        flex-shrink: 0;
+    }
+    .chiller-search {
+        width: 100%;
+    }
+}
+
+/* 3. Chiller Equipment Cards Grid: 3 Columns x 3 Rows on Desktop */
+.chiller-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 1200px) {
+    .chiller-cards-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+    }
+}
+
+@media (max-width: 768px) {
+    .chiller-cards-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+}
+
+/* 4. Equipment Card */
+.chiller-card {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1.5px solid #2c3846;
+    border-left-width: 4px;
+    background: #151b22;
+    gap: 12px;
+    box-sizing: border-box;
+    transition: border-color .15s, box-shadow .15s;
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .chiller-card {
+        padding: 12px;
+        gap: 10px;
+    }
+    .chiller-chips {
+        gap: 6px;
+    }
+    .chiller-v {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 6px 8px;
+        gap: 2px;
+    }
+    .chiller-v small {
+        font-size: 10.5px;
+        width: 100%;
+    }
+    .chiller-v b {
+        font-size: 13px;
+    }
+}
+
+.chiller-card:hover {
+    border-color: #4e5f75;
+}
+
+.chiller-card.is-running { border-left-color: #4ade80; }
+.chiller-card.is-warning { border-left-color: #f5b83d; background: #171d24; }
+.chiller-card.is-stopped { border-left-color: #64748b; }
+.chiller-card.is-offline { border-left-color: #f87171; }
+.chiller-card.is-nodata {
+    border-left-color: #4a5763;
+    border-style: dashed;
+    border-left-style: solid;
+    background: #13171d;
+}
+
+.chiller-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.chiller-card-title-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.chiller-card-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.chiller-card-name {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: .02em;
+}
+
+.chiller-card-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    border-radius: 999px;
+    padding: 4px 10px;
+    white-space: nowrap;
+}
+
+.chiller-card-badge.is-running { background: #0b9f50; color: #fff; }
+.chiller-card-badge.is-warning { background: #f5b83d; color: #1a1300; }
+.chiller-card-badge.is-stopped { background: #334155; color: #cbd5e1; }
+.chiller-card-badge.is-offline { background: #b91c1c; color: #fff; }
+.chiller-card-badge.is-nodata  { background: #2c3640; color: #94a3b8; }
+
+.chiller-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: #8b98a8;
+    margin-top: -6px;
+}
+
+.chiller-warn-box {
+    background: rgba(245, 184, 61, 0.12);
+    border: 1px solid rgba(245, 184, 61, 0.35);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: #f5b83d;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1.3;
+}
+
+.chiller-nodata-box {
+    background: rgba(74, 87, 99, 0.15);
+    border: 1px solid #2f3b47;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: #9aa7b3;
+}
+
+.chiller-group-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: #8b98a8;
+    text-transform: uppercase;
+    margin-bottom: -4px;
+}
+
+/* 5. Parameter Grid: 2 Columns inside card */
+.chiller-chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    width: 100%;
+}
+
+.chiller-chips.is-3col {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+}
+
+@media (max-width: 420px) {
+    .chiller-chips.is-3col {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+    }
+}
+
+.chiller-v {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 11px;
+    border-radius: 6px;
+    background: #0f141a;
+    border: 1px solid #202832;
+    min-width: 0;
+    gap: 8px;
+    box-sizing: border-box;
+}
+
+.chiller-chips.is-3col .chiller-v {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 6px 8px;
+    gap: 2px;
+}
+
+.chiller-v small {
+    font-size: 11px;
+    color: #8b98a8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chiller-chips.is-3col .chiller-v small {
+    font-size: 10px;
+}
+
+.chiller-v b {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #e2e8f0;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.chiller-chips.is-3col .chiller-v b {
+    font-size: 13px;
+}
+
+.chiller-v.is-bad {
+    background: #f5b83d;
+    border-color: #f5b83d;
+}
+
+.chiller-v.is-bad small,
+.chiller-v.is-bad b,
+.chiller-v.is-bad em {
+    color: #1a1300 !important;
+}
+
+.chiller-v.is-flow-ok b {
+    color: #4ade80;
+}
+
+.chiller-v.is-flow-no b {
+    color: #94a3b8;
+}
+
+.chiller-v.is-null b {
+    color: #556270;
+}
+
+.chiller-v.is-approach {
+    background: #0c1b2c;
+    border-color: #1e3f66;
+}
+
+.chiller-v.is-approach small {
+    color: #38bdf8;
+    font-weight: 600;
+}
+
+.chiller-v.is-approach b {
+    color: #7dd3fc;
+}
+
+.chiller-v.is-approach.is-null b {
+    color: #556270;
+}
+
+/* 6. Expand / Collapse Button & Details */
+.chiller-expand-btn {
+    background: #141b22;
+    border: 1px solid #232d38;
+    border-radius: 6px;
+    color: #8b98a8;
+    padding: 7px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background-color .15s, color .15s, border-color .15s;
+    user-select: none;
+    margin-top: 2px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.chiller-expand-btn:hover {
+    background: #1a222c;
+    color: #e2e8f0;
+    border-color: #384656;
+}
+
+.chiller-details-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #202832;
+}
