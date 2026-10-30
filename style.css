@@ -4933,16 +4933,21 @@ body.is-main-view footer {
 .desktop-only {
     display: flex !important;
 }
-.mobile-only {
+.mobile-only,
+.main-dashboard-mobile {
     display: none !important;
 }
 
 /* Responsive adjustments specifically for Mobile Viewports (<= 768px) */
 @media (max-width: 768px) {
-    .desktop-only {
+    .desktop-only,
+    .main-dashboard,
+    .main-dashboard.desktop-only {
         display: none !important;
     }
-    .mobile-only {
+    .mobile-only,
+    .main-dashboard-mobile,
+    .main-dashboard-mobile.mobile-only {
         display: flex !important;
         flex-direction: column !important;
     }
@@ -5692,15 +5697,18 @@ body.is-main-view footer {
         box-sizing: border-box !important;
         min-height: calc(100vh - 100px) !important;
     }
-}
-
-.main-dashboard.desktop-only {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 12px !important;
-    width: 100% !important;
-    flex: 1 !important;
-    justify-content: space-between !important;
+    .mobile-only,
+    .main-dashboard-mobile {
+        display: none !important;
+    }
+    .main-dashboard.desktop-only {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 12px !important;
+        width: 100% !important;
+        flex: 1 !important;
+        justify-content: space-between !important;
+    }
 }
 
 /* Status banner */
