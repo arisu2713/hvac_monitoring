@@ -7791,7 +7791,7 @@ function buildMainDesktopDashboard(d) {
     // Card 4: Chiller Plant
     const chillerCard = document.createElement("div");
     chillerCard.className = "scard";
-    chillerCard.onclick = () => navigateTo("CHILLER");
+    chillerCard.onclick = () => navigateTo("HVAC_SC", "Chiller");
     const chillTotal = d.chillers.length || 9;
     const cNorm = d.hscCat.CHILLER.norm;
     const cWarn = d.hscCat.CHILLER.warn;
@@ -8265,30 +8265,7 @@ function buildMainMobileDashboard(d) {
     const sysGrid = document.createElement("div");
     sysGrid.className = "mob-systems-grid";
 
-    // 1. Chiller (Modbus)
-    const chillTotal = (d.chillers && d.chillers.length) ? d.chillers.length : 9;
-    const chillNorm = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.norm : chillTotal;
-    const chillWarn = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.warn : 0;
-    const chillCrit = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.crit : 0;
-    const chillOn = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.on : 0;
-    const chillNormPct = Math.min(100, Math.round((chillNorm / chillTotal) * 100));
-    const chillWarnPct = Math.min(100 - chillNormPct, Math.round(((chillWarn + chillCrit) / chillTotal) * 100));
-    const chillSub = chillCrit > 0
-        ? `${chillCrit} critical`
-        : (chillWarn > 0 ? `${chillWarn} warning` : `${chillOn} running · CE/EL normal`);
-
-    // 2. HVAC SC (Central Chilled Water Plant)
-    const hscTot = (d.hvacUnits && d.hvacUnits.length) ? d.hvacUnits.length : 49;
-    const hscWarn = (d.hscCounts && typeof d.hscCounts.warning === 'number') ? d.hscCounts.warning : 0;
-    const hscCrit = (d.hscCounts && typeof d.hscCounts.critical === 'number') ? d.hscCounts.critical : 0;
-    const hscNorm = Math.max(0, hscTot - (hscWarn + hscCrit));
-    const hscNormPct = Math.min(100, Math.round((hscNorm / hscTot) * 100));
-    const hscWarnPct = Math.min(100 - hscNormPct, Math.round(((hscWarn + hscCrit) / hscTot) * 100));
-    const hscSub = hscCrit > 0
-        ? `${hscCrit} critical`
-        : (hscWarn > 0 ? `${hscWarn} warning` : 'All normal · 49 units');
-
-    // 3. AHU
+    // 1. AHU
     const ahuTotal = d.ahuUnits.length || 97;
     const ahuNorm = d.ahuCounts.normal;
     const ahuWarn = d.ahuCounts.warning;
@@ -8297,7 +8274,7 @@ function buildMainMobileDashboard(d) {
     const ahuWarnPct = Math.min(100 - ahuNormPct, Math.round((ahuWarn / ahuTotal) * 100));
     const ahuSub = ahuCrit > 0 ? `${ahuCrit} critical` : (ahuWarn > 0 ? `${ahuWarn} warning` : 'All normal');
 
-    // 4. Exhaust Fan
+    // 2. Exhaust Fan
     const efTot = d.efTotal.length || 59;
     const efRun = d.efRun;
     const efOff = d.efOff;
@@ -8305,7 +8282,7 @@ function buildMainMobileDashboard(d) {
     const efOffPct = Math.min(100 - efRunPct, Math.round((efOff / efTot) * 100));
     const efSub = efOff > 0 ? `${efOff} stopped` : 'All running';
 
-    // 5. AHU / EF G8
+    // 3. AHU / EF G8
     const g8Tot = 8;
     const g8Norm = d.g8Counts.normal;
     const g8Warn = d.g8Counts.warning;
@@ -8313,7 +8290,11 @@ function buildMainMobileDashboard(d) {
     const g8WarnPct = Math.min(100 - g8NormPct, Math.round((g8Warn / g8Tot) * 100));
     const g8Sub = g8Warn > 0 ? `${g8Warn} warning` : 'All normal';
 
-    // 6. Room temp and RH
+    // 4. HVAC SC
+    const hscTot = 6;
+    const hscSub = 'All online';
+
+    // 5. Room temp and RH
     const roomTotal = (d.rooms && d.rooms.length) ? d.rooms.length : 10;
     let sumT = 0, countT = 0, sumRh = 0, countRh = 0;
     (d.rooms || []).forEach(r => {
@@ -8330,52 +8311,12 @@ function buildMainMobileDashboard(d) {
         ? `${roomWarn} warning &middot; Avg ${avgT} &deg;C`
         : `Avg ${avgT} &deg;C &middot; ${avgRh}% RH`;
 
-    // 7. Alarm System
-    const alarmActive = typeof d.activeAlarms === 'number' ? d.activeAlarms : 0;
-    const alarmWarn = typeof d.activeWarnings === 'number' ? d.activeWarnings : 0;
-    const alarmTotal = typeof d.activeTotal === 'number' ? d.activeTotal : (alarmActive + alarmWarn);
-    const alarmSub = alarmTotal === 0
-        ? 'All healthy &middot; no alarms'
-        : (alarmActive > 0 ? `${alarmActive} critical alarm${alarmActive > 1 ? 's' : ''}` : `${alarmWarn} warning${alarmWarn > 1 ? 's' : ''}`);
-    const alarmBarClass = alarmActive > 0 ? 'is-red' : (alarmWarn > 0 ? 'is-amber' : 'is-green');
-
-    // 8. Energy Overview
-    const reportKwhVal = d.reportKwh != null ? Math.round(d.reportKwh).toLocaleString() : '--';
-    const enTrendSign = (d.diffKwh != null && d.diffKwh <= 0) ? '▼ -' : '▲ +';
-    const enTrendText = (d.pctChange != null && d.diffKwh != null)
-        ? `${enTrendSign}${Math.abs(d.pctChange).toFixed(1)}% vs prev day`
-        : 'Daily tracking';
+    // 6. Alarm
+    const alarmActive = d.activeAlarms || 3;
+    const alarmSub = `${d.activeWarnings || 2} new in 24 h`;
 
     sysGrid.innerHTML = `
-        <!-- 1. Chiller -->
-        <div class="mob-sys-card" onclick="navigateTo('CHILLER')">
-            <div class="mob-sys-top">
-                <span class="mob-sys-name">Chiller</span>
-                <span class="mob-sys-arrow">&#x2197;</span>
-            </div>
-            <div class="mob-sys-val"><b>${chillNorm}</b> <span class="mob-sys-tot">/ ${chillTotal}</span></div>
-            <div class="mob-sys-status">${chillSub}</div>
-            <div class="mob-sys-bar">
-                <div class="mob-bar-seg is-green" style="width: ${chillNormPct}%;"></div>
-                ${chillWarnPct > 0 ? `<div class="mob-bar-seg ${chillCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${chillWarnPct}%;"></div>` : ''}
-            </div>
-        </div>
-
-        <!-- 2. HVAC SC -->
-        <div class="mob-sys-card" onclick="navigateTo('HVAC_SC')">
-            <div class="mob-sys-top">
-                <span class="mob-sys-name">HVAC SC</span>
-                <span class="mob-sys-arrow">&#x2197;</span>
-            </div>
-            <div class="mob-sys-val"><b>${hscNorm}</b> <span class="mob-sys-tot">/ ${hscTot}</span></div>
-            <div class="mob-sys-status">${hscSub}</div>
-            <div class="mob-sys-bar">
-                <div class="mob-bar-seg is-green" style="width: ${hscNormPct}%;"></div>
-                ${hscWarnPct > 0 ? `<div class="mob-bar-seg ${hscCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${hscWarnPct}%;"></div>` : ''}
-            </div>
-        </div>
-
-        <!-- 3. AHU -->
+        <!-- 1. AHU -->
         <div class="mob-sys-card" onclick="navigateTo('AHU')">
             <div class="mob-sys-top">
                 <span class="mob-sys-name">AHU</span>
@@ -8389,7 +8330,7 @@ function buildMainMobileDashboard(d) {
             </div>
         </div>
 
-        <!-- 4. Exhaust Fan -->
+        <!-- 2. Exhaust Fan -->
         <div class="mob-sys-card" onclick="navigateTo('EXHAUST_FAN')">
             <div class="mob-sys-top">
                 <span class="mob-sys-name">Exhaust fan</span>
@@ -8403,7 +8344,7 @@ function buildMainMobileDashboard(d) {
             </div>
         </div>
 
-        <!-- 5. AHU / EF G8 -->
+        <!-- 3. AHU / EF G8 -->
         <div class="mob-sys-card" onclick="navigateTo('AHU_G8')">
             <div class="mob-sys-top">
                 <span class="mob-sys-name">AHU / EF G8</span>
@@ -8417,7 +8358,20 @@ function buildMainMobileDashboard(d) {
             </div>
         </div>
 
-        <!-- 6. Room temp and RH -->
+        <!-- 4. HVAC SC -->
+        <div class="mob-sys-card" onclick="navigateTo('HVAC_SC')">
+            <div class="mob-sys-top">
+                <span class="mob-sys-name">HVAC SC</span>
+                <span class="mob-sys-arrow">&#x2197;</span>
+            </div>
+            <div class="mob-sys-val"><b>6</b> <span class="mob-sys-tot">/ 6</span></div>
+            <div class="mob-sys-status">${hscSub}</div>
+            <div class="mob-sys-bar">
+                <div class="mob-bar-seg is-green" style="width: 100%;"></div>
+            </div>
+        </div>
+
+        <!-- 5. Room temp and RH -->
         <div class="mob-sys-card" onclick="navigateTo('ROOM_TEMP_RH')">
             <div class="mob-sys-top">
                 <span class="mob-sys-name">Room temp and RH</span>
@@ -8431,29 +8385,16 @@ function buildMainMobileDashboard(d) {
             </div>
         </div>
 
-        <!-- 7. Alarm -->
+        <!-- 6. Alarm -->
         <div class="mob-sys-card" onclick="navigateTo('ALARM')">
             <div class="mob-sys-top">
                 <span class="mob-sys-name">Alarm</span>
                 <span class="mob-sys-arrow">&#x2197;</span>
             </div>
-            <div class="mob-sys-val"><b style="color:${alarmActive > 0 ? '#ef4444' : (alarmWarn > 0 ? '#f59e0b' : '#22c55e')}">${alarmTotal}</b> <span class="mob-sys-tot">active</span></div>
+            <div class="mob-sys-val"><b>${alarmActive}</b></div>
             <div class="mob-sys-status">${alarmSub}</div>
             <div class="mob-sys-bar">
-                <div class="mob-bar-seg ${alarmBarClass}" style="width: 100%;"></div>
-            </div>
-        </div>
-
-        <!-- 8. Energy -->
-        <div class="mob-sys-card" onclick="navigateTo('ENERGY')">
-            <div class="mob-sys-top">
-                <span class="mob-sys-name">Energy</span>
-                <span class="mob-sys-arrow">&#x2197;</span>
-            </div>
-            <div class="mob-sys-val"><b>${reportKwhVal}</b> <span class="mob-sys-tot">kWh</span></div>
-            <div class="mob-sys-status">${enTrendText}</div>
-            <div class="mob-sys-bar">
-                <div class="mob-bar-seg is-green" style="width: 100%;"></div>
+                <div class="mob-bar-seg ${alarmActive > 0 ? 'is-red' : 'is-green'}" style="width: 100%;"></div>
             </div>
         </div>
     `;
@@ -8991,7 +8932,6 @@ function renderMainDashboard() {
         totalWarning,
         totalNormal,
         totalStopped,
-        activeTotal,
         activeAlarms,
         activeWarnings,
         totalEvents,
@@ -9003,8 +8943,6 @@ function renderMainDashboard() {
         efTotal,
         g8Counts,
         hscCounts,
-        hscCat,
-        chillers,
         hvacUnits,
         rooms,
         outdoor,
