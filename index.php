@@ -151,12 +151,12 @@ $appVersion = app_version_info();
 </header>
 
 <nav id="equipmentNav" class="equipment-nav">
-    <button class="nav-button active" data-equipment="MAIN">Main dashboard</button>
+    <button class="nav-button active" data-equipment="MAIN">Main Dashboard</button>
     <button class="nav-button" data-equipment="CHILLER">Chiller</button>
     <button class="nav-button" data-equipment="AHU">AHU</button>
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
-    <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room temp &amp; RH</button>
-    <button class="nav-button" data-equipment="EXHAUST_FAN">Exhaust fan</button>
+    <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room Temp &amp; RH</button>
+    <button class="nav-button" data-equipment="EXHAUST_FAN">Exhaust Fan</button>
     <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
     <button class="nav-button" data-equipment="ALARM">Alarm</button>
     <button class="nav-button" data-equipment="ENERGY">Energy</button>
