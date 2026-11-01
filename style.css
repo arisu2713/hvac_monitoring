@@ -4982,6 +4982,7 @@ body.is-main-view footer {
      * must be allowed to exceed a narrow row and wrap rather than shrink to an
      * unreadable sliver.
      */
+    .equipment-nav,
     body.is-main-view .equipment-nav {
         display: flex !important;
         padding: 4px 10px 6px !important;
@@ -4990,6 +4991,7 @@ body.is-main-view footer {
         gap: 6px !important;
         box-sizing: border-box !important;
     }
+    .nav-button,
     body.is-main-view .nav-button {
         flex: 0 0 auto !important;
         white-space: nowrap !important;
@@ -5235,6 +5237,14 @@ body.is-main-view footer {
     }
     .mob-issue-item:active {
         background: #1b212b;
+    }
+    .mob-issue-item.mob-empty-clean {
+        cursor: default;
+        pointer-events: none;
+        justify-content: center;
+        gap: 8px;
+        padding: 16px 12px;
+        background: transparent;
     }
     .mob-issue-icon {
         width: 28px;
