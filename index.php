@@ -155,6 +155,9 @@ $appVersion = app_version_info();
     <button class="nav-button" data-equipment="CHILLER">Chiller</button>
     <button class="nav-button" data-equipment="AHU">AHU</button>
     <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
+    <button class="nav-button" data-equipment="CT">CT</button>
+    <button class="nav-button" data-equipment="CCP">CCP</button>
+    <button class="nav-button" data-equipment="CHWP">CHWP</button>
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room Temp &amp; RH</button>
     <button class="nav-button" data-equipment="EXHAUST_FAN">Exhaust Fan</button>
     <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
@@ -197,7 +200,7 @@ const API_URL = "api.php";
 
 function getInitialEquipment() {
     const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
     if (hash && valid.includes(hash)) {
         return hash;
     }
@@ -5548,7 +5551,62 @@ const hvacScView = {
     expanded: {}
 };
 
-let hvacScSectionsHost = null;
+/*
+ * One state object per category page (CT / CCP / CHWP), built to the same
+ * shape as hvacScView but never the same object. Sharing hvacScView would let
+ * a search term typed into Cooling Tower pre-filter Condenser Pump, and would
+ * make the poll restore the caret into whichever page rendered last rather
+ * than the one the reader is on.
+ */
+function hvacScNewView() {
+    return {
+        mode: HVAC_SC_VIEW_ISSUES,
+        /* Exactly what the reader typed, so the box redraws unchanged. */
+        searchRaw: "",
+        /* Normalised once here; matching never re-derives it. */
+        search: "",
+        /* Captured in renderEquipment() before the grid is cleared. */
+        searchFocused: false,
+        /* Which issue cards the reader opened, keyed by unit label. */
+        expanded: {}
+    };
+}
+
+const ctView   = hvacScNewView();
+const ccpView  = hvacScNewView();
+const chwpView = hvacScNewView();
+
+/*
+ * The pages that share the severity renderer.
+ *
+ * `host` is the element that page's sections are redrawn into. It lives here,
+ * per page, instead of in the module-level hvacScSectionsHost it replaces: one
+ * variable would mean the last-rendered page's host, so an expander click on a
+ * stale card would repaint a different page's subtree.
+ */
+const HVAC_SC_PAGES = {
+    HVAC_SC: { view: hvacScView, host: null, title: "HVAC SC",             kind: null   },
+    CT:      { view: ctView,     host: null, title: "COOLING TOWER",       kind: "CT"   },
+    CCP:     { view: ccpView,    host: null, title: "CONDENSER PUMP",      kind: "CCP"  },
+    CHWP:    { view: chwpView,   host: null, title: "CHILLED WATER PUMP",  kind: "CHWP" }
+};
+
+/*
+ * Which severity page an active search input belongs to, or null if the
+ * element is not one. The page is read from the dashboard wrapper the input
+ * sits in (renderHvacScPage() stamps data-page-key on it), because all four
+ * pages use the same .hsc-search class and the class alone cannot tell them
+ * apart.
+ */
+function hvacScSearchPageKey(el) {
+    if (!el || !el.classList || !el.classList.contains("hsc-search")) {
+        return null;
+    }
+
+    const dashboard = el.closest(".hvac-sc-dashboard");
+
+    return (dashboard && dashboard.dataset.pageKey) || null;
+}
 
 const HVAC_SC_BANDS = [
     { key: "critical", title: "CRITICAL", note: "alarm from the system" },
@@ -5830,12 +5888,17 @@ function hvacScCompare(a, b) {
     return String(a.unit.name).localeCompare(String(b.unit.name));
 }
 
-function hvacScMatchesSearch(label) {
-    if (!hvacScView.search) {
+/*
+ * Search matching for one page's state object. The view is passed in rather
+ * than read from a module-level global, so the CT / CCP / CHWP pages cannot
+ * share a filter term with HVAC SC or with each other.
+ */
+function hvacScMatchesSearch(label, view = hvacScView) {
+    if (!view.search) {
         return true;
     }
 
-    return String(label).toLowerCase().includes(hvacScView.search);
+    return String(label).toLowerCase().includes(view.search);
 }
 
 /*
@@ -5881,8 +5944,9 @@ function hvacScValueChip(metric, state) {
  * so "OUT OF RANGE while stopped" is readable as exactly that instead of one
  * of the two facts overwriting the other.
  */
-function hvacScIssueCard(entry) {
+function hvacScIssueCard(entry, pageKey = "HVAC_SC") {
     const { kind, label, unit } = entry;
+    const view = HVAC_SC_PAGES[pageKey].view;
     const band = hvacScBandOf(kind, unit);
     const metrics = hvacScMetrics(kind, unit);
 
@@ -5921,7 +5985,7 @@ function hvacScIssueCard(entry) {
         card.appendChild(why);
     }
 
-    const isOpen = hvacScView.expanded[label] === true;
+    const isOpen = view.expanded[label] === true;
 
     /*
      * Collapsed: every metric that actually has a reading.
@@ -5988,12 +6052,12 @@ function hvacScIssueCard(entry) {
     more.setAttribute("aria-expanded", isOpen ? "true" : "false");
     more.addEventListener("click", () => {
         if (isOpen) {
-            delete hvacScView.expanded[label];
+            delete view.expanded[label];
         } else {
-            hvacScView.expanded[label] = true;
+            view.expanded[label] = true;
         }
 
-        hvacScRenderSections();
+        hvacScRenderSections(pageKey);
     });
 
     card.appendChild(more);
@@ -6051,7 +6115,7 @@ function hvacScNormalRow(entry) {
     return row;
 }
 
-function hvacScBuildSection(band, entries) {
+function hvacScBuildSection(band, entries, pageKey = "HVAC_SC") {
     const section = document.createElement("section");
     section.className = "hsc-section is-" + band.key;
 
@@ -6086,7 +6150,7 @@ function hvacScBuildSection(band, entries) {
      */
     const cards = document.createElement("div");
     cards.className = "hsc-cards";
-    entries.forEach(e => cards.appendChild(hvacScIssueCard(e)));
+    entries.forEach(e => cards.appendChild(hvacScIssueCard(e, pageKey)));
     section.appendChild(cards);
 
     return section;
@@ -6095,9 +6159,18 @@ function hvacScBuildSection(band, entries) {
 /*
  * Rebuilds only the band sections, leaving the controls (and therefore the
  * search input's focus and caret) untouched.
+ *
+ * The page is named explicitly by every caller. Defaulting to HVAC_SC keeps
+ * the old calls working, but the CT / CCP / CHWP expanders pass their own key
+ * so a click repaints the page it was made on and writes to that page's
+ * `expanded` map, not HVAC SC's.
  */
-function hvacScRenderSections() {
-    if (!hvacScSectionsHost) {
+function hvacScRenderSections(pageKey = "HVAC_SC") {
+    const page = HVAC_SC_PAGES[pageKey];
+    const view = page.view;
+    const host = page.host;
+
+    if (!host) {
         return;
     }
 
@@ -6107,33 +6180,264 @@ function hvacScRenderSections() {
      * padding rule (same specificity, later in the file) would silently
      * shrink the matrix's bottom and mobile gutters.
      */
-    const page = hvacScSectionsHost.closest(".hvac-sc-dashboard");
+    const dashboard = host.closest(".hvac-sc-dashboard");
 
-    if (page) {
-        page.classList.toggle("is-all", hvacScView.mode === HVAC_SC_VIEW_ALL);
+    if (dashboard) {
+        dashboard.classList.toggle("is-all", view.mode === HVAC_SC_VIEW_ALL);
+        dashboard.classList.toggle("is-category", page.kind !== null);
     }
 
-    hvacScSectionsHost.innerHTML = "";
+    host.innerHTML = "";
 
-    if (hvacScView.mode === HVAC_SC_VIEW_ALL) {
-        hvacScSectionsHost.appendChild(hvacScMatrixElement());
-        return;
-    }
-
-    const visible = hvacScAllUnits().filter(e => hvacScMatchesSearch(e.label));
+    /*
+     * The unit set for this page, narrowed by the search box. Computed before
+     * either branch so the All view and the Issues view can never disagree
+     * about which units exist — the All view is not exempt from the filter,
+     * because a search that returns nothing must say so on both views.
+     */
+    const visible = hvacScAllUnits()
+        .filter(e => page.kind === null || e.prefix === page.kind)
+        .filter(e => hvacScMatchesSearch(e.label, view));
 
     if (visible.length === 0) {
         const empty = document.createElement("div");
         empty.className = "hsc-empty";
-        empty.textContent = hvacScView.search
+        empty.textContent = view.search
             ? "No units match your search."
-            : "No HVAC SC units to display.";
-        hvacScSectionsHost.appendChild(empty);
+            : (page.kind === null
+                ? "No HVAC SC units to display."
+                : "No " + page.kind + " units to display.");
+        host.appendChild(empty);
         return;
     }
 
+    /*
+     * All Units is the full plant matrix on HVAC SC. On a category page the
+     * same chip means "all N of THIS equipment", so it must not fall through
+     * to the 49-unit plant matrix — that would show every category under a
+     * button that says "All 22".
+     */
+    if (view.mode === HVAC_SC_VIEW_ALL) {
+        host.appendChild(page.kind === null
+            ? hvacScMatrixElement()
+            : hvacScCategoryMatrixElement(visible, pageKey));
+        return;
+    }
+
+    /*
+     * HVAC SC keeps its flat critical -> warning -> normal -> unknown list:
+     * that page is the all-equipment overview, and grouping it by building
+     * would change the behaviour the user asked to leave untouched.
+     */
+    if (page.kind === null) {
+        HVAC_SC_BANDS.forEach(band => {
+            const members = visible.filter(e => hvacScBandOf(e.kind, e.unit) === band.key);
+
+            if (members.length === 0) {
+                return;
+            }
+
+            members.sort(hvacScCompare);
+
+            host.appendChild(hvacScBuildSection(band, members, pageKey));
+        });
+        return;
+    }
+
+    /*
+     * CT / CCP / CHWP: the building group is the OUTER level and the health
+     * band is the INNER one, so an operator scanning the plant sees G1-G2 and
+     * G3 first and then, within each, CRITICAL -> WARNING -> NORMAL -> UNKNOWN.
+     */
+    host.appendChild(hvacScCategoryGroups(visible, pageKey));
+}
+
+/*
+ * The two buildings, in the order they are shown. 10203 is the G1-G2 panel and
+ * 10202 the G3 one — the same device_ids the All Units matrix has always
+ * grouped on, so the split is taken from the data, not hard-coded per unit.
+ *
+ * Built on demand rather than stored in a top-level const: the
+ * HVAC_SC_DEVICE_* constants are declared further down the file, and reading
+ * them at script-evaluation time would hit their temporal dead zone.
+ */
+function hvacScCategoryGroupDefs() {
+    return [
+        { deviceId: HVAC_SC_DEVICE_G1G2, title: "G1-G2 Building" },
+        { deviceId: HVAC_SC_DEVICE_G3,   title: "G3 Building" }
+    ];
+}
+
+/*
+ * Which building a unit belongs to, or null when the point carries no usable
+ * device_id. Mirrors the null handling in hvacScMatrixElement(): a missing
+ * device_id is its own case, never coerced to 0 or to the first group.
+ */
+function hvacScDeviceOf(unit) {
+    const dev = (unit && unit.device_id !== null && unit.device_id !== undefined)
+        ? Number(unit.device_id)
+        : NaN;
+
+    return Number.isFinite(dev) ? dev : null;
+}
+
+/*
+ * One building group: a titled card carrying its own unit count, with the four
+ * health bands nested inside it in severity order.
+ *
+ * A unit whose device_id matches neither building is NOT dropped — it is
+ * collected into "Unassigned" and logged the way the matrix already does, so
+ * a bad point name in the database shows up as a visible group instead of
+ * quietly disappearing from the page total.
+ */
+function hvacScCategoryGroups(entries, pageKey) {
+    const view = HVAC_SC_PAGES[pageKey].view;
+    const container = document.createElement("div");
+    container.className = "hvac-sc-container is-category";
+
+    const defs = hvacScCategoryGroupDefs();
+
+    const buckets = defs.map(g => ({
+        deviceId: g.deviceId,
+        title: g.title,
+        members: entries.filter(e => hvacScDeviceOf(e.unit) === g.deviceId)
+    }));
+
+    const knownIds = defs.map(g => g.deviceId);
+    const unassigned = entries.filter(e => !knownIds.includes(hvacScDeviceOf(e.unit)));
+
+    if (unassigned.length > 0) {
+        console.warn("HVAC SC: " + pageKey + " units with an unexpected or missing Device ID:", unassigned);
+        buckets.push({ deviceId: null, title: "Unassigned", members: unassigned });
+    }
+
+    buckets.forEach(bucket => {
+        if (bucket.members.length === 0) {
+            return;
+        }
+
+        container.appendChild(hvacScCategoryGroupElement(bucket, pageKey));
+    });
+
+    /*
+     * Nothing matched the search anywhere. Without this the page would show
+     * two empty group shells instead of saying so once.
+     */
+    if (container.children.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "hsc-empty";
+        empty.textContent = view.search
+            ? "No units match your search."
+            : "No units in this group.";
+        container.appendChild(empty);
+    }
+
+    return container;
+}
+
+/*
+ * The "All N" view on a category page: the same equipment inventory the
+ * HVAC SC matrix shows for that one category, in the same G1-G2 / G3 building
+ * groups and the same card style, but carrying every reading rather than the
+ * three-line collapsed set.
+ *
+ * It reuses hvacScGroupElement() rather than the matrix's four-category
+ * builder, so a unit whose device_id matches neither building still lands in
+ * "Unassigned" and is logged, exactly as it does on the full matrix.
+ */
+function hvacScCategoryMatrixElement(entries, pageKey) {
+    const kind = HVAC_SC_PAGES[pageKey].kind;
+    const view = HVAC_SC_PAGES[pageKey].view;
+    const defs = hvacScCategoryGroupDefs();
+
+    /*
+     * One category block, its header carrying the name range the full matrix
+     * shows ("CT 1A-13B"), so the two views label the same thing the same way.
+     */
+    const categoryBlock = units => {
+        const range = units.length > 0
+            ? " (" + units[0].name + "-" + units[units.length - 1].name + ")"
+            : "";
+        return [{ kind, header: kind + " " + range, units }];
+    };
+
+    const container = document.createElement("div");
+    container.className = "hvac-sc-container";
+
+    defs.forEach(def => {
+        const matched = entries.filter(e => hvacScDeviceOf(e.unit) === def.deviceId);
+        if (matched.length === 0) {
+            return;
+        }
+        container.appendChild(hvacScGroupElement(
+            def.title,
+            categoryBlock(hvacScSortUnits(matched.map(e => e.unit))),
+            String(def.deviceId),
+            view
+        ));
+    });
+
+    const knownIds = defs.map(d => d.deviceId);
+    const unassigned = entries.filter(e => !knownIds.includes(hvacScDeviceOf(e.unit)));
+
+    if (unassigned.length > 0) {
+        console.warn("HVAC SC: " + pageKey + " units with an unexpected or missing Device ID:", unassigned);
+        container.appendChild(hvacScGroupElement(
+            "Unassigned",
+            categoryBlock(hvacScSortUnits(unassigned.map(e => e.unit))),
+            "unexpected",
+            view
+        ));
+    }
+
+    if (container.children.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "hsc-empty";
+        empty.textContent = view.search ? "No units match your search." : "No units to display.";
+        container.appendChild(empty);
+    }
+
+    return container;
+}
+
+/*
+ * The building card itself. It reuses the All Units matrix's group chrome
+ * (.hvac-group-card / -header / -title / -count) so the two views of the same
+ * plant look like one design, and only the body differs: band sections rather
+ * than category blocks.
+ */
+function hvacScCategoryGroupElement(bucket, pageKey) {
+    const group = document.createElement("section");
+    group.className = "hvac-group-card";
+
+    if (bucket.deviceId !== null) {
+        group.dataset.deviceId = String(bucket.deviceId);
+    }
+
+    const header = document.createElement("div");
+    header.className = "hvac-group-header";
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "hvac-group-title";
+    titleEl.textContent = bucket.title;
+
+    const countEl = document.createElement("span");
+    countEl.className = "hvac-group-count";
+    /*
+     * Counted from what is actually rendered, not from bucket.members.length:
+     * the header must agree with the page when a search is narrowing the list.
+     */
+    countEl.textContent = bucket.members.length + (bucket.members.length === 1 ? " unit" : " units");
+
+    header.appendChild(titleEl);
+    header.appendChild(countEl);
+    group.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "hvac-group-body";
+
     HVAC_SC_BANDS.forEach(band => {
-        const members = visible.filter(e => hvacScBandOf(e.kind, e.unit) === band.key);
+        const members = bucket.members.filter(e => hvacScBandOf(e.kind, e.unit) === band.key);
 
         if (members.length === 0) {
             return;
@@ -6141,8 +6445,12 @@ function hvacScRenderSections() {
 
         members.sort(hvacScCompare);
 
-        hvacScSectionsHost.appendChild(hvacScBuildSection(band, members));
+        body.appendChild(hvacScBuildSection(band, members, pageKey));
     });
+
+    group.appendChild(body);
+
+    return group;
 }
 
 function hvacScBuildTile(label, value, modifier) {
@@ -6161,10 +6469,25 @@ function hvacScBuildTile(label, value, modifier) {
     return tile;
 }
 
-function renderHvacSc() {
-    sectionTitle.textContent = "HVAC SC";
+/*
+ * Renders one severity page. HVAC SC, CT, CCP and CHWP all come through here,
+ * so the summary tiles, the operating strip, the chips, the search box and the
+ * focus restore are one implementation rather than four copies that can drift.
+ *
+ * What differs per page is only what genuinely differs: the title, the set of
+ * units (all four categories, or one), the state object, and — for the single
+ * category pages — whether the sections are nested inside building groups.
+ */
+function renderHvacScPage(pageKey = "HVAC_SC") {
+    const meta = HVAC_SC_PAGES[pageKey];
+    const view = meta.view;
 
-    const units = hvacScAllUnits();
+    sectionTitle.textContent = meta.title;
+
+    /* HVAC SC shows every category; the category pages only their own. */
+    const units = meta.kind === null
+        ? hvacScAllUnits()
+        : hvacScAllUnits().filter(e => e.prefix === meta.kind);
 
     unitCount.textContent = units.length + " units";
 
@@ -6179,6 +6502,11 @@ function renderHvacSc() {
 
     const page = document.createElement("div");
     page.className = "hvac-sc-dashboard";
+    if (meta.kind !== null) {
+        page.classList.add("is-category");
+    }
+    /* Lets renderEquipment() tell the four .hsc-search boxes apart. */
+    page.dataset.pageKey = pageKey;
 
     /* ---- Summary: health tiles ---- */
     const summary = document.createElement("div");
@@ -6221,24 +6549,32 @@ function renderHvacSc() {
     const controls = document.createElement("div");
     controls.className = "hsc-controls";
 
-    [
+    /*
+     * HVAC SC keeps its "Issues First" / "All Units" pair word for word. On a
+     * category page the second chip carries the count ("All 22") because the
+     * inventory there is a single equipment type, where the number is the
+     * thing worth putting on the button.
+     */
+    const chips = [
         { mode: HVAC_SC_VIEW_ISSUES, label: "Issues First" },
-        { mode: HVAC_SC_VIEW_ALL, label: "All Units" }
-    ].forEach(chip => {
+        { mode: HVAC_SC_VIEW_ALL,    label: meta.kind === null ? "All Units" : "All " + units.length }
+    ];
+
+    chips.forEach(chip => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "hsc-chip" + (hvacScView.mode === chip.mode ? " is-on" : "");
+        button.className = "hsc-chip" + (view.mode === chip.mode ? " is-on" : "");
         button.textContent = chip.label;
         button.addEventListener("click", () => {
-            if (hvacScView.mode === chip.mode) {
+            if (view.mode === chip.mode) {
                 return;
             }
 
-            hvacScView.mode = chip.mode;
+            view.mode = chip.mode;
             controls.querySelectorAll(".hsc-chip").forEach(other => {
                 other.classList.toggle("is-on", other === button);
             });
-            hvacScRenderSections();
+            hvacScRenderSections(pageKey);
         });
         controls.appendChild(button);
     });
@@ -6247,30 +6583,45 @@ function renderHvacSc() {
     search.type = "search";
     search.className = "hsc-search";
     search.placeholder = "Search…";
-    search.value = hvacScView.searchRaw;
-    search.setAttribute("aria-label", "Search HVAC SC units");
+    search.value = view.searchRaw;
+    search.setAttribute("aria-label", meta.kind === null
+        ? "Search HVAC SC units"
+        : "Search " + meta.kind + " units");
     search.addEventListener("input", () => {
-        hvacScView.searchRaw = search.value;
-        hvacScView.search = search.value.trim().toLowerCase();
-        hvacScRenderSections();
+        view.searchRaw = search.value;
+        view.search = search.value.trim().toLowerCase();
+        hvacScRenderSections(pageKey);
     });
     controls.appendChild(search);
 
     page.appendChild(controls);
 
+    /*
+     * Published per page, not in one module-level variable: the expander
+     * buttons call hvacScRenderSections(pageKey), which looks the host up
+     * here, so a stale card can only ever repaint the page it belongs to.
+     */
     const host = document.createElement("div");
-    hvacScSectionsHost = host;
+    meta.host = host;
     page.appendChild(host);
 
     grid.appendChild(page);
 
-    hvacScRenderSections();
+    hvacScRenderSections(pageKey);
 
     /* The poll rebuilds this subtree; hand the caret back if it was ours. */
-    if (hvacScView.searchFocused) {
+    if (view.searchFocused) {
         search.focus();
         search.setSelectionRange(search.value.length, search.value.length);
     }
+}
+
+/*
+ * HVAC SC's entry point. Kept as its own name because that is what
+ * renderEquipment() and the rest of the file already call.
+ */
+function renderHvacSc() {
+    renderHvacScPage("HVAC_SC");
 }
 
 /*
@@ -6295,7 +6646,16 @@ function hvacScSortUnits(list) {
     });
 }
 
-function hvacScGroupElement(title, categories, deviceId) {
+/*
+ * One titled building group of unit cards. Shared by the full HVAC SC matrix
+ * and the category pages' "All N" view.
+ *
+ * The view defaults to HVAC SC's, which is what the matrix wants; a category
+ * page passes its own so the group's per-category filtering and its
+ * "No matching units" note both read the same search term as the rest of that
+ * page rather than HVAC SC's.
+ */
+function hvacScGroupElement(title, categories, deviceId, view = hvacScView) {
     const group = document.createElement("section");
     group.className = "hvac-group-card";
     if (deviceId !== undefined && deviceId !== null) {
@@ -6337,7 +6697,7 @@ function hvacScGroupElement(title, categories, deviceId) {
                 unit: u
             };
 
-            if (hvacScMatchesSearch(entry.label)) {
+            if (hvacScMatchesSearch(entry.label, view)) {
                 items.appendChild(hvacScUnitCard(entry));
                 count++;
             }
@@ -6353,7 +6713,7 @@ function hvacScGroupElement(title, categories, deviceId) {
         const noMatch = document.createElement("div");
         noMatch.className = "hsc-section-note";
         noMatch.style.padding = "10px 0";
-        noMatch.textContent = hvacScView.search ? "No matching units in this group." : "No units in this group.";
+        noMatch.textContent = view.search ? "No matching units in this group." : "No units in this group.";
         body.appendChild(noMatch);
     }
 
@@ -7820,7 +8180,7 @@ function buildMainDesktopDashboard(d) {
     // Card 5: Cooling Tower (CT)
     const ctCard = document.createElement("div");
     ctCard.className = "scard";
-    ctCard.onclick = () => navigateTo("HVAC_SC", "CT");
+    ctCard.onclick = () => navigateTo("CT");
     const ctTotal = d.cts.length || 22;
     const ctNorm = d.hscCat.CT.norm;
     const ctWarn = d.hscCat.CT.warn;
@@ -7846,7 +8206,7 @@ function buildMainDesktopDashboard(d) {
     // Card 6: Condenser Pump (CCP)
     const ccpCard = document.createElement("div");
     ccpCard.className = "scard";
-    ccpCard.onclick = () => navigateTo("HVAC_SC", "CCP");
+    ccpCard.onclick = () => navigateTo("CCP");
     const ccpTotal = d.ccpCount || 9;
     ccpCard.innerHTML = `
         <div class="scard-head">
@@ -7918,7 +8278,7 @@ function buildMainDesktopDashboard(d) {
     // Card 9: Chilled Water Pump (CHWP)
     const chwpCard = document.createElement("div");
     chwpCard.className = "scard";
-    chwpCard.onclick = () => navigateTo("HVAC_SC", "CHWP");
+    chwpCard.onclick = () => navigateTo("CHWP");
     const chwpTotal = d.chwpCount || 9;
     chwpCard.innerHTML = `
         <div class="scard-head">
@@ -8288,6 +8648,50 @@ function buildMainMobileDashboard(d) {
         ? `${hscCrit} critical`
         : (hscWarn > 0 ? `${hscWarn} warning` : `All normal · ${hscTot} units`);
 
+    /*
+     * The three category cards below read the same hscCat rows the desktop
+     * dashboard already uses, so their numbers are the HVAC SC numbers for
+     * that category, not a second, independently computed set. Nothing here
+     * changes hscTot / hscNorm / hscSub above: the HVAC SC card still reports
+     * the whole plant.
+     */
+    const catStat = key => {
+        const c = (d.hscCat && d.hscCat[key]) ? d.hscCat[key] : { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 };
+        const total = c.total || 0;
+        const bad = c.warn + c.crit;
+        const normPct = total > 0 ? Math.min(100, Math.round((c.norm / total) * 100)) : 100;
+        const warnPct = total > 0 ? Math.min(100 - normPct, Math.round((bad / total) * 100)) : 0;
+        const sub = c.crit > 0
+            ? `${c.crit} critical`
+            : (c.warn > 0 ? `${c.warn} warning` : `All normal · ${c.on} running`);
+
+        return { total, norm: c.norm, crit: c.crit, warn: c.warn, normPct, warnPct, sub };
+    };
+
+    const ctStat = catStat("CT");
+    const ctTotal = ctStat.total;
+    const ctNorm = ctStat.norm;
+    const ctCrit = ctStat.crit;
+    const ctNormPct = ctStat.normPct;
+    const ctWarnPct = ctStat.warnPct;
+    const ctSub = ctStat.sub;
+
+    const ccpStat = catStat("CCP");
+    const ccpTotal = ccpStat.total;
+    const ccpNorm = ccpStat.norm;
+    const ccpCrit = ccpStat.crit;
+    const ccpNormPct = ccpStat.normPct;
+    const ccpWarnPct = ccpStat.warnPct;
+    const ccpSub = ccpStat.sub;
+
+    const chwpStat = catStat("CHWP");
+    const chwpTotal = chwpStat.total;
+    const chwpNorm = chwpStat.norm;
+    const chwpCrit = chwpStat.crit;
+    const chwpNormPct = chwpStat.normPct;
+    const chwpWarnPct = chwpStat.warnPct;
+    const chwpSub = chwpStat.sub;
+
     // 3. AHU
     const ahuTotal = d.ahuUnits.length || 97;
     const ahuNorm = d.ahuCounts.normal;
@@ -8372,6 +8776,48 @@ function buildMainMobileDashboard(d) {
             <div class="mob-sys-bar">
                 <div class="mob-bar-seg is-green" style="width: ${hscNormPct}%;"></div>
                 ${hscWarnPct > 0 ? `<div class="mob-bar-seg ${hscCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${hscWarnPct}%;"></div>` : ''}
+            </div>
+        </div>
+
+        <!-- 2b. Cooling Tower -->
+        <div class="mob-sys-card" onclick="navigateTo('CT')">
+            <div class="mob-sys-top">
+                <span class="mob-sys-name">Cooling tower</span>
+                <span class="mob-sys-arrow">&#x2197;</span>
+            </div>
+            <div class="mob-sys-val"><b>${ctNorm}</b> <span class="mob-sys-tot">/ ${ctTotal}</span></div>
+            <div class="mob-sys-status">${ctSub}</div>
+            <div class="mob-sys-bar">
+                <div class="mob-bar-seg is-green" style="width: ${ctNormPct}%;"></div>
+                ${ctWarnPct > 0 ? `<div class="mob-bar-seg ${ctCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${ctWarnPct}%;"></div>` : ''}
+            </div>
+        </div>
+
+        <!-- 2c. Condenser Pump -->
+        <div class="mob-sys-card" onclick="navigateTo('CCP')">
+            <div class="mob-sys-top">
+                <span class="mob-sys-name">Condenser pump</span>
+                <span class="mob-sys-arrow">&#x2197;</span>
+            </div>
+            <div class="mob-sys-val"><b>${ccpNorm}</b> <span class="mob-sys-tot">/ ${ccpTotal}</span></div>
+            <div class="mob-sys-status">${ccpSub}</div>
+            <div class="mob-sys-bar">
+                <div class="mob-bar-seg is-green" style="width: ${ccpNormPct}%;"></div>
+                ${ccpWarnPct > 0 ? `<div class="mob-bar-seg ${ccpCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${ccpWarnPct}%;"></div>` : ''}
+            </div>
+        </div>
+
+        <!-- 2d. Chilled Water Pump -->
+        <div class="mob-sys-card" onclick="navigateTo('CHWP')">
+            <div class="mob-sys-top">
+                <span class="mob-sys-name">Chilled water pump</span>
+                <span class="mob-sys-arrow">&#x2197;</span>
+            </div>
+            <div class="mob-sys-val"><b>${chwpNorm}</b> <span class="mob-sys-tot">/ ${chwpTotal}</span></div>
+            <div class="mob-sys-status">${chwpSub}</div>
+            <div class="mob-sys-bar">
+                <div class="mob-bar-seg is-green" style="width: ${chwpNormPct}%;"></div>
+                ${chwpWarnPct > 0 ? `<div class="mob-bar-seg ${chwpCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${chwpWarnPct}%;"></div>` : ''}
             </div>
         </div>
 
@@ -9027,8 +9473,17 @@ function renderEquipment() {
     const active = document.activeElement;
     ahuView.searchFocused = !!(active && active.classList
         && active.classList.contains("ahu-search"));
-    hvacScView.searchFocused = !!(active && active.classList
-        && active.classList.contains("hsc-search"));
+    /*
+     * HVAC SC, CT, CCP and CHWP all use .hsc-search, so the class alone no
+     * longer says which page lost its caret. Resolve the page from the
+     * dashboard the input sits in, then set that page's flag and leave the
+     * other three false — otherwise switching from CT to HVAC SC would focus
+     * a box the reader never touched here.
+     */
+    const hscFocusKey = hvacScSearchPageKey(active);
+    ["HVAC_SC", "CT", "CCP", "CHWP"].forEach(key => {
+        HVAC_SC_PAGES[key].view.searchFocused = (key === hscFocusKey);
+    });
     roomFilter.searchFocused = !!(active && active.classList
         && active.classList.contains("room-search"));
     chillerView.searchFocused = !!(active && active.classList
@@ -9098,6 +9553,18 @@ function renderEquipment() {
     if (currentEquipment === "HVAC_SC") {
         grid.classList.add("hvac-view");
         renderHvacSc();
+        return;
+    }
+
+    /*
+     * CT / CCP / CHWP are the same dashboard narrowed to one category. They
+     * reuse the HVAC SC renderer and grid class so the summary tiles, cards,
+     * expanders and colours are literally the same code, and only the unit set
+     * and the state object differ.
+     */
+    if (currentEquipment === "CT" || currentEquipment === "CCP" || currentEquipment === "CHWP") {
+        grid.classList.add("hvac-view");
+        renderHvacScPage(currentEquipment);
         return;
     }
 
@@ -9254,6 +9721,9 @@ async function loadData() {
             : (currentEquipment === "AHU" || currentEquipment === "AHU_G8"
                 ? "api_ahu.php"
                 : (currentEquipment === "HVAC_SC"
+                    || currentEquipment === "CT"
+                    || currentEquipment === "CCP"
+                    || currentEquipment === "CHWP"
                     ? "api_hvac_sc.php"
                     : (currentEquipment === "EXHAUST_FAN"
                         ? "api_ef.php"
@@ -9318,7 +9788,7 @@ async function loadData() {
 }
 
 function navigateTo(equipment, filter = "") {
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
     if (!valid.includes(equipment)) {
         equipment = "MAIN";
     }
@@ -9331,6 +9801,14 @@ function navigateTo(equipment, filter = "") {
     } else if (equipment === "HVAC_SC") {
         hvacScView.searchRaw = filter || "";
         hvacScView.search = (filter || "").trim().toLowerCase();
+    } else if (equipment === "CT" || equipment === "CCP" || equipment === "CHWP") {
+        /*
+         * The category pages get their own state object, set the same way,
+         * so opening Cooling Tower does not type the filter into HVAC SC.
+         */
+        const view = HVAC_SC_PAGES[equipment].view;
+        view.searchRaw = filter || "";
+        view.search = (filter || "").trim().toLowerCase();
     } else if (equipment === "CHILLER") {
         chillerView.searchRaw = filter || "";
         chillerView.search = (filter || "").trim().toLowerCase();

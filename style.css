@@ -3788,6 +3788,48 @@ html:has(.alarm-page) .alarm-page {
 .hsc-o b small { display: block; font-size: 11px; font-weight: 400; color: #8b98a8; }
 .hsc-o[data-run="off"] .hsc-o-head b, .hsc-o[data-run="off"] .hsc-v b { opacity: .55; }
 
+/* ---- CT / CCP / CHWP: building groups with band sections inside ----
+ *
+ * These pages are the severity dashboard narrowed to one category, with the
+ * building group as the outer level. Everything inside a group — the summary
+ * tiles, the band titles, the issue cards, the healthy rows — is the HVAC SC
+ * markup unchanged, so no new colours or card shapes are introduced here.
+ *
+ * Only the seams need styling: the group card's own padding is tighter than a
+ * band section expects, and the last section must not add a trailing gap
+ * before the card's bottom padding.
+ */
+.hvac-sc-container.is-category {
+    align-items: start;
+}
+
+.hvac-sc-container.is-category .hvac-group-body {
+    gap: 0;
+}
+
+.hvac-sc-container.is-category .hsc-section:last-child {
+    margin-bottom: 0;
+}
+
+/* The band title is read inside a group card, so it sits a little closer. */
+.hvac-sc-container.is-category .hsc-section-head {
+    padding: 0 2px 6px;
+}
+
+/* An empty result is one message across the whole container, not a cell. */
+.hvac-sc-container.is-category > .hsc-empty {
+    grid-column: 1 / -1;
+}
+
+/*
+ * A group can be narrow (half of the container) while still holding several
+ * cards. The Issues First card grid already caps tracks at 420px, which fits
+ * two per group on a wide display and falls to one when the group is narrow.
+ */
+.hvac-sc-container.is-category .hsc-cards {
+    gap: 10px;
+}
+
 /* =========================================================
    ROOM TEMP & RH redesign (Current / Hourly / Chart)
    ========================================================= */
