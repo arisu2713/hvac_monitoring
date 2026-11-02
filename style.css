@@ -7173,6 +7173,204 @@ html.is-actlog-view .actlog-page {
     color: #999;
 }
 
+.actlog-stat.actlog-stat-on .actlog-stat-value {
+    color: #22c55e;
+}
+
+.actlog-stat.actlog-stat-off .actlog-stat-value {
+    color: #ef4444;
+}
+
+/* ---- Activity Log Page Switch (Period & Equipment Type quick filters) ---- */
+
+body.is-actlog-view .page-switch {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 20px 12px;
+}
+
+body.is-actlog-view .actlog-switch-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+body.is-actlog-view .actlog-switch-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    color: #888;
+    min-width: 78px;
+}
+
+body.is-actlog-view .actlog-switch-group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+body.is-actlog-view .actlog-switch-group .switch-button {
+    flex: initial;
+    min-height: 28px;
+    height: 28px;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    border-radius: 9999px !important;
+    border: 1px solid #333;
+    background: #1e1e1e;
+    color: #aaa;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+body.is-actlog-view .actlog-switch-group .switch-button:hover {
+    background: #2a2a2a;
+    color: #fff;
+    border-color: #555;
+}
+
+body.is-actlog-view .actlog-switch-group .switch-button.is-active {
+    background: #e6ecf3;
+    color: #0e1319;
+    border-color: #e6ecf3;
+    font-weight: 700;
+}
+
+/* ---- Activity Log Page Filters (Quickbar & Drawer) ---- */
+
+body.is-actlog-view .page-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 0 20px 12px;
+}
+
+.actlog-filter-quickbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+}
+
+.actlog-date-toggle-btn {
+    display: none; /* hidden on wide desktop, shown on mobile */
+    align-items: center;
+    gap: 6px;
+    background: #1f1f1f;
+    color: #ccc;
+    border: 1px solid #383838;
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    cursor: pointer;
+    white-space: nowrap;
+    height: 30px;
+    transition: background .15s, border-color .15s, color .15s;
+    user-select: none;
+}
+
+.actlog-date-toggle-btn:hover {
+    background: #282828;
+    color: #fff;
+    border-color: #555;
+}
+
+.actlog-date-toggle-btn.is-open {
+    background: #1c2636;
+    border-color: #3b82f6;
+    color: #93c5fd;
+}
+
+.actlog-date-toggle-btn.has-filter {
+    background: #15294a;
+    border-color: #60a5fa;
+    color: #bfdbfe;
+}
+
+.actlog-toggle-icon {
+    font-size: 12px;
+}
+
+.actlog-toggle-chevron {
+    font-size: 8px;
+    opacity: .7;
+}
+
+.actlog-search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 auto;
+}
+
+.actlog-search-input {
+    flex: 1 1 auto;
+    min-width: 140px;
+    height: 30px;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 9999px;
+    border: 1px solid #383838;
+    background: #191919;
+    color: #eee;
+}
+
+.actlog-search-input:focus {
+    outline: none;
+    border-color: #555;
+    background: #202020;
+}
+
+.actlog-search-btn {
+    height: 30px;
+    padding: 4px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 9999px;
+    flex-shrink: 0;
+}
+
+.actlog-filter-drawer {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.actlog-filter-drawer .filter-field {
+    margin-bottom: 0;
+}
+
+.actlog-filter-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.actlog-btn-apply,
+.actlog-btn-reset {
+    min-height: 30px;
+    height: 30px;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    border-radius: 9999px;
+    white-space: nowrap;
+}
+
 /* ---- Table group wrapper ---- */
 
 .actlog-group {
@@ -7518,6 +7716,198 @@ html.is-actlog-view .actlog-page {
 /* ---- Tablet / narrow: rows become stacked cards ---- */
 
 @media (max-width: 900px) {
+    /* 1. Hapus Judul Halaman di mobile */
+    body.is-actlog-view .section-header {
+        display: none !important;
+    }
+
+    /* 2 & 3. Ringkas switch row & pill buttons */
+    body.is-actlog-view .page-switch {
+        padding: 4px 12px 6px;
+        gap: 4px;
+    }
+
+    body.is-actlog-view .actlog-switch-row {
+        gap: 6px;
+        flex-wrap: nowrap;
+        overflow: hidden;
+    }
+
+    body.is-actlog-view .actlog-switch-label {
+        font-size: 10px;
+        min-width: 64px;
+        color: #777;
+        flex-shrink: 0;
+        letter-spacing: .4px;
+    }
+
+    body.is-actlog-view .actlog-switch-group {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 4px;
+        padding-bottom: 2px;
+    }
+
+    body.is-actlog-view .actlog-switch-group::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Hide ALL TIME on mobile */
+    body.is-actlog-view .actlog-switch-group button[data-period="all"] {
+        display: none !important;
+    }
+
+    body.is-actlog-view .actlog-switch-group .switch-button {
+        padding: 2px 9px;
+        font-size: 10.5px;
+        min-height: 24px;
+        height: 24px;
+        flex-shrink: 0;
+        border-radius: 9999px !important;
+    }
+
+    /* 4 & 5. Filter Tanggal & Drawer on mobile */
+    body.is-actlog-view .page-filters {
+        padding: 2px 12px 6px;
+        gap: 6px;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .actlog-filter-quickbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+    }
+
+    .actlog-date-toggle-btn {
+        display: inline-flex;
+        padding: 3px 10px;
+        font-size: 10.5px;
+        height: 28px;
+    }
+
+    .actlog-search-wrap {
+        gap: 4px;
+    }
+
+    .actlog-search-input {
+        height: 28px;
+        padding: 3px 8px;
+        font-size: 10.5px;
+        min-width: 0;
+    }
+
+    .actlog-search-btn {
+        height: 28px;
+        padding: 3px 9px;
+        font-size: 9.5px;
+    }
+
+    .actlog-filter-drawer {
+        display: none;
+        background: #181818;
+        border: 1px solid #2d2d2d;
+        border-radius: 8px;
+        padding: 8px 10px;
+        gap: 6px;
+        animation: actlogSlideDown .18s ease forwards;
+    }
+
+    .actlog-filter-drawer.is-open {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .actlog-filter-drawer .filter-field {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+
+    .actlog-filter-drawer .filter-label {
+        font-size: 9px;
+        font-weight: 700;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+    }
+
+    .actlog-filter-drawer .filter-input {
+        width: 100%;
+        height: 28px;
+        padding: 2px 6px;
+        font-size: 10.5px;
+        border-radius: 4px;
+        background: #202020;
+        border: 1px solid #383838;
+        color: #ddd;
+    }
+
+    .actlog-filter-drawer .actlog-field-status {
+        grid-column: span 2;
+    }
+
+    .actlog-filter-actions {
+        grid-column: span 2;
+        display: flex;
+        gap: 6px;
+        margin-top: 2px;
+    }
+
+    .actlog-btn-apply,
+    .actlog-btn-reset {
+        flex: 1 1 0;
+        height: 28px;
+        min-height: 28px;
+        font-size: 10.5px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* 7. Summary Stats thin bar */
+    body.is-actlog-view .actlog-summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px;
+        margin-bottom: 2px;
+    }
+
+    body.is-actlog-view .actlog-stat {
+        min-width: 0;
+        padding: 4px 6px;
+        border-radius: 6px;
+        text-align: center;
+        background: #181818;
+        border: 1px solid #2b2b2b;
+    }
+
+    body.is-actlog-view .actlog-stat-value {
+        font-size: 14px;
+        line-height: 1.1;
+    }
+
+    body.is-actlog-view .actlog-stat-label {
+        font-size: 7.5px;
+        letter-spacing: .3px;
+        margin-top: 1px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #888;
+    }
+
+    body.is-actlog-view .actlog-page {
+        gap: 8px;
+    }
+
     .actlog-row.actlog-thead {
         display: none;
     }
@@ -7563,10 +7953,48 @@ html.is-actlog-view .actlog-page {
     }
 }
 
+@keyframes actlogSlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 @media (max-width: 600px) {
+    body.is-actlog-view .page-switch {
+        padding: 3px 8px 4px;
+        gap: 3px;
+    }
+
+    body.is-actlog-view .actlog-switch-row {
+        gap: 4px;
+    }
+
+    body.is-actlog-view .actlog-switch-label {
+        width: auto;
+        min-width: 58px;
+        font-size: 9px;
+        margin-bottom: 0;
+    }
+
+    body.is-actlog-view .actlog-switch-group .switch-button {
+        padding: 2px 8px;
+        font-size: 9.5px;
+        min-height: 22px;
+        height: 22px;
+    }
+
+    body.is-actlog-view .page-filters {
+        padding: 2px 8px 4px;
+    }
+
     .equipment-grid:has(.actlog-page) {
-        padding-left: 10px;
-        padding-right: 10px;
+        padding-left: 8px;
+        padding-right: 8px;
     }
 
     .actlog-pagination {

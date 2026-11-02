@@ -11598,18 +11598,19 @@ const ACTLOG_DEFAULT_PER_PAGE = 50;
  * filters and page position are preserved.
  */
 let actlogState = {
-    page:       1,
-    perPage:    ACTLOG_DEFAULT_PER_PAGE,
-    period:     "all",
-    dateFrom:   "",
-    dateTo:     "",
-    equipType:  "",
-    equipId:    "",
-    search:     "",
-    newStatus:  "",
-    data:       null,   /* last successful API response */
-    loading:    false,
-    error:      null,
+    page:           1,
+    perPage:        ACTLOG_DEFAULT_PER_PAGE,
+    period:         "all",
+    dateFrom:       "",
+    dateTo:         "",
+    equipType:      "",
+    equipId:        "",
+    search:         "",
+    newStatus:      "",
+    data:           null,   /* last successful API response */
+    loading:        false,
+    error:          null,
+    dateDrawerOpen: false,
 };
 
 /* ---- Detail modal ---- */
@@ -11894,8 +11895,9 @@ function actlogBuildPageSwitch(availableTypes) {
     periodOptions.forEach(opt => {
         const btn = document.createElement("button");
         btn.type = "button";
+        btn.setAttribute("data-period", opt.value);
         const isActive = (actlogState.period === opt.value) && (!actlogState.dateFrom && !actlogState.dateTo);
-        btn.className = "switch-button" + (isActive ? " is-active" : "");
+        btn.className = "switch-button actlog-pill-btn" + (isActive ? " is-active" : "");
         btn.textContent = opt.label;
         btn.addEventListener("click", () => {
             if (actlogState.period === opt.value && !actlogState.dateFrom && !actlogState.dateTo) return;
@@ -11923,9 +11925,16 @@ function actlogBuildPageSwitch(availableTypes) {
     typeGroup.className = "actlog-switch-group";
 
     const typeOptions = [{ value: "", label: "ALL TYPES" }];
+    const preferredTypes = ["AHU", "CCP", "CHILLER", "CHWP", "CT"];
     const knownTypes = (availableTypes && availableTypes.length > 0)
         ? availableTypes
-        : ["AHU", "CHILLER", "CT", "CCP", "CHWP", "EF"];
+        : ["AHU", "CCP", "CHILLER", "CHWP", "CT", "EF"];
+
+    preferredTypes.forEach(t => {
+        if (!typeOptions.some(o => o.value === t)) {
+            typeOptions.push({ value: t, label: t });
+        }
+    });
 
     knownTypes.forEach(t => {
         if (!typeOptions.some(o => o.value === t)) {
@@ -11936,8 +11945,9 @@ function actlogBuildPageSwitch(availableTypes) {
     typeOptions.forEach(opt => {
         const btn = document.createElement("button");
         btn.type = "button";
+        btn.setAttribute("data-equip", opt.value);
         const isActive = (actlogState.equipType === opt.value);
-        btn.className = "switch-button" + (isActive ? " is-active" : "");
+        btn.className = "switch-button actlog-pill-btn" + (isActive ? " is-active" : "");
         btn.textContent = opt.label;
         btn.addEventListener("click", () => {
             if (actlogState.equipType === opt.value) return;
@@ -11957,10 +11967,66 @@ function actlogBuildFilters(availableTypes) {
     clearPageFilters();
     if (!pageFilters) return;
 
+    /* Quick Filter Control Row (Filter Tanggal button + inline search) */
+    const quickBar = document.createElement("div");
+    quickBar.className = "actlog-filter-quickbar";
+
+    const hasCustomDate = Boolean(actlogState.dateFrom || actlogState.dateTo);
+
+    /* 1. Toggle Button for Date Picker / Advanced Filter Drawer */
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "actlog-date-toggle-btn"
+        + (actlogState.dateDrawerOpen ? " is-open" : "")
+        + (hasCustomDate ? " has-filter" : "");
+    toggleBtn.setAttribute("aria-expanded", actlogState.dateDrawerOpen ? "true" : "false");
+
+    const toggleText = hasCustomDate
+        ? (actlogState.dateFrom && actlogState.dateTo
+            ? `${actlogState.dateFrom} ~ ${actlogState.dateTo}`
+            : (actlogState.dateFrom ? `Dari ${actlogState.dateFrom}` : `S/d ${actlogState.dateTo}`))
+        : "Filter Tanggal";
+
+    toggleBtn.innerHTML = `
+        <span class="actlog-toggle-icon">📅</span>
+        <span class="actlog-toggle-text">${toggleText}</span>
+        <span class="actlog-toggle-chevron">${actlogState.dateDrawerOpen ? "▲" : "▼"}</span>
+    `;
+    quickBar.appendChild(toggleBtn);
+
+    /* 2. Inline Search Input */
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "actlog-search-wrap";
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.className = "filter-input actlog-search-input";
+    searchInput.placeholder = "Cari Unit / Point ID…";
+    searchInput.value = actlogState.search;
+    searchWrap.appendChild(searchInput);
+
+    const searchBtn = document.createElement("button");
+    searchBtn.type = "button";
+    searchBtn.className = "filter-button actlog-search-btn";
+    searchBtn.textContent = "CARI";
+    searchBtn.addEventListener("click", () => {
+        actlogState.search = searchInput.value.trim();
+        actlogState.page   = 1;
+        loadActivityLogData();
+    });
+    searchWrap.appendChild(searchBtn);
+
+    quickBar.appendChild(searchWrap);
+    pageFilters.appendChild(quickBar);
+
+    /* Collapsible Drawer (Date pickers + New Status + Inline Action buttons) */
+    const drawer = document.createElement("div");
+    drawer.className = "actlog-filter-drawer" + (actlogState.dateDrawerOpen ? " is-open" : "");
+
     /* Helper: label + input wrapper */
-    function field(labelText, inputEl) {
+    function field(labelText, inputEl, extraClass) {
         const wrap = document.createElement("label");
-        wrap.className = "filter-field";
+        wrap.className = "filter-field" + (extraClass ? " " + extraClass : "");
         const lbl = document.createElement("span");
         lbl.className = "filter-label";
         lbl.textContent = labelText;
@@ -11974,35 +12040,19 @@ function actlogBuildFilters(availableTypes) {
     fromInput.type = "date";
     fromInput.className = "filter-input";
     fromInput.value = actlogState.dateFrom;
-    pageFilters.appendChild(field("From", fromInput));
+    drawer.appendChild(field("From", fromInput, "actlog-field-from"));
 
     /* Date To */
     const toInput = document.createElement("input");
     toInput.type = "date";
     toInput.className = "filter-input";
     toInput.value = actlogState.dateTo;
-    pageFilters.appendChild(field("To", toInput));
+    drawer.appendChild(field("To", toInput, "actlog-field-to"));
 
-    /* Equipment Type */
-    const typeSel = document.createElement("select");
-    typeSel.className = "filter-input";
-    typeSel.style.minWidth = "100px";
-    [{ value: "", text: "All Types" }]
-        .concat((availableTypes || []).map(t => ({ value: t, text: t })))
-        .forEach(opt => {
-            const o = document.createElement("option");
-            o.value = opt.value;
-            o.textContent = opt.text;
-            if (opt.value === actlogState.equipType) o.selected = true;
-            typeSel.appendChild(o);
-        });
-    pageFilters.appendChild(field("Type", typeSel));
-
-    /* New Status */
+    /* New Status (All, ON, OFF) */
     const statusSel = document.createElement("select");
     statusSel.className = "filter-input";
-    statusSel.style.minWidth = "90px";
-    [{ value: "", text: "All" }, { value: "ON", text: "ON" }, { value: "OFF", text: "OFF" }]
+    [{ value: "", text: "All Status" }, { value: "ON", text: "ON" }, { value: "OFF", text: "OFF" }]
         .forEach(opt => {
             const o = document.createElement("option");
             o.value = opt.value;
@@ -12010,58 +12060,67 @@ function actlogBuildFilters(availableTypes) {
             if (opt.value === actlogState.newStatus) o.selected = true;
             statusSel.appendChild(o);
         });
-    pageFilters.appendChild(field("New Status", statusSel));
+    drawer.appendChild(field("Status", statusSel, "actlog-field-status"));
 
-    /* Search */
-    const searchInput = document.createElement("input");
-    searchInput.type = "search";
-    searchInput.className = "filter-input";
-    searchInput.placeholder = "Equipment / Point ID…";
-    searchInput.value = actlogState.search;
-    searchInput.style.minWidth = "180px";
-    pageFilters.appendChild(field("Search", searchInput));
+    /* Inline Action buttons: APPLY & RESET */
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "actlog-filter-actions";
 
-    /* Apply button */
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
-    applyBtn.className = "filter-button";
+    applyBtn.className = "filter-button actlog-btn-apply";
     applyBtn.textContent = "APPLY";
-    applyBtn.style.alignSelf = "flex-end";
     applyBtn.addEventListener("click", () => {
         actlogState.dateFrom  = fromInput.value;
         actlogState.dateTo    = toInput.value;
         if (actlogState.dateFrom || actlogState.dateTo) {
             actlogState.period = "";
         }
-        actlogState.equipType = typeSel.value;
         actlogState.newStatus = statusSel.value;
         actlogState.search    = searchInput.value.trim();
         actlogState.page      = 1;
         loadActivityLogData();
     });
-    pageFilters.appendChild(applyBtn);
+    actionsWrap.appendChild(applyBtn);
 
-    /* Reset button */
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
-    resetBtn.className = "filter-button filter-button-reset";
+    resetBtn.className = "filter-button filter-button-reset actlog-btn-reset";
     resetBtn.textContent = "RESET";
-    resetBtn.style.alignSelf = "flex-end";
     resetBtn.addEventListener("click", () => {
-        actlogState.period    = "all";
-        actlogState.dateFrom  = "";
-        actlogState.dateTo    = "";
-        actlogState.equipType = "";
-        actlogState.newStatus = "";
-        actlogState.search    = "";
-        actlogState.page      = 1;
+        actlogState.period         = "all";
+        actlogState.dateFrom       = "";
+        actlogState.dateTo         = "";
+        actlogState.equipType      = "";
+        actlogState.newStatus      = "";
+        actlogState.search         = "";
+        actlogState.page           = 1;
+        actlogState.dateDrawerOpen = false;
         loadActivityLogData();
     });
-    pageFilters.appendChild(resetBtn);
+    actionsWrap.appendChild(resetBtn);
+
+    drawer.appendChild(actionsWrap);
+    pageFilters.appendChild(drawer);
+
+    /* Toggle Accordion Handler */
+    toggleBtn.addEventListener("click", () => {
+        actlogState.dateDrawerOpen = !actlogState.dateDrawerOpen;
+        drawer.classList.toggle("is-open", actlogState.dateDrawerOpen);
+        toggleBtn.classList.toggle("is-open", actlogState.dateDrawerOpen);
+        toggleBtn.setAttribute("aria-expanded", actlogState.dateDrawerOpen ? "true" : "false");
+        const chevron = toggleBtn.querySelector(".actlog-toggle-chevron");
+        if (chevron) chevron.textContent = actlogState.dateDrawerOpen ? "▲" : "▼";
+        actlogSyncStickyOffset();
+    });
 
     /* Allow pressing Enter in search to apply */
     searchInput.addEventListener("keydown", e => {
-        if (e.key === "Enter") applyBtn.click();
+        if (e.key === "Enter") {
+            actlogState.search = searchInput.value.trim();
+            actlogState.page   = 1;
+            loadActivityLogData();
+        }
     });
 }
 
