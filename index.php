@@ -163,6 +163,7 @@ $appVersion = app_version_info();
     <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
     <button class="nav-button" data-equipment="ALARM">Alarm</button>
     <button class="nav-button" data-equipment="ENERGY">Energy</button>
+    <button class="nav-button" data-equipment="ACTIVITY_LOG">Activity Log</button>
 </nav>
 
 <main>
@@ -200,7 +201,7 @@ const API_URL = "api.php";
 
 function getInitialEquipment() {
     const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
     if (hash && valid.includes(hash)) {
         return hash;
     }
@@ -9499,6 +9500,8 @@ function renderEquipment() {
      */
     grid.classList.remove("hvac-view", "ahu-view", "main-view", "chiller-view");
     document.body.classList.remove("is-chiller-view");
+    document.body.classList.remove("is-actlog-view");
+    document.documentElement.classList.remove("is-actlog-view");
 
     /*
      * Both bars are cleared up front, not at the end: several branches below
@@ -9535,6 +9538,13 @@ function renderEquipment() {
 
     if (currentEquipment === "ENERGY") {
         renderEnergy();
+        return;
+    }
+
+    if (currentEquipment === "ACTIVITY_LOG") {
+        document.body.classList.add("is-actlog-view");
+        document.documentElement.classList.add("is-actlog-view");
+        renderActivityLog();
         return;
     }
 
@@ -9679,6 +9689,11 @@ async function loadData() {
          * depends on the mode: the hourly history table reads
          * api_temp_rh_hourly.php, the live cards read api_room.php below.
          */
+        if (currentEquipment === "ACTIVITY_LOG") {
+            await loadActivityLogData();
+            return;
+        }
+
         if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) {
             /*
              * The table and the export follow the selected metric; the charts
@@ -9788,7 +9803,7 @@ async function loadData() {
 }
 
 function navigateTo(equipment, filter = "") {
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY"];
+    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
     if (!valid.includes(equipment)) {
         equipment = "MAIN";
     }
@@ -9878,6 +9893,10 @@ async function safeLoadData() {
  */
 function isHistoryPage() {
     if (currentEquipment === "ENERGY") {
+        return true;
+    }
+
+    if (currentEquipment === "ACTIVITY_LOG") {
         return true;
     }
 
@@ -11560,6 +11579,626 @@ function appendHistoryButtons(bar, config) {
 
 
 
+/* =========================================================
+   ACTIVITY LOG PAGE
+   =========================================================
+
+   Server-side paginated view over equipment_status_events.
+   Filters are applied in the API (prepared statements).
+   This page never auto-refreshes — it is a history view.
+   ========================================================= */
+
+const ACTLOG_API_URL  = "api_actlog.php";
+const ACTLOG_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
+const ACTLOG_DEFAULT_PER_PAGE = 50;
+
+/*
+ * Persistent state for the Activity Log page.
+ * Survives navigation away and back, so the reader's
+ * filters and page position are preserved.
+ */
+let actlogState = {
+    page:       1,
+    perPage:    ACTLOG_DEFAULT_PER_PAGE,
+    dateFrom:   "",
+    dateTo:     "",
+    equipType:  "",
+    equipId:    "",
+    search:     "",
+    newStatus:  "",
+    data:       null,   /* last successful API response */
+    loading:    false,
+    error:      null,
+};
+
+/* ---- Detail modal ---- */
+
+function actlogOpenDetail(evt) {
+    const existing = document.querySelector(".actlog-modal-backdrop");
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "actlog-modal-backdrop";
+    backdrop.addEventListener("click", e => {
+        if (e.target === backdrop) backdrop.remove();
+    });
+
+    const modal = document.createElement("div");
+    modal.className = "actlog-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Event Detail");
+
+    const title = document.createElement("div");
+    title.className = "actlog-modal-title";
+    title.textContent = "EVENT DETAIL — " + (evt.equipment_id || "");
+    modal.appendChild(title);
+
+    const fields = [
+        { label: "ID",              value: String(evt.id) },
+        { label: "Event Time",      value: (evt.event_time || "").slice(0, 23) },
+        { label: "Equipment",       value: evt.equipment_id  || "—" },
+        { label: "Type",            value: evt.equipment_type || "—" },
+        { label: "Previous Status", value: evt.previous_status || "—" },
+        { label: "New Status",      value: evt.new_status || "—" },
+        { label: "Source Poller",   value: evt.source_poller || "—" },
+        { label: "Point ID",        value: evt.point_id || "—" },
+        { label: "Record Created",  value: (evt.created_at || "").slice(0, 23) },
+    ];
+
+    fields.forEach(f => {
+        const row = document.createElement("div");
+        row.className = "actlog-modal-row";
+
+        const lbl = document.createElement("div");
+        lbl.className = "actlog-modal-label";
+        lbl.textContent = f.label;
+
+        const val = document.createElement("div");
+        val.className = "actlog-modal-value";
+        val.textContent = f.value;
+
+        row.appendChild(lbl);
+        row.appendChild(val);
+        modal.appendChild(row);
+    });
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "actlog-modal-close";
+    closeBtn.textContent = "CLOSE";
+    closeBtn.addEventListener("click", () => backdrop.remove());
+    modal.appendChild(closeBtn);
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+
+    closeBtn.focus();
+}
+
+/* ---- Status badge helper ---- */
+
+function actlogBadge(status) {
+    const span = document.createElement("span");
+    span.className = "actlog-badge";
+    const s = (status || "").toUpperCase();
+    if (s === "ON") {
+        span.classList.add("actlog-badge-on");
+        span.textContent = "ON";
+    } else if (s === "OFF") {
+        span.classList.add("actlog-badge-off");
+        span.textContent = "OFF";
+    } else {
+        span.classList.add("actlog-badge-unknown");
+        span.textContent = s || "—";
+    }
+    return span;
+}
+
+/* ---- Build one table row ---- */
+
+function actlogBuildRow(evt) {
+    const row = document.createElement("div");
+    const ns = (evt.new_status || "").toUpperCase();
+    row.className = "actlog-row" + (ns === "ON" ? " actlog-row-on" : (ns === "OFF" ? " actlog-row-off" : ""));
+    row.setAttribute("role", "row");
+
+    /* Time */
+    const cTime = document.createElement("div");
+    cTime.className = "actlog-cell actlog-cell-time";
+    cTime.setAttribute("data-label", "Time");
+    cTime.textContent = (evt.event_time || "").slice(0, 19).replace("T", " ");
+    row.appendChild(cTime);
+
+    /* Equipment */
+    const cEquip = document.createElement("div");
+    cEquip.className = "actlog-cell actlog-cell-equip";
+    cEquip.setAttribute("data-label", "Equipment");
+    cEquip.textContent = evt.equipment_id || "—";
+    row.appendChild(cEquip);
+
+    /* Type */
+    const cType = document.createElement("div");
+    cType.className = "actlog-cell actlog-cell-type";
+    cType.setAttribute("data-label", "Type");
+    cType.textContent = evt.equipment_type || "—";
+    row.appendChild(cType);
+
+        /* Status */
+    const cStatus = document.createElement("div");
+    cStatus.className = "actlog-cell";
+    cStatus.setAttribute("data-label", "Status");
+    cStatus.appendChild(actlogBadge(evt.new_status));
+    row.appendChild(cStatus);
+
+    /* Source poller */
+    const cSource = document.createElement("div");
+    cSource.className = "actlog-cell actlog-cell-source";
+    cSource.setAttribute("data-label", "Source");
+    cSource.textContent = evt.source_poller || "—";
+    row.appendChild(cSource);
+
+    /* Point ID */
+    const cPoint = document.createElement("div");
+    cPoint.className = "actlog-cell actlog-cell-point";
+    cPoint.setAttribute("data-label", "Point ID");
+    cPoint.textContent = evt.point_id || "—";
+    cPoint.title = evt.point_id || "";
+    row.appendChild(cPoint);
+
+    /* Detail button */
+    const cDetail = document.createElement("div");
+    cDetail.className = "actlog-cell actlog-cell-detail";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "actlog-detail-btn";
+    btn.textContent = "⋯";
+    btn.title = "View event detail";
+    btn.addEventListener("click", e => {
+        e.stopPropagation();
+        actlogOpenDetail(evt);
+    });
+    cDetail.appendChild(btn);
+    row.appendChild(cDetail);
+
+    /* Clicking the row also opens the detail */
+    row.addEventListener("click", () => actlogOpenDetail(evt));
+
+    return row;
+}
+
+/* ---- Build table header row ---- */
+
+function actlogBuildHeader() {
+    const row = document.createElement("div");
+    row.className = "actlog-row actlog-thead";
+    row.setAttribute("role", "row");
+
+    const cols = ["Time", "Equipment", "Type", "Status", "Source", "Point ID", ""];
+    cols.forEach(label => {
+        const cell = document.createElement("div");
+        cell.className = "actlog-cell";
+        cell.textContent = label;
+        row.appendChild(cell);
+    });
+    return row;
+}
+
+/* ---- Build pagination bar ---- */
+
+function actlogBuildPagination(data) {
+    const bar = document.createElement("div");
+    bar.className = "actlog-pagination";
+
+    const total   = data.total || 0;
+    const page    = data.page  || 1;
+    const perPage = data.per_page || actlogState.perPage;
+    const pages   = data.total_pages || 1;
+    const from    = total === 0 ? 0 : (page - 1) * perPage + 1;
+    const to      = Math.min(page * perPage, total);
+
+    /* Left: info text */
+    const info = document.createElement("div");
+    info.className = "actlog-page-info";
+    info.textContent = total === 0
+        ? "No events found"
+        : `Showing ${from}–${to} of ${total} events`;
+    bar.appendChild(info);
+
+    /* Right: controls */
+    const ctrl = document.createElement("div");
+    ctrl.className = "actlog-page-controls";
+
+    /* Per-page selector */
+    const perLabel = document.createElement("span");
+    perLabel.className = "actlog-page-label";
+    perLabel.textContent = "Per page:";
+    ctrl.appendChild(perLabel);
+
+    const perSel = document.createElement("select");
+    perSel.className = "actlog-page-select";
+    ACTLOG_PER_PAGE_OPTIONS.forEach(n => {
+        const o = document.createElement("option");
+        o.value = n;
+        o.textContent = n;
+        if (n === perPage) o.selected = true;
+        perSel.appendChild(o);
+    });
+    perSel.addEventListener("change", () => {
+        actlogState.perPage = parseInt(perSel.value, 10) || ACTLOG_DEFAULT_PER_PAGE;
+        actlogState.page    = 1;
+        loadActivityLogData();
+    });
+    ctrl.appendChild(perSel);
+
+    /* Prev button */
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "actlog-page-btn";
+    prevBtn.textContent = "← Prev";
+    prevBtn.disabled = page <= 1;
+    prevBtn.addEventListener("click", () => {
+        actlogState.page = page - 1;
+        loadActivityLogData();
+    });
+    ctrl.appendChild(prevBtn);
+
+    /* Page indicator */
+    const pageLabel = document.createElement("span");
+    pageLabel.className = "actlog-page-label";
+    pageLabel.textContent = `Page ${page} of ${pages}`;
+    ctrl.appendChild(pageLabel);
+
+    /* Next button */
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "actlog-page-btn";
+    nextBtn.textContent = "Next →";
+    nextBtn.disabled = page >= pages;
+    nextBtn.addEventListener("click", () => {
+        actlogState.page = page + 1;
+        loadActivityLogData();
+    });
+    ctrl.appendChild(nextBtn);
+
+    bar.appendChild(ctrl);
+    return bar;
+}
+
+/* ---- Build filter bar (into #pageFilters) ---- */
+
+function actlogBuildFilters(availableTypes) {
+    clearPageFilters();
+    if (!pageFilters) return;
+
+    /* Helper: label + input wrapper */
+    function field(labelText, inputEl) {
+        const wrap = document.createElement("label");
+        wrap.className = "filter-field";
+        const lbl = document.createElement("span");
+        lbl.className = "filter-label";
+        lbl.textContent = labelText;
+        wrap.appendChild(lbl);
+        wrap.appendChild(inputEl);
+        return wrap;
+    }
+
+    /* Date From */
+    const fromInput = document.createElement("input");
+    fromInput.type = "date";
+    fromInput.className = "filter-input";
+    fromInput.value = actlogState.dateFrom;
+    pageFilters.appendChild(field("From", fromInput));
+
+    /* Date To */
+    const toInput = document.createElement("input");
+    toInput.type = "date";
+    toInput.className = "filter-input";
+    toInput.value = actlogState.dateTo;
+    pageFilters.appendChild(field("To", toInput));
+
+    /* Equipment Type */
+    const typeSel = document.createElement("select");
+    typeSel.className = "filter-input";
+    typeSel.style.minWidth = "100px";
+    [{ value: "", text: "All Types" }]
+        .concat((availableTypes || []).map(t => ({ value: t, text: t })))
+        .forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt.value;
+            o.textContent = opt.text;
+            if (opt.value === actlogState.equipType) o.selected = true;
+            typeSel.appendChild(o);
+        });
+    pageFilters.appendChild(field("Type", typeSel));
+
+    /* New Status */
+    const statusSel = document.createElement("select");
+    statusSel.className = "filter-input";
+    statusSel.style.minWidth = "90px";
+    [{ value: "", text: "All" }, { value: "ON", text: "ON" }, { value: "OFF", text: "OFF" }]
+        .forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt.value;
+            o.textContent = opt.text;
+            if (opt.value === actlogState.newStatus) o.selected = true;
+            statusSel.appendChild(o);
+        });
+    pageFilters.appendChild(field("New Status", statusSel));
+
+    /* Search */
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.className = "filter-input";
+    searchInput.placeholder = "Equipment / Point ID…";
+    searchInput.value = actlogState.search;
+    searchInput.style.minWidth = "180px";
+    pageFilters.appendChild(field("Search", searchInput));
+
+    /* Apply button */
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "filter-button";
+    applyBtn.textContent = "APPLY";
+    applyBtn.style.alignSelf = "flex-end";
+    applyBtn.addEventListener("click", () => {
+        actlogState.dateFrom  = fromInput.value;
+        actlogState.dateTo    = toInput.value;
+        actlogState.equipType = typeSel.value;
+        actlogState.newStatus = statusSel.value;
+        actlogState.search    = searchInput.value.trim();
+        actlogState.page      = 1;
+        loadActivityLogData();
+    });
+    pageFilters.appendChild(applyBtn);
+
+    /* Reset button */
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "filter-button filter-button-reset";
+    resetBtn.textContent = "RESET";
+    resetBtn.style.alignSelf = "flex-end";
+    resetBtn.addEventListener("click", () => {
+        actlogState.dateFrom  = "";
+        actlogState.dateTo    = "";
+        actlogState.equipType = "";
+        actlogState.newStatus = "";
+        actlogState.search    = "";
+        actlogState.page      = 1;
+        loadActivityLogData();
+    });
+    pageFilters.appendChild(resetBtn);
+
+    /* Allow pressing Enter in search to apply */
+    searchInput.addEventListener("keydown", e => {
+        if (e.key === "Enter") applyBtn.click();
+    });
+}
+
+/* ---- Render the Activity Log page into #equipmentGrid ---- */
+
+function renderActivityLog() {
+    grid.innerHTML = "";
+    sectionTitle.textContent = "ACTIVITY LOG";
+
+    const data     = actlogState.data;
+    const loading  = actlogState.loading;
+    const errorMsg = actlogState.error;
+
+    /* Rebuild filter bar with the latest available types */
+    const availableTypes = (data && data.available_types) ? data.available_types : [];
+    actlogBuildFilters(availableTypes);
+
+    /* Sync sticky offsets (same pattern as alarm page) */
+    actlogSyncStickyOffset();
+
+    const page = document.createElement("div");
+    page.className = "actlog-page";
+
+    /* ---- Summary stats ---- */
+    const summary = document.createElement("div");
+    summary.className = "actlog-summary";
+
+    const totalEvents = data ? (data.total || 0) : 0;
+    const onCount  = data ? (data.events || []).filter(e => (e.new_status || "").toUpperCase() === "ON").length  : 0;
+    const offCount = data ? (data.events || []).filter(e => (e.new_status || "").toUpperCase() === "OFF").length : 0;
+
+    [
+        { label: "TOTAL (FILTERED)", value: data ? totalEvents : "—" },
+        { label: "ON (THIS PAGE)",   value: data ? onCount     : "—" },
+        { label: "OFF (THIS PAGE)",  value: data ? offCount    : "—" },
+    ].forEach(stat => {
+        const box = document.createElement("div");
+        box.className = "actlog-stat";
+
+        const val = document.createElement("div");
+        val.className = "actlog-stat-value";
+        val.textContent = stat.value;
+
+        const lbl = document.createElement("div");
+        lbl.className = "actlog-stat-label";
+        lbl.textContent = stat.label;
+
+        box.appendChild(val);
+        box.appendChild(lbl);
+        summary.appendChild(box);
+    });
+
+    page.appendChild(summary);
+
+    /* ---- Source unavailable banner ---- */
+    if (data && data.source_available === false) {
+        const notice = document.createElement("div");
+        notice.className = "actlog-notice";
+        notice.textContent = "ACTIVITY LOG SOURCE UNAVAILABLE — equipment_status_events table not found. "
+            + "No event data is being reported.";
+        page.appendChild(notice);
+        grid.appendChild(page);
+        unitCount.textContent = "0 events";
+        return;
+    }
+
+    /* ---- Table group ---- */
+    const group = document.createElement("div");
+    group.className = "actlog-group";
+
+    const groupHeader = document.createElement("div");
+    groupHeader.className = "actlog-group-header";
+
+    const groupTitle = document.createElement("div");
+    groupTitle.className = "actlog-group-title";
+    groupTitle.textContent = "ON / OFF STATUS TRANSITIONS";
+
+    const groupCount = document.createElement("div");
+    groupCount.className = "actlog-group-count";
+    groupCount.textContent = data ? (totalEvents + " matching") : "";
+
+    groupHeader.appendChild(groupTitle);
+    groupHeader.appendChild(groupCount);
+    group.appendChild(groupHeader);
+
+    /* Column header row */
+    group.appendChild(actlogBuildHeader());
+
+    /* ---- Loading state ---- */
+    if (loading) {
+        const loader = document.createElement("div");
+        loader.className = "actlog-loading";
+        loader.textContent = "Loading events…";
+        group.appendChild(loader);
+        page.appendChild(group);
+        grid.appendChild(page);
+        unitCount.textContent = "Loading…";
+        return;
+    }
+
+    /* ---- Error state ---- */
+    if (errorMsg) {
+        const errEl = document.createElement("div");
+        errEl.className = "actlog-empty";
+        errEl.textContent = "Error loading events: " + errorMsg;
+        group.appendChild(errEl);
+        page.appendChild(group);
+        grid.appendChild(page);
+        unitCount.textContent = "Error";
+        return;
+    }
+
+    /* ---- No data yet ---- */
+    if (!data) {
+        const loader = document.createElement("div");
+        loader.className = "actlog-loading";
+        loader.textContent = "Loading events…";
+        group.appendChild(loader);
+        page.appendChild(group);
+        grid.appendChild(page);
+        unitCount.textContent = "Loading…";
+        return;
+    }
+
+    /* ---- Event rows ---- */
+    const events = data.events || [];
+
+    if (events.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "actlog-empty";
+        empty.textContent = totalEvents === 0 && !actlogState.dateFrom && !actlogState.dateTo
+            && !actlogState.equipType && !actlogState.search && !actlogState.newStatus
+            ? "No events recorded yet."
+            : "No events match the current filters.";
+        group.appendChild(empty);
+    } else {
+        events.forEach(evt => group.appendChild(actlogBuildRow(evt)));
+    }
+
+    page.appendChild(group);
+
+    /* ---- Pagination ---- */
+    if (data.total_pages > 1 || events.length > 0) {
+        page.appendChild(actlogBuildPagination(data));
+    }
+
+    grid.appendChild(page);
+    unitCount.textContent = totalEvents + " event" + (totalEvents !== 1 ? "s" : "");
+    actlogSyncStickyOffset();
+}
+
+/* ---- Sync sticky offset (mirrors syncAlarmStickyOffset) ---- */
+
+function actlogSyncStickyOffset() {
+    if (currentEquipment !== "ACTIVITY_LOG") return;
+
+    const topbar = document.querySelector(".topbar");
+    const nav    = document.getElementById("equipmentNav");
+    if (!topbar || !nav) return;
+
+    const topbarH = topbar.offsetHeight;
+    const navH    = nav.offsetHeight;
+
+    document.documentElement.style.setProperty("--actlog-nav-top",      topbarH + "px");
+    document.documentElement.style.setProperty("--actlog-sticky-offset", (topbarH + navH) + "px");
+}
+
+/* ---- Fetch and render ---- */
+
+async function loadActivityLogData() {
+    actlogState.loading = true;
+    actlogState.error   = null;
+
+    if (currentEquipment === "ACTIVITY_LOG") {
+        renderActivityLog();
+    }
+
+    const params = new URLSearchParams({
+        page:       actlogState.page,
+        per_page:   actlogState.perPage,
+        date_from:  actlogState.dateFrom,
+        date_to:    actlogState.dateTo,
+        equip_type: actlogState.equipType,
+        search:     actlogState.search,
+        new_status: actlogState.newStatus,
+        t:          Date.now(),
+    });
+
+    try {
+        const res = await fetch(ACTLOG_API_URL + "?" + params.toString(), { cache: "no-store" });
+
+        if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+        }
+
+        const data = await res.json();
+
+        if (!data.success) {
+            throw new Error("API returned success=false");
+        }
+
+        actlogState.data    = data;
+        actlogState.loading = false;
+        actlogState.error   = null;
+        actlogState.page    = data.page || actlogState.page;
+
+    } catch (err) {
+        console.error("Activity Log API error:", err);
+        actlogState.loading = false;
+        actlogState.error   = err.message || "Unknown error";
+    }
+
+    if (currentEquipment === "ACTIVITY_LOG") {
+        renderActivityLog();
+        setConnection(actlogState.error === null);
+        lastUpdate.textContent = actlogState.data && actlogState.data.events && actlogState.data.events.length > 0
+            ? "Latest event: " + (actlogState.data.events[0].event_time || "--").slice(0, 19)
+            : "Activity Log loaded";
+    }
+}
+
+/* Resize handler — re-sync sticky offset when viewport changes */
+window.addEventListener("resize", () => {
+    actlogSyncStickyOffset();
+});
+
+
 /*
  * Restore the persisted mute state before anything can sound, so a refresh
  * during an active alarm never produces a burst of sound.
@@ -11592,6 +12231,7 @@ setInterval(() => {
         safeLoadData();
     }
 }, 10000);
+
 
 setInterval(safeLoadAlarmData, ALARM_POLL_MS);
 </script>

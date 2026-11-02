@@ -546,6 +546,21 @@ footer {
     }
 
     /*
+     * ACTIVITY LOG: allow full-page scrolling on wall-display widths.
+     * Same clip, same escape hatch as ALARM, AHU, HVAC SC, etc.
+     */
+    html:has(.actlog-page),
+    html.is-actlog-view {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    body:has(.actlog-page),
+    body.is-actlog-view {
+        height: auto;
+    }
+
+    /*
      * AHU severity dashboard: same clip, same escape hatch as the alarm page
      * above.
      *
@@ -7040,4 +7055,522 @@ body:has(.chiller-dashboard) {
     gap: 10px;
     padding-top: 8px;
     border-top: 1px solid #202832;
+}
+
+
+/* =========================================================
+   ACTIVITY LOG PAGE
+   Scoped entirely to .actlog-page. Mirrors the alarm page
+   layout conventions (full-page scroll, sticky chrome,
+   dark table rows). No selector here touches any other page.
+   ========================================================= */
+
+.equipment-grid:has(.actlog-page),
+body.is-actlog-view .equipment-grid {
+    display: block;
+    padding: 0 20px 24px;
+}
+
+.actlog-page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* ---- Sticky chrome (same pattern as alarm page) ---- */
+
+html:has(.actlog-page),
+html.is-actlog-view {
+    overflow-y: auto;
+}
+
+body:has(.actlog-page),
+body.is-actlog-view {
+    overflow-x: clip;
+    overflow-y: visible;
+}
+
+html:has(.actlog-page) .topbar,
+html.is-actlog-view .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
+
+html:has(.actlog-page) .equipment-nav,
+html.is-actlog-view .equipment-nav {
+    position: sticky;
+    top: var(--actlog-nav-top, 54px);
+    z-index: 30;
+}
+
+@media (max-width: 900px) {
+    html:has(.actlog-page) .topbar,
+html.is-actlog-view .topbar,
+    html:has(.actlog-page) .equipment-nav,
+html.is-actlog-view .equipment-nav {
+        position: static;
+    }
+}
+
+html:has(.actlog-page) footer,
+html.is-actlog-view footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    background: #111;
+    border-top: 1px solid #292929;
+}
+
+html:has(.actlog-page) .actlog-group,
+html.is-actlog-view .actlog-group {
+    overflow: clip;
+}
+
+html:has(.actlog-page) .actlog-thead,
+html.is-actlog-view .actlog-thead {
+    position: sticky;
+    top: var(--actlog-sticky-offset, 89px);
+    z-index: 20;
+    background: #131313;
+}
+
+html:has(.actlog-page) .actlog-page,
+html.is-actlog-view .actlog-page {
+    padding-bottom: 34px;
+}
+
+/* ---- Summary stats bar ---- */
+
+.actlog-summary {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.actlog-stat {
+    min-width: 120px;
+    padding: 10px 16px;
+    background: linear-gradient(145deg, #202020, #151515);
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.actlog-stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.05;
+    color: #fff;
+}
+
+.actlog-stat-label {
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #999;
+}
+
+/* ---- Table group wrapper ---- */
+
+.actlog-group {
+    background: #161616;
+    border: 1px solid #2c2c2c;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.actlog-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: #1d1d1d;
+    border-bottom: 1px solid #2c2c2c;
+}
+
+.actlog-group-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #ccc;
+}
+
+.actlog-group-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: #999;
+}
+
+/* ---- Table rows (8 columns) ---- */
+
+.actlog-row {
+    display: grid;
+    grid-template-columns: 148px minmax(100px, 1.2fr) 76px 64px minmax(100px, 1fr) minmax(120px, 1.4fr) 40px;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 14px;
+    border-bottom: 1px solid #232323;
+    border-left: 3px solid transparent;
+    font-size: 12px;
+    color: #ccc;
+}
+
+.actlog-row:last-child {
+    border-bottom: none;
+}
+
+.actlog-row.actlog-thead {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #888;
+    background: #131313;
+    text-transform: uppercase;
+    cursor: default;
+}
+
+.actlog-row:not(.actlog-thead):hover {
+    background: #1c1c1c;
+    cursor: pointer;
+}
+
+.actlog-row-on {
+    border-left-color: #22c55e;
+}
+
+.actlog-row-off {
+    border-left-color: #ef4444;
+    background: #181616;
+}
+
+/* ---- Cell styles ---- */
+
+.actlog-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.actlog-cell-time {
+    font-size: 11px;
+    color: #9a9a9a;
+    white-space: nowrap;
+}
+
+.actlog-cell-equip {
+    font-weight: 700;
+    color: #fff;
+}
+
+.actlog-cell-type {
+    font-size: 11px;
+    color: #bbb;
+}
+
+.actlog-cell-source {
+    font-size: 11px;
+    color: #7a7a7a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.actlog-cell-point {
+    font-size: 11px;
+    color: #7a7a7a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.actlog-cell-detail {
+    text-align: center;
+}
+
+/* ---- Status badges ---- */
+
+.actlog-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+}
+
+.actlog-badge-on {
+    background: #14532d;
+    border: 1px solid #22c55e;
+    color: #86efac;
+}
+
+.actlog-badge-off {
+    background: #450a0a;
+    border: 1px solid #ef4444;
+    color: #fca5a5;
+}
+
+.actlog-badge-unknown {
+    background: #252525;
+    border: 1px solid #555;
+    color: #aaa;
+}
+
+/* ---- Detail button ---- */
+
+.actlog-detail-btn {
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #888;
+    font-size: 14px;
+    line-height: 1;
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+}
+
+.actlog-detail-btn:hover {
+    border-color: #666;
+    color: #ccc;
+}
+
+/* ---- Empty / loading states ---- */
+
+.actlog-empty,
+.actlog-loading {
+    padding: 28px 14px;
+    font-size: 13px;
+    color: #666;
+    text-align: center;
+    letter-spacing: .5px;
+}
+
+/* ---- Notice / info banner ---- */
+
+.actlog-notice {
+    padding: 9px 14px;
+    background: #1c1a12;
+    border: 1px solid #5a4a1a;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    color: #d8b25a;
+    text-align: center;
+}
+
+/* ---- Pagination bar ---- */
+
+.actlog-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.actlog-page-info {
+    font-size: 12px;
+    color: #888;
+}
+
+.actlog-page-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.actlog-page-btn {
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    cursor: pointer;
+}
+
+.actlog-page-btn:hover:not(:disabled) {
+    background: #333;
+}
+
+.actlog-page-btn:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+.actlog-page-label {
+    font-size: 11px;
+    color: #888;
+    padding: 0 4px;
+}
+
+.actlog-page-select {
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ddd;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 5px 8px;
+}
+
+/* ---- Detail modal overlay ---- */
+
+.actlog-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.72);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.actlog-modal {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 24px;
+    max-width: 520px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,.8);
+}
+
+.actlog-modal-title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #eee;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #2c2c2c;
+}
+
+.actlog-modal-row {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 6px 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+
+.actlog-modal-label {
+    font-weight: 700;
+    letter-spacing: .5px;
+    color: #888;
+    font-size: 10px;
+    text-transform: uppercase;
+    padding-top: 2px;
+}
+
+.actlog-modal-value {
+    color: #ddd;
+    overflow-wrap: anywhere;
+}
+
+.actlog-modal-close {
+    margin-top: 20px;
+    border: 1px solid #444;
+    background: #252525;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 8px 20px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    display: block;
+    width: 100%;
+}
+
+.actlog-modal-close:hover {
+    background: #333;
+}
+
+/* ---- Large wall display ---- */
+
+@media (min-width: 1600px) {
+    .actlog-row {
+        font-size: 14px;
+        padding: 10px 16px;
+    }
+
+    .actlog-row.actlog-thead {
+        font-size: 11px;
+    }
+
+    .actlog-stat-value {
+        font-size: 34px;
+    }
+}
+
+/* ---- Tablet / narrow: rows become stacked cards ---- */
+
+@media (max-width: 900px) {
+    .actlog-row.actlog-thead {
+        display: none;
+    }
+
+    .actlog-row {
+        display: block;
+        padding: 10px 12px;
+    }
+
+    .actlog-cell {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 4px;
+        white-space: normal;
+    }
+
+    .actlog-cell::before {
+        content: attr(data-label);
+        flex: 0 0 90px;
+        white-space: nowrap;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        color: #777;
+        text-transform: uppercase;
+        padding-top: 1px;
+    }
+
+    .actlog-cell-source,
+    .actlog-cell-point {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+    }
+
+    .actlog-cell-detail {
+        margin-top: 4px;
+        text-align: left;
+    }
+
+    .actlog-cell-detail::before {
+        display: none;
+    }
+}
+
+@media (max-width: 600px) {
+    .equipment-grid:has(.actlog-page) {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .actlog-pagination {
+        flex-direction: column;
+        align-items: flex-start;
+    }
 }
