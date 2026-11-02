@@ -11600,6 +11600,7 @@ const ACTLOG_DEFAULT_PER_PAGE = 50;
 let actlogState = {
     page:       1,
     perPage:    ACTLOG_DEFAULT_PER_PAGE,
+    period:     "all",
     dateFrom:   "",
     dateTo:     "",
     equipType:  "",
@@ -11865,6 +11866,91 @@ function actlogBuildPagination(data) {
     return bar;
 }
 
+/* ---- Build quick filter switch rows (into #pageSwitch) ---- */
+
+function actlogBuildPageSwitch(availableTypes) {
+    clearPageSwitch();
+    if (!pageSwitch) return;
+
+    /* Row 1: Period quick filters */
+    const periodRow = document.createElement("div");
+    periodRow.className = "actlog-switch-row";
+
+    const periodLabel = document.createElement("span");
+    periodLabel.className = "actlog-switch-label";
+    periodLabel.textContent = "PERIOD:";
+    periodRow.appendChild(periodLabel);
+
+    const periodGroup = document.createElement("div");
+    periodGroup.className = "actlog-switch-group";
+
+    const periodOptions = [
+        { value: "all",   label: "ALL TIME" },
+        { value: "today", label: "TODAY" },
+        { value: "week",  label: "THIS WEEK" },
+        { value: "month", label: "THIS MONTH" },
+    ];
+
+    periodOptions.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const isActive = (actlogState.period === opt.value) && (!actlogState.dateFrom && !actlogState.dateTo);
+        btn.className = "switch-button" + (isActive ? " is-active" : "");
+        btn.textContent = opt.label;
+        btn.addEventListener("click", () => {
+            if (actlogState.period === opt.value && !actlogState.dateFrom && !actlogState.dateTo) return;
+            actlogState.period   = opt.value;
+            actlogState.dateFrom = "";
+            actlogState.dateTo   = "";
+            actlogState.page     = 1;
+            loadActivityLogData();
+        });
+        periodGroup.appendChild(btn);
+    });
+    periodRow.appendChild(periodGroup);
+    pageSwitch.appendChild(periodRow);
+
+    /* Row 2: Equipment type filters */
+    const typeRow = document.createElement("div");
+    typeRow.className = "actlog-switch-row";
+
+    const typeLabel = document.createElement("span");
+    typeLabel.className = "actlog-switch-label";
+    typeLabel.textContent = "EQUIPMENT:";
+    typeRow.appendChild(typeLabel);
+
+    const typeGroup = document.createElement("div");
+    typeGroup.className = "actlog-switch-group";
+
+    const typeOptions = [{ value: "", label: "ALL TYPES" }];
+    const knownTypes = (availableTypes && availableTypes.length > 0)
+        ? availableTypes
+        : ["AHU", "CHILLER", "CT", "CCP", "CHWP", "EF"];
+
+    knownTypes.forEach(t => {
+        if (!typeOptions.some(o => o.value === t)) {
+            typeOptions.push({ value: t, label: t });
+        }
+    });
+
+    typeOptions.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const isActive = (actlogState.equipType === opt.value);
+        btn.className = "switch-button" + (isActive ? " is-active" : "");
+        btn.textContent = opt.label;
+        btn.addEventListener("click", () => {
+            if (actlogState.equipType === opt.value) return;
+            actlogState.equipType = opt.value;
+            actlogState.page      = 1;
+            loadActivityLogData();
+        });
+        typeGroup.appendChild(btn);
+    });
+    typeRow.appendChild(typeGroup);
+    pageSwitch.appendChild(typeRow);
+}
+
 /* ---- Build filter bar (into #pageFilters) ---- */
 
 function actlogBuildFilters(availableTypes) {
@@ -11944,6 +12030,9 @@ function actlogBuildFilters(availableTypes) {
     applyBtn.addEventListener("click", () => {
         actlogState.dateFrom  = fromInput.value;
         actlogState.dateTo    = toInput.value;
+        if (actlogState.dateFrom || actlogState.dateTo) {
+            actlogState.period = "";
+        }
         actlogState.equipType = typeSel.value;
         actlogState.newStatus = statusSel.value;
         actlogState.search    = searchInput.value.trim();
@@ -11959,6 +12048,7 @@ function actlogBuildFilters(availableTypes) {
     resetBtn.textContent = "RESET";
     resetBtn.style.alignSelf = "flex-end";
     resetBtn.addEventListener("click", () => {
+        actlogState.period    = "all";
         actlogState.dateFrom  = "";
         actlogState.dateTo    = "";
         actlogState.equipType = "";
@@ -11985,8 +12075,11 @@ function renderActivityLog() {
     const loading  = actlogState.loading;
     const errorMsg = actlogState.error;
 
-    /* Rebuild filter bar with the latest available types */
-    const availableTypes = (data && data.available_types) ? data.available_types : [];
+    /* Rebuild filter bars with the latest available types */
+    const availableTypes = (data && data.available_types && data.available_types.length > 0)
+        ? data.available_types
+        : ["AHU", "CHILLER", "CT", "CCP", "CHWP", "EF"];
+    actlogBuildPageSwitch(availableTypes);
     actlogBuildFilters(availableTypes);
 
     /* Sync sticky offsets (same pattern as alarm page) */
@@ -11999,17 +12092,17 @@ function renderActivityLog() {
     const summary = document.createElement("div");
     summary.className = "actlog-summary";
 
-    const totalEvents = data ? (data.total || 0) : 0;
-    const onCount  = data ? (data.events || []).filter(e => (e.new_status || "").toUpperCase() === "ON").length  : 0;
-    const offCount = data ? (data.events || []).filter(e => (e.new_status || "").toUpperCase() === "OFF").length : 0;
+    const totalEvents = data ? (data.total ?? 0) : 0;
+    const totalOn     = data ? (data.total_on ?? 0) : 0;
+    const totalOff    = data ? (data.total_off ?? 0) : 0;
 
     [
-        { label: "TOTAL (FILTERED)", value: data ? totalEvents : "—" },
-        { label: "ON (THIS PAGE)",   value: data ? onCount     : "—" },
-        { label: "OFF (THIS PAGE)",  value: data ? offCount    : "—" },
+        { label: "TOTAL (FILTERED)", value: data ? totalEvents : "—", cls: "" },
+        { label: "TOTAL ON",         value: data ? totalOn     : "—", cls: "actlog-stat-on" },
+        { label: "TOTAL OFF",        value: data ? totalOff    : "—", cls: "actlog-stat-off" },
     ].forEach(stat => {
         const box = document.createElement("div");
-        box.className = "actlog-stat";
+        box.className = "actlog-stat" + (stat.cls ? " " + stat.cls : "");
 
         const val = document.createElement("div");
         val.className = "actlog-stat-value";
@@ -12152,6 +12245,7 @@ async function loadActivityLogData() {
     const params = new URLSearchParams({
         page:       actlogState.page,
         per_page:   actlogState.perPage,
+        period:     actlogState.period || "all",
         date_from:  actlogState.dateFrom,
         date_to:    actlogState.dateTo,
         equip_type: actlogState.equipType,
