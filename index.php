@@ -154,7 +154,6 @@ $appVersion = app_version_info();
     <button class="nav-button active" data-equipment="MAIN">Main Dashboard</button>
     <button class="nav-button" data-equipment="CHILLER">Chiller</button>
     <button class="nav-button" data-equipment="AHU">AHU</button>
-    <button class="nav-button" data-equipment="HVAC_SC">HVAC SC</button>
     <button class="nav-button" data-equipment="CT">CT</button>
     <button class="nav-button" data-equipment="CCP">CCP</button>
     <button class="nav-button" data-equipment="CHWP">CHWP</button>
@@ -199,14 +198,34 @@ const APP_VERSION = <?= json_encode([
 
 const API_URL = "api.php";
 
+let chillerTab = "MODBUS"; // "MODBUS" | "BACNET"
+
 function getInitialEquipment() {
     const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
+    if (hash === "CHILLER_BACNET" || hash === "CHILLER/BACNET" || hash === "CHILLER-BACNET" || hash === "HVAC_SC") {
+        chillerTab = "BACNET";
+        return "CHILLER";
+    }
+    if (hash === "CHILLER" || hash === "CHILLER_MODBUS" || hash === "CHILLER/MODBUS" || hash === "CHILLER-MODBUS") {
+        chillerTab = "MODBUS";
+        return "CHILLER";
+    }
+    const valid = ["MAIN", "CHILLER", "AHU", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
     if (hash && valid.includes(hash)) {
         return hash;
     }
     const params = new URLSearchParams(window.location.search);
     const eq = (params.get("page") || params.get("equipment") || "").trim().toUpperCase();
+    const tabParam = (params.get("tab") || "").trim().toUpperCase();
+    if (tabParam === "BACNET") {
+        chillerTab = "BACNET";
+    } else if (tabParam === "MODBUS") {
+        chillerTab = "MODBUS";
+    }
+    if (eq === "HVAC_SC") {
+        chillerTab = "BACNET";
+        return "CHILLER";
+    }
     if (eq && valid.includes(eq)) {
         return eq;
     }
@@ -6841,6 +6860,28 @@ function chillerMatchesSearch(u) {
 function renderChillerDashboard() {
     sectionTitle.textContent = "CHILLER";
 
+    // Build Tab Switch (Modbus | BACnet) into #pageSwitch
+    buildPageSwitch([
+        { value: "MODBUS", label: "Modbus" },
+        { value: "BACNET", label: "BACnet" }
+    ], chillerTab, (newTab) => {
+        if (chillerTab === newTab) return;
+        chillerTab = newTab;
+        updateChillerHash();
+        renderEquipment();
+        safeLoadData();
+    });
+
+    if (chillerTab === "BACNET") {
+        renderChillerBacnet();
+    } else {
+        renderChillerModbus();
+    }
+}
+
+function renderChillerModbus() {
+    sectionTitle.textContent = "CHILLER";
+
     const units = Array.isArray(allData.CHILLER_MODBUS)
         ? allData.CHILLER_MODBUS
         : (Array.isArray(allData.CHILLER) ? allData.CHILLER : []);
@@ -6957,9 +6998,9 @@ function renderChillerDashboard() {
     const search = document.createElement("input");
     search.type = "search";
     search.className = "chiller-search";
-    search.placeholder = "Search Chiller…";
+    search.placeholder = "Search Chiller (Modbus)…";
     search.value = chillerView.searchRaw;
-    search.setAttribute("aria-label", "Search Chiller units");
+    search.setAttribute("aria-label", "Search Chiller Modbus units");
     search.addEventListener("input", () => {
         chillerView.searchRaw = search.value;
         chillerView.search = search.value.trim().toLowerCase();
@@ -7261,6 +7302,442 @@ function chillerBuildCard(unit) {
 }
 
 /* =========================================================
+   CHILLER BACNET DASHBOARD
+   ========================================================= */
+
+const chillerBacnetView = {
+    filter: "ALL", // "ALL" | "RUNNING" | "STOPPED" | "WARNING" | "ALARM" | "NO_DATA"
+    searchRaw: "",
+    search: "",
+    searchFocused: false,
+    expandedAll: false,
+    expandedMap: {}
+};
+
+function getChillerBacnetBuilding(unit) {
+    const dev = Number(unit.device_id);
+    if (dev === 10203) return "G1-G2 Building";
+    if (dev === 10202) return "G3 Building";
+    return dev ? "Device " + dev : "BACnet DDC";
+}
+
+function getChillerBacnetStatus(unit) {
+    const isAlarm = Number(unit.alarm) === 1;
+    const isRunning = Number(unit.run) === 1;
+    const isStopped = Number(unit.run) === 0;
+    const hasAnyReading = unit.run !== null || unit.alarm !== null || unit.evap_leaving_temp !== null || unit.cond_entering_temp !== null;
+    const isNoData = !hasAnyReading;
+
+    const warning_reasons = [];
+    if (unit.evap_leaving_temp !== null && unit.evap_leaving_temp_max !== null && Number(unit.evap_leaving_temp) > Number(unit.evap_leaving_temp_max)) {
+        warning_reasons.push("Evaporator Leaving " + chillerFormatVal(unit.evap_leaving_temp, " °C", 1) + " > " + unit.evap_leaving_temp_max + " °C");
+    }
+    if (unit.cond_entering_temp !== null && unit.cond_entering_temp_max !== null && Number(unit.cond_entering_temp) > Number(unit.cond_entering_temp_max)) {
+        warning_reasons.push("Condenser Entering " + chillerFormatVal(unit.cond_entering_temp, " °C", 1) + " > " + unit.cond_entering_temp_max + " °C");
+    }
+    const isWarning = warning_reasons.length > 0;
+
+    return { isAlarm, isRunning, isStopped, isNoData, isWarning, warning_reasons };
+}
+
+function chillerBacnetMatchesFilter(u, statusInfo) {
+    if (chillerBacnetView.filter === "RUNNING") return statusInfo.isRunning;
+    if (chillerBacnetView.filter === "STOPPED") return statusInfo.isStopped;
+    if (chillerBacnetView.filter === "WARNING") return statusInfo.isWarning;
+    if (chillerBacnetView.filter === "ALARM") return statusInfo.isAlarm;
+    if (chillerBacnetView.filter === "NO_DATA") return statusInfo.isNoData;
+    return true;
+}
+
+function chillerBacnetMatchesSearch(u, buildingName) {
+    if (!chillerBacnetView.search) return true;
+    const term = chillerBacnetView.search;
+    return (u.name && String(u.name).toLowerCase().includes(term)) ||
+           ("chiller " + u.name).toLowerCase().includes(term) ||
+           (buildingName && buildingName.toLowerCase().includes(term)) ||
+           (u.device_id && String(u.device_id).includes(term));
+}
+
+function chillerBacnetBuildCard(unit) {
+    const statusInfo = getChillerBacnetStatus(unit);
+    const { isAlarm, isRunning, isStopped, isNoData, isWarning, warning_reasons } = statusInfo;
+    const buildingName = getChillerBacnetBuilding(unit);
+
+    const card = document.createElement("div");
+    let cardCls = "chiller-card";
+    if (isAlarm) cardCls += " is-offline";
+    else if (isWarning) cardCls += " is-warning";
+    else if (isRunning) cardCls += " is-running";
+    else if (isStopped) cardCls += " is-stopped";
+    else if (isNoData) cardCls += " is-nodata";
+    card.className = cardCls;
+
+    // A. Header Row
+    const header = document.createElement("div");
+    header.className = "chiller-card-header";
+
+    const titleBox = document.createElement("div");
+    titleBox.className = "chiller-card-title-box";
+
+    // Status dot
+    const dot = document.createElement("span");
+    dot.className = "connection-dot " + (
+        isAlarm ? "offline" : (isRunning ? "online" : "offline")
+    );
+    if (isAlarm) {
+        dot.style.background = "#f87171";
+        dot.style.boxShadow = "0 0 6px rgba(248, 113, 113, 0.6)";
+    }
+    titleBox.appendChild(dot);
+
+    const name = document.createElement("span");
+    name.className = "chiller-card-name";
+    name.textContent = "CHILLER " + unit.name;
+    titleBox.appendChild(name);
+
+    header.appendChild(titleBox);
+
+    // Badges
+    const badgesBox = document.createElement("div");
+    badgesBox.className = "chiller-card-badges";
+
+    if (isAlarm) {
+        const alarmBadge = document.createElement("span");
+        alarmBadge.className = "chiller-card-badge is-offline";
+        alarmBadge.textContent = "ALARM";
+        badgesBox.appendChild(alarmBadge);
+    }
+
+    if (isWarning) {
+        const warnBadge = document.createElement("span");
+        warnBadge.className = "chiller-card-badge is-warning";
+        warnBadge.textContent = "▲ OUT OF RANGE";
+        badgesBox.appendChild(warnBadge);
+    }
+
+    const opBadge = document.createElement("span");
+    let opBadgeCls = "chiller-card-badge ";
+    let opBadgeText = "UNKNOWN";
+
+    if (isNoData) {
+        opBadgeCls += "is-nodata";
+        opBadgeText = "NO DATA";
+    } else if (isRunning) {
+        opBadgeCls += "is-running";
+        opBadgeText = "RUNNING";
+    } else if (isStopped) {
+        opBadgeCls += "is-stopped";
+        opBadgeText = "STOPPED";
+    } else {
+        opBadgeCls += "is-stopped";
+    }
+    opBadge.className = opBadgeCls;
+    opBadge.textContent = opBadgeText;
+    badgesBox.appendChild(opBadge);
+
+    header.appendChild(badgesBox);
+    card.appendChild(header);
+
+    // Meta Row
+    const metaRow = document.createElement("div");
+    metaRow.className = "chiller-meta-row";
+
+    const devInfo = document.createElement("span");
+    devInfo.textContent = "Device " + (unit.device_id || "--") + " (" + buildingName + ") • BACnet IP";
+    metaRow.appendChild(devInfo);
+
+    const timeInfo = document.createElement("span");
+    timeInfo.textContent = unit.last_update ? "Updated " + unit.last_update.slice(11, 19) : "--";
+    metaRow.appendChild(timeInfo);
+
+    card.appendChild(metaRow);
+
+    // Banners
+    if (isAlarm) {
+        const alarmBox = document.createElement("div");
+        alarmBox.className = "chiller-warn-box";
+        alarmBox.style.borderColor = "#f87171";
+        alarmBox.style.background = "rgba(248, 113, 113, 0.1)";
+        alarmBox.style.color = "#fca5a5";
+        alarmBox.textContent = "⚠ Alarm reported by BACnet controller";
+        card.appendChild(alarmBox);
+    }
+
+    if (isWarning && warning_reasons.length > 0) {
+        const warnBox = document.createElement("div");
+        warnBox.className = "chiller-warn-box";
+        warnBox.textContent = "⚠ " + warning_reasons.join(" | ");
+        card.appendChild(warnBox);
+    }
+
+    if (isNoData) {
+        const nodataBox = document.createElement("div");
+        nodataBox.className = "chiller-nodata-box";
+        nodataBox.textContent = "ℹ No BACnet telemetry available";
+        card.appendChild(nodataBox);
+    }
+
+    // Chip Helper
+    function makeChip(label, valStr, isBad, extraCls) {
+        const chip = document.createElement("div");
+        chip.className = "chiller-v" + (isBad ? " is-bad" : "") + (extraCls ? " " + extraCls : "");
+        if (valStr.startsWith("--")) chip.classList.add("is-null");
+
+        const lbl = document.createElement("small");
+        lbl.textContent = label;
+        chip.appendChild(lbl);
+
+        const val = document.createElement("b");
+        val.textContent = valStr;
+        chip.appendChild(val);
+
+        return chip;
+    }
+
+    // B. Group: Core Operation
+    const coreTitle = document.createElement("div");
+    coreTitle.className = "chiller-group-title";
+    coreTitle.textContent = "Core Operation";
+    card.appendChild(coreTitle);
+
+    const coreChips = document.createElement("div");
+    coreChips.className = "chiller-chips";
+
+    coreChips.appendChild(makeChip("Operating State", isRunning ? "RUNNING" : (isStopped ? "STOPPED" : "--"), false, isRunning ? "is-flow-ok" : ""));
+    coreChips.appendChild(makeChip("System Alarm", isAlarm ? "ALARM" : "NORMAL", isAlarm, isAlarm ? "is-flow-no" : ""));
+    card.appendChild(coreChips);
+
+    // C. Group: Water Temperatures
+    const waterTitle = document.createElement("div");
+    waterTitle.className = "chiller-group-title";
+    waterTitle.textContent = "Water Temperatures";
+    card.appendChild(waterTitle);
+
+    const waterChips = document.createElement("div");
+    waterChips.className = "chiller-chips";
+
+    const elBad = unit.evap_leaving_temp_max !== null && unit.evap_leaving_temp !== null && Number(unit.evap_leaving_temp) > Number(unit.evap_leaving_temp_max);
+    const ceBad = unit.cond_entering_temp_max !== null && unit.cond_entering_temp !== null && Number(unit.cond_entering_temp) > Number(unit.cond_entering_temp_max);
+
+    waterChips.appendChild(makeChip("Evap Leaving (EL)", chillerFormatVal(unit.evap_leaving_temp, " °C", 1), elBad));
+    waterChips.appendChild(makeChip("Evap Entering (EE)", chillerFormatVal(unit.evap_entering_temp, " °C", 1)));
+    waterChips.appendChild(makeChip("Cond Entering (CE)", chillerFormatVal(unit.cond_entering_temp, " °C", 1), ceBad));
+    waterChips.appendChild(makeChip("Cond Leaving (CL)", chillerFormatVal(unit.cond_leaving_temp, " °C", 1)));
+    card.appendChild(waterChips);
+
+    // D. Technical Details (Expandable)
+    const isExpanded = chillerBacnetView.expandedMap[unit.name] ?? chillerBacnetView.expandedAll;
+
+    const expandBtn = document.createElement("button");
+    expandBtn.type = "button";
+    expandBtn.className = "chiller-expand-btn";
+    expandBtn.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+
+    const btnTitle = document.createElement("span");
+    btnTitle.textContent = "Technical Details (BACnet info & limits)";
+    expandBtn.appendChild(btnTitle);
+
+    const btnIcon = document.createElement("span");
+    btnIcon.textContent = isExpanded ? "▲ Hide" : "▼ Show";
+    expandBtn.appendChild(btnIcon);
+
+    expandBtn.addEventListener("click", () => {
+        chillerBacnetView.expandedMap[unit.name] = !isExpanded;
+        renderEquipment();
+    });
+
+    card.appendChild(expandBtn);
+
+    if (isExpanded) {
+        const detailsPanel = document.createElement("div");
+        detailsPanel.className = "chiller-details-panel";
+
+        const ctlTitle = document.createElement("div");
+        ctlTitle.className = "chiller-group-title";
+        ctlTitle.textContent = "Controller & Limits";
+        detailsPanel.appendChild(ctlTitle);
+
+        const ctlChips = document.createElement("div");
+        ctlChips.className = "chiller-chips";
+        ctlChips.appendChild(makeChip("Device ID", unit.device_id ? String(unit.device_id) : "--"));
+        ctlChips.appendChild(makeChip("Location", buildingName));
+        ctlChips.appendChild(makeChip("Protocol", "BACnet / IP"));
+        ctlChips.appendChild(makeChip("Max EL Limit", unit.evap_leaving_temp_max != null ? unit.evap_leaving_temp_max + " °C" : "--"));
+        ctlChips.appendChild(makeChip("Max CE Limit", unit.cond_entering_temp_max != null ? unit.cond_entering_temp_max + " °C" : "--"));
+        ctlChips.appendChild(makeChip("Last Polled", unit.last_update ? unit.last_update.slice(11, 19) : "--"));
+        detailsPanel.appendChild(ctlChips);
+
+        card.appendChild(detailsPanel);
+    }
+
+    return card;
+}
+
+function renderChillerBacnet() {
+    sectionTitle.textContent = "CHILLER";
+
+    const rawUnits = Array.isArray(allData.CHILLER) ? allData.CHILLER.slice() : [];
+    rawUnits.sort((a, b) => {
+        const na = Number(a.name) || 0;
+        const nb = Number(b.name) || 0;
+        return na - nb;
+    });
+    const units = rawUnits;
+
+    unitCount.textContent = (units.length || 9) + " units (BACnet)";
+
+    // Summary counts
+    const summary = {
+        total: units.length,
+        running: 0,
+        stopped: 0,
+        warning: 0,
+        alarm: 0,
+        no_data: 0
+    };
+
+    units.forEach(u => {
+        const st = getChillerBacnetStatus(u);
+        if (st.isAlarm) summary.alarm++;
+        if (st.isRunning) summary.running++;
+        else if (st.isStopped) summary.stopped++;
+        if (st.isWarning) summary.warning++;
+        if (st.isNoData) summary.no_data++;
+    });
+
+    const page = document.createElement("div");
+    page.className = "chiller-dashboard";
+
+    // 1. Summary Tiles
+    const summaryRow = document.createElement("div");
+    summaryRow.className = "chiller-summary";
+
+    const tileConfigs = [
+        { key: "ALL",     label: "TOTAL CHILLER", count: summary.total,   cls: "is-total" },
+        { key: "RUNNING", label: "RUNNING",       count: summary.running, cls: "is-running" },
+        { key: "STOPPED", label: "STOPPED",       count: summary.stopped, cls: "is-stopped" },
+        { key: "WARNING", label: "WARNING",       count: summary.warning, cls: "is-warning" },
+        { key: "ALARM",   label: "ALARM",         count: summary.alarm,   cls: "is-offline" },
+        { key: "NO_DATA", label: "NO DATA",       count: summary.no_data, cls: "is-nodata" },
+    ];
+
+    tileConfigs.forEach(tc => {
+        const tile = document.createElement("div");
+        tile.className = "chiller-tile " + tc.cls + (chillerBacnetView.filter === tc.key ? " is-active" : "");
+        tile.title = "Filter: " + tc.label;
+
+        const valEl = document.createElement("b");
+        valEl.textContent = tc.count;
+        tile.appendChild(valEl);
+
+        const lblEl = document.createElement("span");
+        lblEl.textContent = tc.label;
+        tile.appendChild(lblEl);
+
+        tile.addEventListener("click", () => {
+            chillerBacnetView.filter = chillerBacnetView.filter === tc.key ? "ALL" : tc.key;
+            renderEquipment();
+        });
+
+        summaryRow.appendChild(tile);
+    });
+
+    page.appendChild(summaryRow);
+
+    // 2. Controls Toolbar
+    const controls = document.createElement("div");
+    controls.className = "chiller-controls";
+
+    const chipGroup = document.createElement("div");
+    chipGroup.className = "chiller-chip-group";
+
+    const chipConfigs = [
+        { key: "ALL",     label: "All Units (" + summary.total + ")" },
+        { key: "RUNNING", label: "Running (" + summary.running + ")" },
+        { key: "WARNING", label: "Warning (" + summary.warning + ")" },
+        { key: "ALARM",   label: "Alarm (" + summary.alarm + ")" },
+        { key: "STOPPED", label: "Stopped (" + summary.stopped + ")" },
+        { key: "NO_DATA", label: "No Data (" + summary.no_data + ")" },
+    ];
+
+    chipConfigs.forEach(cc => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "hsc-chip" + (chillerBacnetView.filter === cc.key ? " is-on" : "");
+        btn.textContent = cc.label;
+        btn.addEventListener("click", () => {
+            chillerBacnetView.filter = cc.key;
+            renderEquipment();
+        });
+        chipGroup.appendChild(btn);
+    });
+
+    // Expand All / Collapse All Toggle Button
+    const toggleAllBtn = document.createElement("button");
+    toggleAllBtn.type = "button";
+    toggleAllBtn.className = "hsc-chip";
+    toggleAllBtn.textContent = chillerBacnetView.expandedAll ? "Collapse Details" : "Expand All Details";
+    toggleAllBtn.addEventListener("click", () => {
+        chillerBacnetView.expandedAll = !chillerBacnetView.expandedAll;
+        units.forEach(u => {
+            chillerBacnetView.expandedMap[u.name] = chillerBacnetView.expandedAll;
+        });
+        renderEquipment();
+    });
+    chipGroup.appendChild(toggleAllBtn);
+
+    controls.appendChild(chipGroup);
+
+    // Search Input
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "chiller-search chiller-bacnet-search";
+    search.placeholder = "Search Chiller (BACnet)…";
+    search.value = chillerBacnetView.searchRaw;
+    search.setAttribute("aria-label", "Search Chiller BACnet units");
+    search.addEventListener("input", () => {
+        chillerBacnetView.searchRaw = search.value;
+        chillerBacnetView.search = search.value.trim().toLowerCase();
+        renderEquipment();
+    });
+    controls.appendChild(search);
+
+    page.appendChild(controls);
+
+    // 3. Cards Grid
+    const cardsGrid = document.createElement("div");
+    cardsGrid.className = "chiller-cards-grid";
+
+    const filteredUnits = units.filter(u => {
+        const st = getChillerBacnetStatus(u);
+        const bld = getChillerBacnetBuilding(u);
+        return chillerBacnetMatchesFilter(u, st) && chillerBacnetMatchesSearch(u, bld);
+    });
+
+    if (filteredUnits.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "chiller-nodata-box";
+        empty.style.gridColumn = "1 / -1";
+        empty.style.textAlign = "center";
+        empty.style.padding = "24px";
+        empty.textContent = "No chiller units match the current filter or search criteria.";
+        cardsGrid.appendChild(empty);
+    } else {
+        filteredUnits.forEach(unit => {
+            cardsGrid.appendChild(chillerBacnetBuildCard(unit));
+        });
+    }
+
+    page.appendChild(cardsGrid);
+    grid.appendChild(page);
+
+    if (chillerBacnetView.searchFocused) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
+    }
+}
+
+/* =========================================================
    MAIN DASHBOARD
    ========================================================= */
 
@@ -7537,7 +8014,7 @@ function buildMainSectionCards(sections) {
     // 4. Chiller Card
     const chillerCard = document.createElement("div");
     chillerCard.className = "main-section-card";
-    chillerCard.addEventListener("click", () => navigateTo("HVAC_SC", "Chiller"));
+    chillerCard.addEventListener("click", () => navigateTo("CHILLER"));
     const chillerRows = sections.chiller.liveChillers.map(c => {
         const ceWarn = c.ce != null && c.ce_max != null && c.ce > c.ce_max;
         const elWarn = c.el != null && c.el_max != null && c.el > c.el_max;
@@ -7583,23 +8060,23 @@ function buildMainSectionCards(sections) {
             <div class="main-card-subnote" style="font-size: 10.5px; color: #8b98a8; margin-bottom: 2px;">Limits: CE &le; 32.0 &deg;C &middot; EL &le; 12.0 &deg;C</div>
             ${chillerRows}
         </div>
-        <span class="main-card-link">Filter Chillers in HVAC SC &rarr;</span>
+        <span class="main-card-link">View Chillers &rarr;</span>
     `;
 
     // 5. Cooling Tower (CT) Card
     const ctCard = document.createElement("div");
     ctCard.className = "main-section-card";
-    ctCard.addEventListener("click", () => navigateTo("HVAC_SC", "CT"));
+    ctCard.addEventListener("click", () => navigateTo("CT"));
     const ctWarnChips = sections.ct.warningUnits.length > 0
         ? `<div class="main-card-issues-preview">
              <span class="main-issues-preview-title">▲ Ret &gt; 32°C (${sections.ct.warningUnits.length}):</span>
              <div class="main-issues-preview-chips">
                ${sections.ct.warningUnits.slice(0, 2).map(u => `
-                 <span class="main-issue-chip" onclick="event.stopPropagation(); navigateTo('HVAC_SC', 'CT ${u.name}')">
+                 <span class="main-issue-chip" onclick="event.stopPropagation(); navigateTo('CT', 'CT ${u.name}')">
                    CT ${u.name} <span class="main-issue-chip-val">${u.temp.toFixed(1)}°C</span>
                  </span>
                `).join("")}
-               ${sections.ct.warningUnits.length > 2 ? `<span class="main-issue-chip is-more" onclick="event.stopPropagation(); navigateTo('HVAC_SC', 'CT')">+${sections.ct.warningUnits.length - 2} more &rarr;</span>` : ""}
+               ${sections.ct.warningUnits.length > 2 ? `<span class="main-issue-chip is-more" onclick="event.stopPropagation(); navigateTo('CT')">+${sections.ct.warningUnits.length - 2} more &rarr;</span>` : ""}
              </div>
            </div>`
         : `<div class="main-clean-note">✓ All 22 CT cells below 32.0 °C limit.</div>`;
@@ -7632,13 +8109,13 @@ function buildMainSectionCards(sections) {
             <div><b>Plant Status:</b> 21 of 22 cells normal (Avg: 30.8 &deg;C)</div>
         </div>
         ${ctWarnChips}
-        <span class="main-card-link">Filter CTs in HVAC SC &rarr;</span>
+        <span class="main-card-link">View Cooling Towers &rarr;</span>
     `;
 
     // 6. Condenser Circulating Pump (CCP) Card
     const ccpCard = document.createElement("div");
     ccpCard.className = "main-section-card";
-    ccpCard.addEventListener("click", () => navigateTo("HVAC_SC", "CCP"));
+    ccpCard.addEventListener("click", () => navigateTo("CCP"));
     ccpCard.innerHTML = `
         <div class="main-card-top">
             <div class="main-card-title">Condenser Pump (CCP)</div>
@@ -7667,13 +8144,13 @@ function buildMainSectionCards(sections) {
             <div><b>Plant Rotation:</b> CCP 1–8 active running, CCP 9 standby</div>
             <div><b>Health:</b> ✓ All 9 pumps within normal load limits</div>
         </div>
-        <span class="main-card-link">Filter CCPs in HVAC SC &rarr;</span>
+        <span class="main-card-link">View Condenser Pumps &rarr;</span>
     `;
 
     // 7. Chilled Water Pump (CHWP) Card
     const chwpCard = document.createElement("div");
     chwpCard.className = "main-section-card";
-    chwpCard.addEventListener("click", () => navigateTo("HVAC_SC", "CHWP"));
+    chwpCard.addEventListener("click", () => navigateTo("CHWP"));
     chwpCard.innerHTML = `
         <div class="main-card-top">
             <div class="main-card-title">Chilled Water Pump (CHWP)</div>
@@ -7702,7 +8179,7 @@ function buildMainSectionCards(sections) {
             <div><b>Plant Rotation:</b> CHWP 1–7 active running, CHWP 8–9 standby</div>
             <div><b>Health:</b> ✓ All 9 pumps within hydraulic pressure limits</div>
         </div>
-        <span class="main-card-link">Filter CHWPs in HVAC SC &rarr;</span>
+        <span class="main-card-link">View Chilled Water Pumps &rarr;</span>
     `;
 
     // 8. Room Temp & RH Card
@@ -8766,20 +9243,6 @@ function buildMainMobileDashboard(d) {
             </div>
         </div>
 
-        <!-- 2. HVAC SC -->
-        <div class="mob-sys-card" onclick="navigateTo('HVAC_SC')">
-            <div class="mob-sys-top">
-                <span class="mob-sys-name">HVAC SC</span>
-                <span class="mob-sys-arrow">&#x2197;</span>
-            </div>
-            <div class="mob-sys-val"><b>${hscNorm}</b> <span class="mob-sys-tot">/ ${hscTot}</span></div>
-            <div class="mob-sys-status">${hscSub}</div>
-            <div class="mob-sys-bar">
-                <div class="mob-bar-seg is-green" style="width: ${hscNormPct}%;"></div>
-                ${hscWarnPct > 0 ? `<div class="mob-bar-seg ${hscCrit > 0 ? 'is-red' : 'is-amber'}" style="width: ${hscWarnPct}%;"></div>` : ''}
-            </div>
-        </div>
-
         <!-- 2b. Cooling Tower -->
         <div class="mob-sys-card" onclick="navigateTo('CT')">
             <div class="mob-sys-top">
@@ -9161,12 +9624,15 @@ function renderMainDashboard() {
             else if (op === "off") hscCat[catKey].off++;
         }
 
+        const issueTarget = item.prefix === "Chiller" ? "CHILLER" : item.prefix;
+        const issueSection = item.prefix === "Chiller" ? "Chiller (BACnet)" : item.prefix;
+
         if (band === "critical") {
             issues.push({
                 severity: "critical",
                 equipment: item.label,
-                section: "HVAC SC",
-                target: "HVAC_SC",
+                section: issueSection,
+                target: issueTarget,
                 filter: item.label,
                 param: "Alarm",
                 value: "ALARM",
@@ -9183,8 +9649,8 @@ function renderMainDashboard() {
             issues.push({
                 severity: "warning",
                 equipment: item.label,
-                section: "HVAC SC",
-                target: "HVAC_SC",
+                section: issueSection,
+                target: issueTarget,
                 filter: item.label,
                 param: param,
                 value: valStr,
@@ -9488,7 +9954,9 @@ function renderEquipment() {
     roomFilter.searchFocused = !!(active && active.classList
         && active.classList.contains("room-search"));
     chillerView.searchFocused = !!(active && active.classList
-        && active.classList.contains("chiller-search"));
+        && active.classList.contains("chiller-search") && !active.classList.contains("chiller-bacnet-search"));
+    chillerBacnetView.searchFocused = !!(active && active.classList
+        && active.classList.contains("chiller-bacnet-search"));
 
     grid.innerHTML = "";
 
@@ -9561,8 +10029,11 @@ function renderEquipment() {
     }
 
     if (currentEquipment === "HVAC_SC") {
-        grid.classList.add("hvac-view");
-        renderHvacSc();
+        currentEquipment = "CHILLER";
+        chillerTab = "BACNET";
+        document.body.classList.add("is-chiller-view");
+        grid.classList.add("chiller-view");
+        renderChillerDashboard();
         return;
     }
 
@@ -9732,11 +10203,10 @@ async function loadData() {
         }
 
         const apiUrl = currentEquipment === "CHILLER"
-            ? "api_chiller.php"
+            ? (chillerTab === "BACNET" ? "api_hvac_sc.php" : "api_chiller.php")
             : (currentEquipment === "AHU" || currentEquipment === "AHU_G8"
                 ? "api_ahu.php"
-                : (currentEquipment === "HVAC_SC"
-                    || currentEquipment === "CT"
+                : (currentEquipment === "CT"
                     || currentEquipment === "CCP"
                     || currentEquipment === "CHWP"
                     ? "api_hvac_sc.php"
@@ -9757,8 +10227,8 @@ async function loadData() {
             throw new Error("API returned success=false");
         }
 
-        allData = data.equipment || {};
-        if (currentEquipment === "CHILLER") {
+        allData = Object.assign({}, allData, data.equipment || {});
+        if (currentEquipment === "CHILLER" && chillerTab === "MODBUS") {
             allData.CHILLER_SUMMARY = data.summary || null;
             allData.CHILLER_THRESHOLDS = data.thresholds || null;
         }
@@ -9802,20 +10272,53 @@ async function loadData() {
     }
 }
 
+function updateChillerHash() {
+    try {
+        let hashVal = "#CHILLER";
+        if (chillerTab === "BACNET") {
+            hashVal = "#CHILLER_BACNET";
+        }
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, "", hashVal);
+        } else {
+            window.location.hash = hashVal;
+        }
+    } catch (e) {
+        // Safe fallback in restricted environments
+    }
+}
+
 function navigateTo(equipment, filter = "") {
-    const valid = ["MAIN", "CHILLER", "AHU", "HVAC_SC", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
+    if (equipment === "HVAC_SC") {
+        equipment = "CHILLER";
+        chillerTab = "BACNET";
+    }
+
+    const valid = ["MAIN", "CHILLER", "AHU", "CT", "CCP", "CHWP", "ROOM_TEMP_RH", "EXHAUST_FAN", "AHU_G8", "ALARM", "ENERGY", "ACTIVITY_LOG"];
     if (!valid.includes(equipment)) {
         equipment = "MAIN";
     }
 
     currentEquipment = equipment;
 
-    if (equipment === "AHU") {
+    if (equipment === "CHILLER") {
+        if (filter === "BACNET") {
+            chillerTab = "BACNET";
+            filter = "";
+        } else if (filter === "MODBUS") {
+            chillerTab = "MODBUS";
+            filter = "";
+        }
+        if (chillerTab === "BACNET") {
+            chillerBacnetView.searchRaw = filter || "";
+            chillerBacnetView.search = (filter || "").trim().toLowerCase();
+        } else {
+            chillerView.searchRaw = filter || "";
+            chillerView.search = (filter || "").trim().toLowerCase();
+        }
+    } else if (equipment === "AHU") {
         ahuView.searchRaw = filter || "";
         ahuView.search = (filter || "").trim().toLowerCase();
-    } else if (equipment === "HVAC_SC") {
-        hvacScView.searchRaw = filter || "";
-        hvacScView.search = (filter || "").trim().toLowerCase();
     } else if (equipment === "CT" || equipment === "CCP" || equipment === "CHWP") {
         /*
          * The category pages get their own state object, set the same way,
@@ -9824,9 +10327,6 @@ function navigateTo(equipment, filter = "") {
         const view = HVAC_SC_PAGES[equipment].view;
         view.searchRaw = filter || "";
         view.search = (filter || "").trim().toLowerCase();
-    } else if (equipment === "CHILLER") {
-        chillerView.searchRaw = filter || "";
-        chillerView.search = (filter || "").trim().toLowerCase();
     }
 
     document.querySelectorAll(".nav-button").forEach(btn => {
@@ -9835,9 +10335,13 @@ function navigateTo(equipment, filter = "") {
 
     try {
         if (window.history && window.history.replaceState) {
-            window.history.replaceState(null, "", equipment === "MAIN" ? window.location.pathname : "#" + equipment);
+            let hashVal = equipment === "MAIN" ? window.location.pathname : "#" + equipment;
+            if (equipment === "CHILLER" && chillerTab === "BACNET") {
+                hashVal = "#CHILLER_BACNET";
+            }
+            window.history.replaceState(null, "", hashVal);
         } else {
-            window.location.hash = equipment === "MAIN" ? "" : equipment;
+            window.location.hash = equipment === "MAIN" ? "" : (equipment === "CHILLER" && chillerTab === "BACNET" ? "CHILLER_BACNET" : equipment);
         }
     } catch (e) {
         // Safe fallback in restricted environments
@@ -9864,8 +10368,9 @@ document.querySelectorAll(".nav-button").forEach(button => {
 });
 
 window.addEventListener("hashchange", () => {
+    const prevTab = chillerTab;
     const eq = getInitialEquipment();
-    if (eq !== currentEquipment) {
+    if (eq !== currentEquipment || (eq === "CHILLER" && prevTab !== chillerTab)) {
         navigateTo(eq);
     }
 });

@@ -6554,6 +6554,28 @@ body:has(.chiller-dashboard) {
     overflow-y: auto;
 }
 
+/* Page Switch alignment when on Chiller page */
+body.is-chiller-view .page-switch {
+    padding: 0 30px 14px;
+    max-width: 480px;
+}
+@media (max-width: 1399px) {
+    body.is-chiller-view .page-switch {
+        padding: 0 20px 14px;
+    }
+}
+@media (max-width: 768px) {
+    body.is-chiller-view .page-switch {
+        padding: 0 10px 12px;
+        max-width: 100%;
+    }
+}
+@media (max-width: 480px) {
+    body.is-chiller-view .page-switch {
+        padding: 0 8px 10px;
+    }
+}
+
 /* Base override for equipment grid container when viewing Chiller */
 .equipment-grid.chiller-view,
 .equipment-grid:has(.chiller-dashboard) {
