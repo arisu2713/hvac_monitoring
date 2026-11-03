@@ -89,6 +89,8 @@ $rawType    = strtoupper(trim($_GET['equip_type'] ?? ''));
 $rawId      = trim($_GET['equip_id']   ?? '');
 $rawSearch  = trim($_GET['search']     ?? '');
 $rawStatus  = strtoupper(trim($_GET['new_status'] ?? ''));
+$rawPeriod  = strtolower(trim($_GET['period'] ?? ''));
+$period     = in_array($rawPeriod, ['today', 'week', 'month', 'all'], true) ? $rawPeriod : '';
 
 $page    = actlog_clamp_int($rawPage, 1, 100000, 1);
 $perPage = in_array((int)$rawPer, ACTLOG_ALLOWED_PER_PAGE, true)
@@ -109,14 +111,21 @@ $offset = ($page - 1) * $perPage;
 $conditions = [];
 $params     = [];
 
-if ($dateFrom !== '') {
-    $conditions[] = 'event_time >= :date_from';
-    $params[':date_from'] = $dateFrom . ' 00:00:00';
-}
-
-if ($dateTo !== '') {
-    $conditions[] = 'event_time <= :date_to';
-    $params[':date_to'] = $dateTo . ' 23:59:59';
+if ($dateFrom !== '' || $dateTo !== '') {
+    if ($dateFrom !== '') {
+        $conditions[] = 'event_time >= :date_from';
+        $params[':date_from'] = $dateFrom . ' 00:00:00';
+    }
+    if ($dateTo !== '') {
+        $conditions[] = 'event_time <= :date_to';
+        $params[':date_to'] = $dateTo . ' 23:59:59';
+    }
+} elseif ($period === 'today') {
+    $conditions[] = 'DATE(event_time) = CURDATE()';
+} elseif ($period === 'week') {
+    $conditions[] = "event_time >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AND event_time <= CONCAT(CURDATE(), ' 23:59:59')";
+} elseif ($period === 'month') {
+    $conditions[] = "event_time >= DATE_FORMAT(CURDATE(), '%Y-%m-01 00:00:00') AND event_time <= CONCAT(LAST_DAY(CURDATE()), ' 23:59:59')";
 }
 
 if ($equipType !== '') {
@@ -162,14 +171,24 @@ try {
         ]
     );
 
-    /* Total matching rows (respects all active filters). */
-    $countSql  = "SELECT COUNT(*) FROM equipment_status_events $where";
+    /* Total matching rows and ON/OFF breakdown (respects all active filters). */
+    $countSql  = "
+        SELECT
+            COUNT(*) as total,
+            COALESCE(SUM(new_status = 'ON'), 0) as total_on,
+            COALESCE(SUM(new_status = 'OFF'), 0) as total_off
+        FROM equipment_status_events
+        $where
+    ";
     $countStmt = $pdo->prepare($countSql);
     foreach ($params as $k => $v) {
         $countStmt->bindValue($k, $v);
     }
     $countStmt->execute();
-    $total = (int) $countStmt->fetchColumn();
+    $countsRow = $countStmt->fetch();
+    $total    = (int) $countsRow['total'];
+    $totalOn  = (int) $countsRow['total_on'];
+    $totalOff = (int) $countsRow['total_off'];
 
     $totalPages = $total > 0 ? (int) ceil($total / $perPage) : 1;
     // Clamp page to valid range now that we know totalPages
@@ -228,6 +247,8 @@ try {
     echo json_encode([
         'success'         => true,
         'total'           => $total,
+        'total_on'        => $totalOn,
+        'total_off'       => $totalOff,
         'page'            => $page,
         'per_page'        => $perPage,
         'total_pages'     => $totalPages,
@@ -251,6 +272,8 @@ try {
             'success'         => true,
             'source_available'=> false,
             'total'           => 0,
+            'total_on'        => 0,
+            'total_off'       => 0,
             'page'            => 1,
             'per_page'        => $perPage,
             'total_pages'     => 1,
