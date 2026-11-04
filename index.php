@@ -5237,6 +5237,654 @@ function ahuTagFor(unit, band) {
     return "";
 }
 
+/* =========================================================
+   OPERATOR STICKY NOTES & UNIT DETAIL MODAL
+   ========================================================= */
+
+const NOTES_API_URL = "api_notes.php";
+const NOTES_POLL_MS = 30000;
+
+// Keyed by noteKey(equipType, unitId) -> Note object
+const notesByUnit = new Map();
+
+// Draft map to preserve typing in textarea across 10s re-renders: key -> string
+const noteDraftsByUnit = new Map();
+let notesUnavailable = false;
+
+let activePopoverAnchor = null; // { equipType, unitId, tileElement, unit, note, hoveringPopover }
+let activeDetailModal = null;   // { equipType, unitId, unit, anchorTile, serverUpdatedAt }
+let notesPollTimer = null;
+let isNotesPollPaused = false;
+
+function noteKey(equipType, unitId) {
+    return String(equipType || "").toUpperCase() + ":" + String(unitId || "");
+}
+
+function getUnitAutoReason(equipType, unit) {
+    if (equipType === "AHU") {
+        const band = ahuBandOf(unit);
+        const reading = ahuCardReading(unit);
+        const tag = ahuTagFor(unit, band);
+        const parts = [];
+        if (reading) parts.push(reading);
+        if (tag) parts.push(tag);
+        if (unit.temp_max !== null && unit.temp_max !== undefined) {
+            parts.push("limit " + Number(unit.temp_max).toFixed(1) + "°C");
+        }
+        return parts.length ? parts.join(", ") : (band ? band.toUpperCase() : "NORMAL");
+    }
+    return "Status Normal";
+}
+
+/* ---- Shared Popover ---- */
+
+function getOrCreateNotePopover() {
+    let popover = document.getElementById("unitNotePopover");
+    if (!popover) {
+        popover = document.createElement("div");
+        popover.id = "unitNotePopover";
+        popover.className = "unit-note-popover";
+        popover.setAttribute("role", "dialog");
+        popover.setAttribute("aria-label", "Unit Sticky Note");
+        popover.setAttribute("aria-hidden", "true");
+
+        const reason = document.createElement("div");
+        reason.className = "unp-reason";
+        popover.appendChild(reason);
+
+        const text = document.createElement("div");
+        text.className = "unp-text";
+        popover.appendChild(text);
+
+        const meta = document.createElement("div");
+        meta.className = "unp-meta";
+        popover.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "unp-actions";
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "unp-edit-btn";
+        editBtn.textContent = "Edit Note";
+        actions.appendChild(editBtn);
+        popover.appendChild(actions);
+
+        document.body.appendChild(popover);
+
+        popover.addEventListener("pointerenter", (e) => {
+            if (e.pointerType === "mouse" && activePopoverAnchor) {
+                activePopoverAnchor.hoveringPopover = true;
+            }
+        });
+        popover.addEventListener("pointerleave", (e) => {
+            if (e.pointerType === "mouse") {
+                if (activePopoverAnchor) activePopoverAnchor.hoveringPopover = false;
+                hideNotePopover();
+            }
+        });
+    }
+    return popover;
+}
+
+function positionNotePopover(tile, popover) {
+    const rect = tile.getBoundingClientRect();
+    const popRect = popover.getBoundingClientRect();
+    const margin = 8;
+
+    let top = rect.bottom + 6;
+    if (top + popRect.height > window.innerHeight - margin) {
+        top = Math.max(margin, rect.top - popRect.height - 6);
+    }
+
+    let left = rect.left;
+    if (left + popRect.width > window.innerWidth - margin) {
+        left = Math.max(margin, rect.right - popRect.width);
+    }
+    if (left < margin) {
+        left = margin;
+    }
+
+    popover.style.top = Math.round(top) + "px";
+    popover.style.left = Math.round(left) + "px";
+}
+
+function showNotePopover(tile, equipType, unit, note) {
+    if (!note) return;
+    const popover = getOrCreateNotePopover();
+    const reasonEl = popover.querySelector(".unp-reason");
+    const textEl = popover.querySelector(".unp-text");
+    const metaEl = popover.querySelector(".unp-meta");
+    const editBtn = popover.querySelector(".unp-edit-btn");
+
+    reasonEl.textContent = getUnitAutoReason(equipType, unit);
+    textEl.textContent = note.note || "";
+    metaEl.textContent = "— " + (note.author || "operator") + " • " + (note.updated_at || "").slice(0, 16);
+
+    editBtn.onclick = (e) => {
+        e.stopPropagation();
+        hideNotePopover();
+        openUnitDetailModal(equipType, unit, tile);
+    };
+
+    popover.removeAttribute("aria-hidden");
+    activePopoverAnchor = {
+        equipType,
+        unitId: unit.name,
+        tileElement: tile,
+        unit,
+        note,
+        hoveringPopover: false
+    };
+
+    positionNotePopover(tile, popover);
+}
+
+function hideNotePopover() {
+    const popover = document.getElementById("unitNotePopover");
+    if (popover) {
+        popover.setAttribute("aria-hidden", "true");
+    }
+    activePopoverAnchor = null;
+}
+
+function reanchorOrHideNotePopover() {
+    if (!activePopoverAnchor) return;
+    const { equipType, unitId } = activePopoverAnchor;
+
+    const cards = document.querySelectorAll(".ahu-card");
+    let foundTile = null;
+    for (let i = 0; i < cards.length; i++) {
+        const nameEl = cards[i].querySelector(".ahu-card-name");
+        if (nameEl && nameEl.textContent.trim() === unitId) {
+            foundTile = cards[i];
+            break;
+        }
+    }
+
+    const currentNote = notesByUnit.get(noteKey(equipType, unitId));
+    if (foundTile && currentNote) {
+        activePopoverAnchor.tileElement = foundTile;
+        activePopoverAnchor.note = currentNote;
+        const popover = document.getElementById("unitNotePopover");
+        if (popover && popover.getAttribute("aria-hidden") !== "true") {
+            positionNotePopover(foundTile, popover);
+            return;
+        }
+    }
+    hideNotePopover();
+}
+
+/* Dismiss popover when clicking elsewhere or pressing Escape */
+document.addEventListener("pointerdown", (e) => {
+    if (!activePopoverAnchor) return;
+    const popover = document.getElementById("unitNotePopover");
+    if (popover && (popover.contains(e.target) || activePopoverAnchor.tileElement.contains(e.target))) {
+        return;
+    }
+    hideNotePopover();
+});
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        if (activeDetailModal) {
+            closeUnitDetailModal();
+        } else if (activePopoverAnchor) {
+            hideNotePopover();
+        }
+    }
+});
+
+/* ---- Note Icon Builder Helper ---- */
+
+function buildNoteIconButton(equipType, unit, note) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ahu-note-btn";
+    btn.setAttribute("aria-label", "Operator note for " + (unit.name || "") + ": " + (note.note || ""));
+    btn.title = "Operator note: " + (note.note || "");
+
+    btn.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" class="ahu-note-icon">
+        <path d="M3 1h7l4 4v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M10 1v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="5" y1="11" x2="9" y2="11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    </svg>`;
+
+    btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const card = btn.closest(".ahu-card");
+        if (activePopoverAnchor && activePopoverAnchor.unitId === unit.name) {
+            hideNotePopover();
+        } else if (card) {
+            showNotePopover(card, equipType, unit, note);
+        }
+    });
+
+    btn.addEventListener("focus", () => {
+        const card = btn.closest(".ahu-card");
+        if (card) showNotePopover(card, equipType, unit, note);
+    });
+
+    btn.addEventListener("blur", () => {
+        setTimeout(() => {
+            const popover = document.getElementById("unitNotePopover");
+            if (popover && popover.contains(document.activeElement)) return;
+            hideNotePopover();
+        }, 150);
+    });
+
+    return btn;
+}
+
+/* ---- Unit Detail & Note Editor Modal ---- */
+
+function getOrCreateDetailModalBackdrop() {
+    let backdrop = document.getElementById("ahuDetailModalBackdrop");
+    if (!backdrop) {
+        backdrop = document.createElement("div");
+        backdrop.id = "ahuDetailModalBackdrop";
+        backdrop.className = "ahu-detail-modal-backdrop";
+        backdrop.setAttribute("role", "dialog");
+        backdrop.setAttribute("aria-modal", "true");
+        backdrop.setAttribute("aria-label", "Unit Details and Notes");
+        backdrop.setAttribute("aria-hidden", "true");
+
+        backdrop.addEventListener("click", (e) => {
+            if (e.target === backdrop) {
+                closeUnitDetailModal();
+            }
+        });
+
+        document.body.appendChild(backdrop);
+    }
+    return backdrop;
+}
+
+function openUnitDetailModal(equipType, unit, anchorTile) {
+    const key = noteKey(equipType, unit.name);
+    const existingNote = notesByUnit.get(key) || null;
+    const existingDraft = noteDraftsByUnit.get(key);
+
+    activeDetailModal = {
+        equipType,
+        unitId: unit.name,
+        unit,
+        anchorTile,
+        serverUpdatedAt: existingNote ? existingNote.updated_at : null
+    };
+
+    const backdrop = getOrCreateDetailModalBackdrop();
+    backdrop.innerHTML = "";
+
+    const modal = document.createElement("div");
+    modal.className = "ahu-detail-modal";
+
+    const head = document.createElement("div");
+    head.className = "ahu-detail-modal-head";
+
+    const title = document.createElement("div");
+    title.className = "ahu-detail-modal-title";
+    title.textContent = (unit.name || "Unit") + " Details";
+    head.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "ahu-detail-modal-close";
+    closeBtn.setAttribute("aria-label", "Close modal");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.onclick = () => closeUnitDetailModal();
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    const statRow = document.createElement("div");
+    statRow.className = "ahu-detail-summary-row";
+
+    const band = ahuBandOf(unit);
+    const runState = ahuRunState(unit);
+    const reading = ahuCardReading(unit);
+    const tag = ahuTagFor(unit, band);
+
+    statRow.innerHTML = `
+        <div>
+            <div class="ahu-detail-stat-label">Health Status</div>
+            <div class="ahu-detail-stat-value is-${band}">${band.toUpperCase()}</div>
+        </div>
+        <div>
+            <div class="ahu-detail-stat-label">Operating</div>
+            <div class="ahu-detail-stat-value is-${runState}">${runState === 'on' ? 'RUNNING' : (runState === 'off' ? 'STOPPED' : 'UNKNOWN')}</div>
+        </div>
+        <div>
+            <div class="ahu-detail-stat-label">Reading</div>
+            <div class="ahu-detail-stat-value"></div>
+        </div>
+        <div>
+            <div class="ahu-detail-stat-label">Deviation / Condition</div>
+            <div class="ahu-detail-stat-value"></div>
+        </div>
+    `;
+    const statVals = statRow.querySelectorAll(".ahu-detail-stat-value");
+    if (statVals[2]) statVals[2].textContent = reading || "—";
+    if (statVals[3]) statVals[3].textContent = tag || "Within Limits";
+
+    modal.appendChild(statRow);
+
+    const noteSec = document.createElement("div");
+    noteSec.className = "ahu-note-editor-section";
+
+    const noteTitleRow = document.createElement("div");
+    noteTitleRow.className = "ahu-note-editor-title";
+    const noteHeading = document.createElement("span");
+    noteHeading.textContent = "Operator Sticky Note";
+    const counter = document.createElement("span");
+    counter.className = "ahu-note-counter";
+    noteTitleRow.appendChild(noteHeading);
+    noteTitleRow.appendChild(counter);
+    noteSec.appendChild(noteTitleRow);
+
+    const conflictBanner = document.createElement("div");
+    conflictBanner.className = "ahu-note-conflict-alert";
+    conflictBanner.style.display = "none";
+    noteSec.appendChild(conflictBanner);
+
+    const errorBanner = document.createElement("div");
+    errorBanner.className = "ahu-note-error-banner";
+    if (notesUnavailable) {
+        errorBanner.textContent = "Notes are not set up on this server yet";
+        errorBanner.style.display = "block";
+    } else {
+        errorBanner.style.display = "none";
+    }
+    noteSec.appendChild(errorBanner);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "ahu-note-textarea";
+    textarea.placeholder = "Enter short note (e.g. Filter being replaced, tech Budi, done tomorrow)...";
+    textarea.maxLength = 500;
+
+    const initialText = existingDraft !== undefined ? existingDraft : (existingNote ? existingNote.note : "");
+    textarea.value = initialText;
+
+    const updateCounter = () => {
+        const len = textarea.value.length;
+        counter.textContent = len + " / 500";
+        counter.classList.toggle("is-limit", len >= 500);
+    };
+    updateCounter();
+
+    textarea.addEventListener("input", () => {
+        noteDraftsByUnit.set(key, textarea.value);
+        updateCounter();
+        errorBanner.style.display = "none";
+    });
+    noteSec.appendChild(textarea);
+
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "ahu-note-modal-actions";
+
+    const resolveBtn = document.createElement("button");
+    resolveBtn.type = "button";
+    resolveBtn.className = "ahu-btn ahu-btn-resolve";
+    resolveBtn.textContent = "Done (Resolve Note)";
+    resolveBtn.style.display = existingNote ? "inline-block" : "none";
+
+    const rightActions = document.createElement("div");
+    rightActions.className = "ahu-note-actions-right";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ahu-btn ahu-btn-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.onclick = () => closeUnitDetailModal();
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "ahu-btn ahu-btn-primary";
+    saveBtn.textContent = "Save Note";
+
+    saveBtn.onclick = async () => {
+        const text = textarea.value.trim();
+        if (text === "") {
+            errorBanner.textContent = "Note text cannot be empty.";
+            errorBanner.style.display = "block";
+            return;
+        }
+        if (text.length > 500) {
+            errorBanner.textContent = "Note exceeds maximum length of 500 characters.";
+            errorBanner.style.display = "block";
+            return;
+        }
+
+        saveBtn.disabled = true;
+        resolveBtn.disabled = true;
+        saveBtn.textContent = "Saving...";
+
+        try {
+            const res = await fetch(NOTES_API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "save",
+                    equip_type: equipType,
+                    unit_id: unit.name,
+                    note: text
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 503 || data.error === "notes_unavailable") {
+                notesUnavailable = true;
+                throw new Error("Notes are not set up on this server yet");
+            }
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || "Save failed");
+            }
+
+            notesByUnit.set(key, data.note);
+            noteDraftsByUnit.delete(key);
+
+            closeUnitDetailModal();
+            refreshUnitCardsNotes();
+        } catch (err) {
+            const msg = (err && (err.message === "notes_unavailable" || err.message === "Notes are not set up on this server yet")) ? "Notes are not set up on this server yet" : (err && err.message ? err.message : "Failed to save note.");
+            errorBanner.textContent = msg;
+            errorBanner.style.display = "block";
+            saveBtn.disabled = false;
+            resolveBtn.disabled = false;
+            saveBtn.textContent = "Save Note";
+        }
+    };
+
+    resolveBtn.onclick = async () => {
+        resolveBtn.disabled = true;
+        saveBtn.disabled = true;
+        resolveBtn.textContent = "Resolving...";
+
+        try {
+            const res = await fetch(NOTES_API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "resolve",
+                    equip_type: equipType,
+                    unit_id: unit.name
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 503 || data.error === "notes_unavailable") {
+                notesUnavailable = true;
+                throw new Error("Notes are not set up on this server yet");
+            }
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || "Resolve failed");
+            }
+
+            notesByUnit.delete(key);
+            noteDraftsByUnit.delete(key);
+
+            closeUnitDetailModal();
+            refreshUnitCardsNotes();
+        } catch (err) {
+            const msg = (err && (err.message === "notes_unavailable" || err.message === "Notes are not set up on this server yet")) ? "Notes are not set up on this server yet" : (err && err.message ? err.message : "Failed to resolve note.");
+            errorBanner.textContent = msg;
+            errorBanner.style.display = "block";
+            resolveBtn.disabled = false;
+            saveBtn.disabled = false;
+            resolveBtn.textContent = "Done (Resolve Note)";
+        }
+    };
+
+    actionsRow.appendChild(resolveBtn);
+    rightActions.appendChild(cancelBtn);
+    rightActions.appendChild(saveBtn);
+    actionsRow.appendChild(rightActions);
+    noteSec.appendChild(actionsRow);
+
+    modal.appendChild(noteSec);
+    backdrop.appendChild(modal);
+
+    document.body.classList.add("modal-open");
+    backdrop.removeAttribute("aria-hidden");
+    textarea.focus();
+}
+
+function closeUnitDetailModal() {
+    const backdrop = document.getElementById("ahuDetailModalBackdrop");
+    if (backdrop) {
+        backdrop.setAttribute("aria-hidden", "true");
+        backdrop.innerHTML = "";
+    }
+    document.body.classList.remove("modal-open");
+
+    if (activeDetailModal && activeDetailModal.anchorTile) {
+        try {
+            activeDetailModal.anchorTile.focus();
+        } catch (e) {}
+    }
+    activeDetailModal = null;
+}
+
+function notifyDetailModalIfNoteChanged(serverNote) {
+    if (!activeDetailModal) return;
+    const modalKey = noteKey(activeDetailModal.equipType, activeDetailModal.unitId);
+    if (!serverNote || noteKey(serverNote.equip_type, serverNote.unit_id) !== modalKey) return;
+
+    if (activeDetailModal.serverUpdatedAt && serverNote.updated_at !== activeDetailModal.serverUpdatedAt) {
+        const backdrop = document.getElementById("ahuDetailModalBackdrop");
+        if (!backdrop) return;
+        const banner = backdrop.querySelector(".ahu-note-conflict-alert");
+        if (banner) {
+            banner.textContent = "Note was updated on server by " + (serverNote.author || "another user") +
+                " at " + (serverNote.updated_at || "").slice(0, 16) + ". Your local draft has been kept.";
+            banner.style.display = "block";
+        }
+    }
+}
+
+function refreshUnitCardsNotes() {
+    if (currentEquipment !== "AHU") return;
+    const cards = document.querySelectorAll(".ahu-card");
+    cards.forEach(card => {
+        const nameEl = card.querySelector(".ahu-card-name");
+        if (!nameEl) return;
+        const unitName = nameEl.textContent.trim();
+        const key = noteKey("AHU", unitName);
+        const note = notesByUnit.get(key);
+
+        let existingBtn = card.querySelector(".ahu-note-btn");
+        if (note) {
+            card.classList.add("has-note");
+            if (!existingBtn) {
+                const unit = ahuUnits.find(u => u.name === unitName) || { name: unitName };
+                const btn = buildNoteIconButton("AHU", unit, note);
+                card.appendChild(btn);
+            } else {
+                existingBtn.setAttribute("aria-label", "Operator note for " + unitName + ": " + (note.note || ""));
+                existingBtn.title = "Operator note: " + (note.note || "");
+            }
+        } else {
+            card.classList.remove("has-note");
+            if (existingBtn) existingBtn.remove();
+        }
+    });
+
+    reanchorOrHideNotePopover();
+}
+
+/* ---- Polling & Loading ---- */
+
+async function loadNotes(equipType) {
+    try {
+        const url = NOTES_API_URL + "?equip_type=" + encodeURIComponent(equipType || "") + "&t=" + Date.now();
+        const res = await fetch(url, { cache: "no-store" });
+
+        if (res.status === 401) {
+            console.warn("Notes API authentication required");
+            return;
+        }
+
+        if (res.status === 503) {
+            notesUnavailable = true;
+            return;
+        }
+
+        if (!res.ok) {
+            return;
+        }
+
+        const data = await res.json().catch(() => null);
+        if (!data || !data.success || !Array.isArray(data.notes)) {
+            if (data && data.error === "notes_unavailable") {
+                notesUnavailable = true;
+            }
+            return;
+        }
+
+        notesUnavailable = false;
+
+        const currentEquipUpper = String(equipType || "").toUpperCase();
+        for (const [k] of notesByUnit) {
+            if (k.startsWith(currentEquipUpper + ":")) {
+                notesByUnit.delete(k);
+            }
+        }
+
+        data.notes.forEach(n => {
+            const k = noteKey(n.equip_type, n.unit_id);
+            notesByUnit.set(k, n);
+            notifyDetailModalIfNoteChanged(n);
+        });
+
+        refreshUnitCardsNotes();
+
+    } catch (e) {
+        console.warn("loadNotes error:", e);
+    }
+}
+
+function startNotesPolling() {
+    if (notesPollTimer) {
+        clearInterval(notesPollTimer);
+    }
+    loadNotes("AHU");
+    notesPollTimer = setInterval(() => {
+        if (!isNotesPollPaused && currentEquipment === "AHU") {
+            loadNotes("AHU");
+        }
+    }, NOTES_POLL_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        isNotesPollPaused = true;
+    } else {
+        isNotesPollPaused = false;
+        if (currentEquipment === "AHU") {
+            loadNotes("AHU");
+        }
+    }
+});
+
 function ahuCreateCard(unit) {
     const band = ahuBandOf(unit);
     const state = ahuRunState(unit);
@@ -5245,6 +5893,141 @@ function ahuCreateCard(unit) {
     card.className = "ahu-card is-" + band;
     card.dataset.band = band;
     card.dataset.run = state;
+    card.tabIndex = 0;
+
+    // Operator Sticky Note button (if open note exists)
+    const k = noteKey("AHU", unit.name);
+    const note = notesByUnit.get(k);
+    if (note) {
+        card.classList.add("has-note");
+        card.appendChild(buildNoteIconButton("AHU", unit, note));
+    }
+
+    // Hover (mouse only): show popover
+    card.addEventListener("pointerenter", (e) => {
+        if (e.pointerType === "mouse") {
+            const currentNote = notesByUnit.get(noteKey("AHU", unit.name));
+            if (currentNote) {
+                showNotePopover(card, "AHU", unit, currentNote);
+            }
+        }
+    });
+
+    card.addEventListener("pointerleave", (e) => {
+        if (e.pointerType === "mouse") {
+            setTimeout(() => {
+                if (activePopoverAnchor && activePopoverAnchor.hoveringPopover) return;
+                if (activePopoverAnchor && activePopoverAnchor.tileElement === card) {
+                    hideNotePopover();
+                }
+            }, 50);
+        }
+    });
+
+    // Mouse double-click opens detail modal (single click does nothing)
+    card.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".ahu-note-btn")) return;
+        openUnitDetailModal("AHU", unit, card);
+    });
+
+    // Touch: double-tap or long-press opens detail modal (single tap does nothing)
+    let touchStartTime = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchMoved = false;
+    let longPressTimer = null;
+    let longPressTriggered = false;
+    let lastTapTime = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    card.addEventListener("touchstart", (e) => {
+        if (e.target.closest(".ahu-note-btn")) return;
+        if (e.touches.length !== 1) return;
+
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchStartTime = Date.now();
+        touchMoved = false;
+        longPressTriggered = false;
+
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+        }
+
+        longPressTimer = setTimeout(() => {
+            if (!touchMoved) {
+                longPressTriggered = true;
+                openUnitDetailModal("AHU", unit, card);
+            }
+        }, 500);
+    }, { passive: true });
+
+    card.addEventListener("touchmove", (e) => {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - touchStartX);
+        const dy = Math.abs(touch.clientY - touchStartY);
+        if (dx > 10 || dy > 10) {
+            touchMoved = true;
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }
+    }, { passive: true });
+
+    card.addEventListener("touchend", (e) => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+
+        if (e.target.closest(".ahu-note-btn")) return;
+        if (longPressTriggered) {
+            if (e.cancelable) e.preventDefault();
+            return;
+        }
+        if (touchMoved) return;
+
+        const now = Date.now();
+        const tapDuration = now - touchStartTime;
+        if (tapDuration > 450) {
+            return;
+        }
+
+        const timeSinceLastTap = now - lastTapTime;
+        const dx = Math.abs(touchStartX - lastTapX);
+        const dy = Math.abs(touchStartY - lastTapY);
+
+        if (timeSinceLastTap > 40 && timeSinceLastTap < 400 && dx < 35 && dy < 35) {
+            if (e.cancelable) e.preventDefault();
+            lastTapTime = 0;
+            openUnitDetailModal("AHU", unit, card);
+        } else {
+            lastTapTime = now;
+            lastTapX = touchStartX;
+            lastTapY = touchStartY;
+        }
+    });
+
+    card.addEventListener("touchcancel", () => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        touchMoved = false;
+        longPressTriggered = false;
+    });
+
+    // Keyboard Enter opens detail modal
+    card.addEventListener("keydown", (e) => {
+        if (e.target === card && e.key === "Enter") {
+            e.preventDefault();
+            openUnitDetailModal("AHU", unit, card);
+        }
+    });
 
     /*
      * RUN indicator: the OPERATING axis, drawn on every card in every health
@@ -5372,6 +6155,8 @@ function ahuRenderSections() {
             )
         );
     });
+
+    reanchorOrHideNotePopover();
 }
 
 function ahuBuildSection(band, units) {
@@ -10438,6 +11223,14 @@ function navigateTo(equipment, filter = "") {
      */
     showChart = false;
 
+    hideNotePopover();
+    if (activeDetailModal) {
+        closeUnitDetailModal();
+    }
+    if (equipment === "AHU") {
+        loadNotes("AHU");
+    }
+
     renderEquipment();
     safeLoadData();
 
@@ -12955,6 +13748,7 @@ alarmMuted = readAlarmMuted();
 alarmWindowHours = readAlarmWindowHours();
 
 safeLoadData();
+startNotesPolling();
 
 /*
  * The alarm poll is independent of the visible page so a new alarm still

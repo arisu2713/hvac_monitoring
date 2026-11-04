@@ -7896,3 +7896,397 @@ body.is-actlog-view .page-filters {
         align-items: flex-start;
     }
 }
+
+/* =========================================================
+   OPERATOR STICKY NOTES & UNIT DETAIL MODAL
+   ========================================================= */
+
+:root {
+    --note-surface: #1a1a1a;
+    --note-surface-raised: #222b34;
+    --note-border: #333333;
+    --note-border-subtle: #2c2c2c;
+    --note-text: #ffffff;
+    --note-text-muted: #9aa7b3;
+    --note-accent-gold: #ffd98a;
+    --note-btn-bg: #252525;
+    --note-btn-border: #444444;
+    --note-btn-hover: #333333;
+    --note-btn-primary-bg: #e6ebf0;
+    --note-btn-primary-text: #0e1318;
+    --note-danger-bg: #c62828;
+    --note-danger-text: #ffffff;
+}
+
+body.modal-open {
+    overflow: hidden !important;
+}
+
+/* Card hover cursor and interactive cue */
+.ahu-card {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Note button on tile (top-left) */
+.ahu-note-btn {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: var(--note-accent-gold);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 4;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+    outline-offset: 2px;
+}
+
+.ahu-note-btn:focus-visible {
+    outline: 2px solid var(--note-accent-gold);
+    border-radius: 2px;
+}
+
+/* Touch hit target >= 44x44px; mouse hit target >= 32x32px */
+.ahu-note-btn::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 32px;
+}
+
+@media (pointer: coarse) {
+    .ahu-note-btn::after {
+        width: 44px;
+        height: 44px;
+    }
+}
+
+@media (max-width: 768px) {
+    .ahu-note-btn::after {
+        width: 44px;
+        height: 44px;
+    }
+}
+
+/* Contrast adjustments by tile band: dark ink on amber warning tile */
+.ahu-card.is-warning .ahu-note-btn {
+    color: #1a1300;
+    filter: none;
+}
+.ahu-card.is-warning .ahu-note-btn:focus-visible {
+    outline-color: #1a1300;
+}
+
+.ahu-card.is-critical .ahu-note-btn {
+    color: #ffffff;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.ahu-card.is-normal .ahu-note-btn {
+    color: var(--note-accent-gold);
+}
+
+.ahu-card.is-unknown .ahu-note-btn {
+    color: var(--note-accent-gold);
+}
+
+/* Sticky note popover: fixed, clamped, non-modal dialog */
+.unit-note-popover {
+    position: fixed;
+    z-index: 9999;
+    max-width: 280px;
+    width: max-content;
+    background: var(--note-surface);
+    border: 1px solid var(--note-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--note-text);
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    line-height: 1.4;
+}
+
+.unit-note-popover[aria-hidden="true"] {
+    display: none !important;
+}
+
+.unit-note-popover .unp-reason {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--note-accent-gold);
+    border-bottom: 1px solid var(--note-border-subtle);
+    padding-bottom: 4px;
+}
+
+.unit-note-popover .unp-text {
+    font-size: 12px;
+    color: #eeeeee;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.unit-note-popover .unp-meta {
+    font-size: 10px;
+    color: var(--note-text-muted);
+}
+
+.unit-note-popover .unp-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 2px;
+    padding-top: 4px;
+    border-top: 1px solid var(--note-border-subtle);
+}
+
+.unit-note-popover .unp-edit-btn {
+    background: var(--note-btn-bg);
+    border: 1px solid var(--note-btn-border);
+    color: #cccccc;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+}
+
+.unit-note-popover .unp-edit-btn:hover {
+    background: var(--note-btn-hover);
+    color: #ffffff;
+}
+
+/* Detail Modal Overlay */
+.ahu-detail-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+
+.ahu-detail-modal-backdrop[aria-hidden="true"] {
+    display: none !important;
+}
+
+.ahu-detail-modal {
+    background: var(--note-surface);
+    border: 1px solid var(--note-border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    max-width: 480px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85);
+    font-family: inherit;
+    color: var(--note-text);
+}
+
+.ahu-detail-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--note-border-subtle);
+}
+
+.ahu-detail-modal-title {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ahu-detail-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--note-text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+}
+
+.ahu-detail-modal-close:hover {
+    color: #ffffff;
+}
+
+.ahu-detail-summary-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+    background: #14181f;
+    border: 1px solid var(--note-border-subtle);
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.ahu-detail-stat-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--note-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ahu-detail-stat-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-top: 2px;
+}
+
+.ahu-detail-stat-value.is-run { color: #4ade80; }
+.ahu-detail-stat-value.is-off { color: #ff9a92; }
+.ahu-detail-stat-value.is-warning { color: #f5b83d; }
+.ahu-detail-stat-value.is-critical { color: #ff9a92; }
+
+.ahu-note-editor-section {
+    margin-top: 12px;
+}
+
+.ahu-note-editor-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #c9d3dc;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.ahu-note-conflict-alert {
+    background: rgba(245, 184, 61, 0.15);
+    border: 1px solid #f5b83d;
+    color: #ffd98a;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.ahu-note-error-banner {
+    background: rgba(198, 40, 40, 0.2);
+    border: 1px solid #ff9a92;
+    color: #ff9a92;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.ahu-note-textarea {
+    width: 100%;
+    min-height: 90px;
+    padding: 10px;
+    background: #11151a;
+    border: 1px solid #2c3640;
+    border-radius: 6px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.ahu-note-textarea:focus {
+    border-color: #4a5763;
+}
+
+.ahu-note-counter {
+    font-size: 10px;
+    color: var(--note-text-muted);
+    font-weight: 500;
+}
+
+.ahu-note-counter.is-limit {
+    color: #ff9a92;
+    font-weight: 700;
+}
+
+.ahu-note-modal-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+    gap: 8px;
+}
+
+.ahu-note-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ahu-btn {
+    border-radius: 4px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid transparent;
+}
+
+.ahu-btn-primary {
+    background: var(--note-btn-primary-bg);
+    color: var(--note-btn-primary-text);
+    border-color: var(--note-btn-primary-bg);
+}
+
+.ahu-btn-primary:hover {
+    background: #ffffff;
+}
+
+.ahu-btn-resolve {
+    background: #2a1a1a;
+    border-color: #662222;
+    color: #ff9a92;
+}
+
+.ahu-btn-resolve:hover {
+    background: #3b1f1f;
+    border-color: #883333;
+}
+
+.ahu-btn-cancel {
+    background: var(--note-btn-bg);
+    border-color: var(--note-btn-border);
+    color: #cccccc;
+}
+
+.ahu-btn-cancel:hover {
+    background: var(--note-btn-hover);
+    color: #ffffff;
+}
+
