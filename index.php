@@ -6840,21 +6840,64 @@ function chillerCalcApproach(valA, valB) {
     return Math.round((a - b) * 10) / 10;
 }
 
+function isChillerModbusRunning(u) {
+    return u.status === "RUNNING" || u.run_state === "on" || (u.points && Number(u.points.status) === 1);
+}
+
+function isChillerModbusWarning(u) {
+    return u.is_warning === true || u.status === "WARNING" || (Array.isArray(u.warning_reasons) && u.warning_reasons.length > 0);
+}
+
+function isChillerModbusStopped(u) {
+    if (isChillerModbusRunning(u)) return false;
+    return u.status === "STOPPED" || u.run_state === "off" || (u.points && Number(u.points.status) === 0 && u.status !== "NO DATA" && u.status !== "OFFLINE");
+}
+
+function isChillerModbusOffline(u) {
+    return u.status === "OFFLINE";
+}
+
+function isChillerModbusNoData(u) {
+    return u.status === "NO DATA";
+}
+
+function isChillerModbusG1G2(u) {
+    const dev = Number(u.device_id);
+    if (dev === 10203 || dev === 11008) return true;
+    if (dev === 10202 || dev === 11007) return false;
+    const num = Number(u.id) || (u.name ? Number(String(u.name).replace(/\D/g, "")) : 0);
+    return num >= 1 && num <= 5;
+}
+
+function isChillerModbusG3(u) {
+    return !isChillerModbusG1G2(u);
+}
+
 function chillerMatchesFilter(u) {
-    if (chillerView.filter === "RUNNING") return u.status === "RUNNING";
-    if (chillerView.filter === "STOPPED") return u.status === "STOPPED";
-    if (chillerView.filter === "WARNING") return u.is_warning === true;
-    if (chillerView.filter === "OFFLINE") return u.status === "OFFLINE";
-    if (chillerView.filter === "NO_DATA") return u.status === "NO DATA";
+    if (chillerView.filter === "RUNNING") return isChillerModbusRunning(u);
+    if (chillerView.filter === "STOPPED") return isChillerModbusStopped(u);
+    if (chillerView.filter === "WARNING") return isChillerModbusWarning(u);
+    if (chillerView.filter === "OFFLINE") return isChillerModbusOffline(u);
+    if (chillerView.filter === "NO_DATA") return isChillerModbusNoData(u);
     return true;
 }
 
 function chillerMatchesSearch(u) {
     if (!chillerView.search) return true;
     const term = chillerView.search;
+    const isG1 = isChillerModbusG1G2(u);
+    const bldName = isG1 ? "g1-g2 building g1 g2" : "g3 building g3";
+    const devId = String(u.device_id || "");
+    const gwId = isG1 ? "11008" : "11007";
+    const ddcId = isG1 ? "10203" : "10202";
+
     return (u.name && u.name.toLowerCase().includes(term)) ||
            (u.status && u.status.toLowerCase().includes(term)) ||
-           (u.equip_type && u.equip_type.toLowerCase().includes(term));
+           (u.equip_type && u.equip_type.toLowerCase().includes(term)) ||
+           bldName.includes(term) ||
+           devId.includes(term) ||
+           gwId.includes(term) ||
+           ddcId.includes(term);
 }
 
 function renderChillerDashboard() {
@@ -6899,16 +6942,17 @@ function renderChillerModbus() {
     };
 
     units.forEach(u => {
-        if (u.status === "NO DATA") {
-            summary.no_data++;
-        } else if (u.status === "OFFLINE") {
-            summary.offline++;
-        } else if (u.status === "RUNNING") {
-            summary.running++;
-            if (u.is_warning) summary.warning++;
-        } else if (u.status === "STOPPED") {
-            summary.stopped++;
-        }
+        const isRun = isChillerModbusRunning(u);
+        const isWarn = isChillerModbusWarning(u);
+        const isStop = isChillerModbusStopped(u);
+        const isOff = isChillerModbusOffline(u);
+        const isNoData = isChillerModbusNoData(u);
+
+        if (isRun) summary.running++;
+        if (isWarn) summary.warning++;
+        if (isStop) summary.stopped++;
+        if (isOff) summary.offline++;
+        if (isNoData) summary.no_data++;
     });
 
     const page = document.createElement("div");
@@ -7010,27 +7054,81 @@ function renderChillerModbus() {
 
     page.appendChild(controls);
 
-    // 3. Chiller Cards Grid
-    const cardsGrid = document.createElement("div");
-    cardsGrid.className = "chiller-cards-grid";
-
+    // 3. Building Sections (G1–G2 Building & G3 Building)
     const filteredUnits = units.filter(u => chillerMatchesFilter(u) && chillerMatchesSearch(u));
 
     if (filteredUnits.length === 0) {
         const empty = document.createElement("div");
         empty.className = "chiller-nodata-box";
-        empty.style.gridColumn = "1 / -1";
         empty.style.textAlign = "center";
         empty.style.padding = "24px";
         empty.textContent = "No chiller units match the current filter or search criteria.";
-        cardsGrid.appendChild(empty);
+        page.appendChild(empty);
     } else {
-        filteredUnits.forEach(unit => {
-            cardsGrid.appendChild(chillerBuildCard(unit));
+        const buildingConfigs = [
+            {
+                key: "G1-G2",
+                title: "G1–G2 Building",
+                meta: "Device 10203 • Gateway 11008 • Chiller 1–5",
+                match: isChillerModbusG1G2
+            },
+            {
+                key: "G3",
+                title: "G3 Building",
+                meta: "Device 10202 • Gateway 11007 • Chiller 6–9",
+                match: isChillerModbusG3
+            }
+        ];
+
+        buildingConfigs.forEach(bld => {
+            const bldUnits = filteredUnits.filter(bld.match);
+            if (bldUnits.length === 0) {
+                // Sembunyikan grup jika filter/search tidak menghasilkan unit pada grup tersebut
+                return;
+            }
+
+            const section = document.createElement("section");
+            section.className = "chiller-building-group";
+            section.setAttribute("data-building", bld.key);
+
+            // Header Section
+            const bldHeader = document.createElement("div");
+            bldHeader.className = "chiller-building-header";
+
+            const titleRow = document.createElement("div");
+            titleRow.className = "chiller-building-title-row";
+
+            const titleEl = document.createElement("h2");
+            titleEl.className = "chiller-building-title";
+            titleEl.textContent = bld.title;
+            titleRow.appendChild(titleEl);
+
+            const metaEl = document.createElement("span");
+            metaEl.className = "chiller-building-meta";
+            metaEl.textContent = bld.meta;
+            titleRow.appendChild(metaEl);
+
+            bldHeader.appendChild(titleRow);
+
+            const countEl = document.createElement("span");
+            countEl.className = "chiller-building-badge";
+            countEl.textContent = bldUnits.length + " unit" + (bldUnits.length > 1 ? "s" : "");
+            bldHeader.appendChild(countEl);
+
+            section.appendChild(bldHeader);
+
+            // Cards Grid
+            const cardsGrid = document.createElement("div");
+            cardsGrid.className = "chiller-cards-grid";
+
+            bldUnits.forEach(unit => {
+                cardsGrid.appendChild(chillerBuildCard(unit));
+            });
+
+            section.appendChild(cardsGrid);
+            page.appendChild(section);
         });
     }
-
-    page.appendChild(cardsGrid);
     grid.appendChild(page);
 
     if (chillerView.searchFocused) {
@@ -7042,11 +7140,11 @@ function renderChillerModbus() {
 function chillerBuildCard(unit) {
     const p = unit.points || {};
     const th = unit.thresholds || {};
-    const isNoData = unit.status === "NO DATA";
-    const isOffline = unit.status === "OFFLINE";
-    const isStopped = unit.status === "STOPPED";
-    const isRunning = unit.status === "RUNNING";
-    const isWarn = unit.is_warning === true;
+    const isNoData = isChillerModbusNoData(unit);
+    const isOffline = isChillerModbusOffline(unit);
+    const isStopped = isChillerModbusStopped(unit);
+    const isRunning = isChillerModbusRunning(unit);
+    const isWarn = isChillerModbusWarning(unit);
 
     const card = document.createElement("div");
     let cardCls = "chiller-card";
@@ -7310,8 +7408,6 @@ const chillerBacnetView = {
     searchRaw: "",
     search: "",
     searchFocused: false,
-    expandedAll: false,
-    expandedMap: {}
 };
 
 function getChillerBacnetBuilding(unit) {
@@ -7494,20 +7590,7 @@ function chillerBacnetBuildCard(unit) {
         return chip;
     }
 
-    // B. Group: Core Operation
-    const coreTitle = document.createElement("div");
-    coreTitle.className = "chiller-group-title";
-    coreTitle.textContent = "Core Operation";
-    card.appendChild(coreTitle);
-
-    const coreChips = document.createElement("div");
-    coreChips.className = "chiller-chips";
-
-    coreChips.appendChild(makeChip("Operating State", isRunning ? "RUNNING" : (isStopped ? "STOPPED" : "--"), false, isRunning ? "is-flow-ok" : ""));
-    coreChips.appendChild(makeChip("System Alarm", isAlarm ? "ALARM" : "NORMAL", isAlarm, isAlarm ? "is-flow-no" : ""));
-    card.appendChild(coreChips);
-
-    // C. Group: Water Temperatures
+    // Water Temperatures (BACnet Telemetry)
     const waterTitle = document.createElement("div");
     waterTitle.className = "chiller-group-title";
     waterTitle.textContent = "Water Temperatures";
@@ -7524,51 +7607,6 @@ function chillerBacnetBuildCard(unit) {
     waterChips.appendChild(makeChip("Cond Entering (CE)", chillerFormatVal(unit.cond_entering_temp, " °C", 1), ceBad));
     waterChips.appendChild(makeChip("Cond Leaving (CL)", chillerFormatVal(unit.cond_leaving_temp, " °C", 1)));
     card.appendChild(waterChips);
-
-    // D. Technical Details (Expandable)
-    const isExpanded = chillerBacnetView.expandedMap[unit.name] ?? chillerBacnetView.expandedAll;
-
-    const expandBtn = document.createElement("button");
-    expandBtn.type = "button";
-    expandBtn.className = "chiller-expand-btn";
-    expandBtn.setAttribute("aria-expanded", isExpanded ? "true" : "false");
-
-    const btnTitle = document.createElement("span");
-    btnTitle.textContent = "Technical Details (BACnet info & limits)";
-    expandBtn.appendChild(btnTitle);
-
-    const btnIcon = document.createElement("span");
-    btnIcon.textContent = isExpanded ? "▲ Hide" : "▼ Show";
-    expandBtn.appendChild(btnIcon);
-
-    expandBtn.addEventListener("click", () => {
-        chillerBacnetView.expandedMap[unit.name] = !isExpanded;
-        renderEquipment();
-    });
-
-    card.appendChild(expandBtn);
-
-    if (isExpanded) {
-        const detailsPanel = document.createElement("div");
-        detailsPanel.className = "chiller-details-panel";
-
-        const ctlTitle = document.createElement("div");
-        ctlTitle.className = "chiller-group-title";
-        ctlTitle.textContent = "Controller & Limits";
-        detailsPanel.appendChild(ctlTitle);
-
-        const ctlChips = document.createElement("div");
-        ctlChips.className = "chiller-chips";
-        ctlChips.appendChild(makeChip("Device ID", unit.device_id ? String(unit.device_id) : "--"));
-        ctlChips.appendChild(makeChip("Location", buildingName));
-        ctlChips.appendChild(makeChip("Protocol", "BACnet / IP"));
-        ctlChips.appendChild(makeChip("Max EL Limit", unit.evap_leaving_temp_max != null ? unit.evap_leaving_temp_max + " °C" : "--"));
-        ctlChips.appendChild(makeChip("Max CE Limit", unit.cond_entering_temp_max != null ? unit.cond_entering_temp_max + " °C" : "--"));
-        ctlChips.appendChild(makeChip("Last Polled", unit.last_update ? unit.last_update.slice(11, 19) : "--"));
-        detailsPanel.appendChild(ctlChips);
-
-        card.appendChild(detailsPanel);
-    }
 
     return card;
 }
@@ -7672,19 +7710,6 @@ function renderChillerBacnet() {
         chipGroup.appendChild(btn);
     });
 
-    // Expand All / Collapse All Toggle Button
-    const toggleAllBtn = document.createElement("button");
-    toggleAllBtn.type = "button";
-    toggleAllBtn.className = "hsc-chip";
-    toggleAllBtn.textContent = chillerBacnetView.expandedAll ? "Collapse Details" : "Expand All Details";
-    toggleAllBtn.addEventListener("click", () => {
-        chillerBacnetView.expandedAll = !chillerBacnetView.expandedAll;
-        units.forEach(u => {
-            chillerBacnetView.expandedMap[u.name] = chillerBacnetView.expandedAll;
-        });
-        renderEquipment();
-    });
-    chipGroup.appendChild(toggleAllBtn);
 
     controls.appendChild(chipGroup);
 
@@ -7704,10 +7729,7 @@ function renderChillerBacnet() {
 
     page.appendChild(controls);
 
-    // 3. Cards Grid
-    const cardsGrid = document.createElement("div");
-    cardsGrid.className = "chiller-cards-grid";
-
+    // 3. Building Sections (G1–G2 Building & G3 Building)
     const filteredUnits = units.filter(u => {
         const st = getChillerBacnetStatus(u);
         const bld = getChillerBacnetBuilding(u);
@@ -7717,18 +7739,81 @@ function renderChillerBacnet() {
     if (filteredUnits.length === 0) {
         const empty = document.createElement("div");
         empty.className = "chiller-nodata-box";
-        empty.style.gridColumn = "1 / -1";
         empty.style.textAlign = "center";
         empty.style.padding = "24px";
         empty.textContent = "No chiller units match the current filter or search criteria.";
-        cardsGrid.appendChild(empty);
+        page.appendChild(empty);
     } else {
-        filteredUnits.forEach(unit => {
-            cardsGrid.appendChild(chillerBacnetBuildCard(unit));
+        const buildingConfigs = [
+            {
+                key: "G1-G2",
+                title: "G1–G2 Building",
+                meta: "Device 10203 • Chiller 1–5",
+                match: (u) => {
+                    const n = Number(u.name);
+                    return (n >= 1 && n <= 5) || Number(u.device_id) === 10203;
+                }
+            },
+            {
+                key: "G3",
+                title: "G3 Building",
+                meta: "Device 10202 • Chiller 6–9",
+                match: (u) => {
+                    const n = Number(u.name);
+                    return (n >= 6 && n <= 9) || Number(u.device_id) === 10202;
+                }
+            }
+        ];
+
+        buildingConfigs.forEach(bld => {
+            const bldUnits = filteredUnits.filter(bld.match);
+            if (bldUnits.length === 0) {
+                // Sembunyikan section jika tidak ada unit yang cocok dengan filter / search
+                return;
+            }
+
+            const section = document.createElement("section");
+            section.className = "chiller-building-group";
+            section.setAttribute("data-building", bld.key);
+
+            // Header Section
+            const bldHeader = document.createElement("div");
+            bldHeader.className = "chiller-building-header";
+
+            const titleRow = document.createElement("div");
+            titleRow.className = "chiller-building-title-row";
+
+            const titleEl = document.createElement("h2");
+            titleEl.className = "chiller-building-title";
+            titleEl.textContent = bld.title;
+            titleRow.appendChild(titleEl);
+
+            const metaEl = document.createElement("span");
+            metaEl.className = "chiller-building-meta";
+            metaEl.textContent = bld.meta;
+            titleRow.appendChild(metaEl);
+
+            bldHeader.appendChild(titleRow);
+
+            const countEl = document.createElement("span");
+            countEl.className = "chiller-building-badge";
+            countEl.textContent = bldUnits.length + " unit" + (bldUnits.length > 1 ? "s" : "");
+            bldHeader.appendChild(countEl);
+
+            section.appendChild(bldHeader);
+
+            // Cards Grid
+            const cardsGrid = document.createElement("div");
+            cardsGrid.className = "chiller-cards-grid";
+
+            bldUnits.forEach(unit => {
+                cardsGrid.appendChild(chillerBacnetBuildCard(unit));
+            });
+
+            section.appendChild(cardsGrid);
+            page.appendChild(section);
         });
     }
-
-    page.appendChild(cardsGrid);
     grid.appendChild(page);
 
     if (chillerBacnetView.searchFocused) {
