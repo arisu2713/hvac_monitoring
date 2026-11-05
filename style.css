@@ -7902,10 +7902,24 @@ body.is-actlog-view .page-filters {
    ========================================================= */
 
 :root {
+    /* Sticky Note Popover: Light "Paper" Card Variables */
+    --note-paper: #f5f2ea;
+    --note-ink: #1a1a1a;
+    --note-border: #c9c4b6;
+    --note-border-subtle: #ded9cd;
+    --note-accent-bar: #7d786d;
+    --note-reason: #444444;
+    --note-meta: #5a5a5a;
+    --note-popover-shadow: 0 4px 18px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.16);
+    --note-popover-btn-bg: #1a1a1a;
+    --note-popover-btn-text: #f5f2ea;
+    --note-popover-btn-hover: #2e2e2e;
+
+    /* Unit Detail Modal & Tile Note Button Variables (Preserved) */
     --note-surface: #1a1a1a;
     --note-surface-raised: #222b34;
-    --note-border: #333333;
-    --note-border-subtle: #2c2c2c;
+    --note-modal-border: #333333;
+    --note-modal-border-subtle: #2c2c2c;
     --note-text: #ffffff;
     --note-text-muted: #9aa7b3;
     --note-accent-gold: #ffd98a;
@@ -8002,20 +8016,21 @@ body.modal-open {
     color: var(--note-accent-gold);
 }
 
-/* Sticky note popover: fixed, clamped, non-modal dialog */
+/* Sticky note popover: light paper card, fixed, clamped, non-modal dialog */
 .unit-note-popover {
     position: fixed;
     z-index: 9999;
-    max-width: 280px;
+    max-width: min(280px, calc(100vw - 24px));
     width: max-content;
-    background: var(--note-surface);
+    background: var(--note-paper);
     border: 1px solid var(--note-border);
+    border-left: 4px solid var(--note-accent-bar);
     border-radius: 8px;
-    padding: 10px 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    padding: 10px 14px;
+    box-shadow: var(--note-popover-shadow);
     font-family: inherit;
-    font-size: 12px;
-    color: var(--note-text);
+    font-size: 14px;
+    color: var(--note-ink);
     pointer-events: auto;
     display: flex;
     flex-direction: column;
@@ -8023,29 +8038,38 @@ body.modal-open {
     line-height: 1.4;
 }
 
+@media (min-width: 769px) {
+    .unit-note-popover {
+        max-width: 320px;
+    }
+}
+
 .unit-note-popover[aria-hidden="true"] {
     display: none !important;
 }
 
 .unit-note-popover .unp-reason {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.5px;
-    color: var(--note-accent-gold);
+    text-transform: none;
+    letter-spacing: 0.2px;
+    color: var(--note-reason);
     border-bottom: 1px solid var(--note-border-subtle);
     padding-bottom: 4px;
 }
 
 .unit-note-popover .unp-text {
-    font-size: 12px;
-    color: #eeeeee;
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--note-ink);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     word-break: break-word;
 }
 
 .unit-note-popover .unp-meta {
-    font-size: 10px;
-    color: var(--note-text-muted);
+    font-size: 12px;
+    color: var(--note-meta);
 }
 
 .unit-note-popover .unp-actions {
@@ -8057,19 +8081,43 @@ body.modal-open {
 }
 
 .unit-note-popover .unp-edit-btn {
-    background: var(--note-btn-bg);
-    border: 1px solid var(--note-btn-border);
-    color: #cccccc;
-    font-size: 11px;
+    background: var(--note-popover-btn-bg);
+    border: 1px solid var(--note-popover-btn-bg);
+    color: var(--note-popover-btn-text);
+    font-family: inherit;
+    font-size: 12px;
     font-weight: 600;
     border-radius: 4px;
-    padding: 3px 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+    line-height: 1;
 }
 
 .unit-note-popover .unp-edit-btn:hover {
-    background: var(--note-btn-hover);
-    color: #ffffff;
+    background: var(--note-popover-btn-hover);
+    border-color: var(--note-popover-btn-hover);
+    color: var(--note-popover-btn-text);
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+    .unit-note-popover .unp-edit-btn {
+        min-height: 44px;
+        padding: 0 14px;
+    }
+}
+
+/* Wall display: light paper card, note text 16px */
+@media (min-width: 1600px) and (max-width: 2499px) {
+    .unit-note-popover {
+        max-width: 320px;
+    }
+    .unit-note-popover .unp-text {
+        font-size: 16px;
+    }
 }
 
 /* Detail Modal Overlay */
@@ -8090,7 +8138,7 @@ body.modal-open {
 
 .ahu-detail-modal {
     background: var(--note-surface);
-    border: 1px solid var(--note-border);
+    border: 1px solid var(--note-modal-border);
     border-radius: 10px;
     padding: 20px 24px;
     max-width: 480px;
@@ -8108,7 +8156,7 @@ body.modal-open {
     justify-content: space-between;
     margin-bottom: 12px;
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--note-border-subtle);
+    border-bottom: 1px solid var(--note-modal-border-subtle);
 }
 
 .ahu-detail-modal-title {
@@ -8141,7 +8189,7 @@ body.modal-open {
     gap: 8px;
     margin-bottom: 16px;
     background: #14181f;
-    border: 1px solid var(--note-border-subtle);
+    border: 1px solid var(--note-modal-border-subtle);
     border-radius: 6px;
     padding: 10px;
 }
