@@ -125,6 +125,11 @@ $appVersion = app_version_info();
         <div class="subtitle">Building HVAC Status</div>
     </div>
 
+    <div id="globalAlarmWidget" class="global-alarm-widget">
+        <button id="globalAlarmMuteBtn" type="button" class="global-mute-btn is-hidden" aria-label="Alarm sound control"></button>
+        <span id="globalAudioNotice" class="global-audio-notice is-hidden"></span>
+    </div>
+
     <div class="connection">
         <span id="connectionDot" class="connection-dot offline"></span>
         <span id="connectionText">OFFLINE</span>
@@ -2493,9 +2498,37 @@ function selectRoomView(view) {
    ========================================================= */
 
 const ALARM_API_URL = "api_alarm.php";
+const ALARM_EF_URL = "api_ef.php";
 const ALARM_POLL_MS = 10000;
-const ALARM_MUTE_KEY = "hvac_alarm_muted";
+const ALARM_ACK_KEY = "hvac_alarm_acknowledged_keys";
 const ALARM_WINDOW_KEY = "hvac_alarm_window_hours";
+
+/*
+ * Alarm sound file configuration:
+ * ALARM_SOUND_URL: Relative path to alarm sound file with version query for cache busting.
+ *                  Works both in root domain and subfolder deployments.
+ * ALARM_SOUND_GAIN: Volume gain for audio playback (1.0 = full volume, peak -3.1 dBFS).
+ * ALARM_REPEAT_MS: Repeat interval between bursts (4000 ms; the audio file duration is
+ *                  0.715 s, so 4000 ms guarantees silence between bursts and ensures
+ *                  two scheduled plays never overlap).
+ */
+const ALARM_SOUND_URL = "sounds/alarm_beep.wav?v=1";
+const ALARM_SOUND_GAIN = 1.0;
+const ALARM_REPEAT_MS = 4000;
+
+/*
+ * Number of distinct poller cycles an Exhaust Fan must remain definitively OFF (status === "off")
+ * before triggering an audible alarm and appearing in the active alarm list.
+ *
+ * Trade-off:
+ * - 1 reading: Instant reaction (~2s local), but risks transient false alarms from single-packet
+ *   dropouts, temporary bus noise, or momentary sensor read glitches.
+ * - 2 readings (chosen): Filters out isolated spurious 0s while adding only one poller cycle of delay
+ *   (~2-4s local poller cadence, ~30-60s on remote sync cadence).
+ * - >= 3 readings: Extremely resilient against false positives, but delays operator notification
+ *   beyond acceptable bounds during genuine ventilation failure.
+ */
+const EF_OFF_CONFIRM_READINGS = 2;
 
 /* Active rows shown before the list is folded behind a "show all" toggle. */
 const ALARM_ACTIVE_PREVIEW = 50;
@@ -2511,41 +2544,74 @@ const ALARM_WINDOW_OPTIONS = [
 ];
 const ALARM_WINDOW_DEFAULT = 24;
 
-let alarmMuted = false;
 let alarmSoundBlocked = false;
 let alarmShowAll = false;
 
 /*
  * The selected window, kept out of the DOM so the 10s poll can re-render
  * without losing the user's choice. Persisted in localStorage so it also
- * survives a reload, matching how the mute state behaves.
+ * survives a reload.
  */
 let alarmWindowHours = ALARM_WINDOW_DEFAULT;
 
-/*
- * New-alarm detection uses the primary key of alarm_events, which is stable
- * across polls and independent of row order. The first response only records
- * ids so that alarms already active on page load stay silent.
- */
-let knownAlarmIds = null;
 let alarmAudioContext = null;
+let alarmAudioBuffer = null;
+let alarmSoundLoading = false;
+let alarmSoundLoadFailed = false;
+let alarmSoundRawBuffer = null;
+let currentAlarmSourceNode = null;
+let alarmSoundTimerId = null;
+let consecutiveAlarmPollFailures = 0;
+let globalAudioUnlocked = false;
 
-function readAlarmMuted() {
+/*
+ * Freshness tracking for equipment run states (S1 on-demand fetch):
+ * If run-state data is missing or older than RUN_STATE_MAX_AGE_MS (30 s),
+ * a targeted fetch is performed to verify whether a unit in alarm is OFF.
+ */
+let lastAhuFetchTime = 0;
+let lastHvacScFetchTime = 0;
+const RUN_STATE_MAX_AGE_MS = 30000;
+
+/*
+ * Active triggers evaluated on each alarm cycle:
+ *   activeAlarmTriggerKeys: Set of string keys ("ALARM:<id>", "EFOFF:<name>")
+ *   acknowledgedAlarmKeys: Set of string keys persisted in localStorage
+ */
+let activeAlarmTriggerKeys = new Set();
+let activeAlarmTriggers = [];
+let syntheticLiveEfAlarms = [];
+
+/*
+ * Debounce tracking for Exhaust Fans:
+ * Map: fanKey -> { lastUpdate: string|null, distinctCount: number }
+ * Requires status 0 on >= EF_OFF_CONFIRM_READINGS distinct poller cycles (distinct last_update).
+ */
+const efDebounceMap = new Map();
+
+/* First-seen tracking for synthetic LIVE rows ("HH:MM" WIB) */
+const liveEfFirstSeenMap = new Map();
+
+function readAcknowledgedAlarmKeys() {
     try {
-        return window.localStorage.getItem(ALARM_MUTE_KEY) === "1";
-    } catch (error) {
-        /* Private mode or blocked storage: fall back to unmuted. */
-        return false;
+        /* Purge legacy boolean mute key so an old "1" cannot mute anything */
+        window.localStorage.removeItem("hvac_alarm_muted");
+        const raw = window.localStorage.getItem(ALARM_ACK_KEY);
+        if (!raw) return new Set();
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+    } catch (_) {
+        return new Set();
     }
 }
 
-function writeAlarmMuted(muted) {
+function writeAcknowledgedAlarmKeys(keysSet) {
     try {
-        window.localStorage.setItem(ALARM_MUTE_KEY, muted ? "1" : "0");
-    } catch (error) {
-        /* Mute still applies for this session even if it cannot persist. */
-    }
+        window.localStorage.setItem(ALARM_ACK_KEY, JSON.stringify(Array.from(keysSet)));
+    } catch (_) {}
 }
+
+let acknowledgedAlarmKeys = readAcknowledgedAlarmKeys();
 
 /*
  * The selected history window, read once at load. Only the two offered values
@@ -2619,14 +2685,158 @@ function getAlarmAudioContext() {
 
     if (!alarmAudioContext) {
         alarmAudioContext = new Ctor();
+        decodeAlarmAudioBuffer();
     }
 
     return alarmAudioContext;
 }
 
 /*
- * Two short beeps from an oscillator. No audio file, no CDN. The context is
- * resumed first because browsers suspend it until the user has interacted.
+ * Preload the alarm sound file without a user gesture.
+ * An HTTP fetch does not require AudioContext or user interaction.
+ */
+function preloadAlarmSound() {
+    if (alarmSoundLoading || alarmAudioBuffer || alarmSoundLoadFailed) {
+        return;
+    }
+    alarmSoundLoading = true;
+
+    fetch(ALARM_SOUND_URL)
+        .then(res => {
+            if (!res.ok) {
+                throw new Error("HTTP " + res.status);
+            }
+            return res.arrayBuffer();
+        })
+        .then(rawBuffer => {
+            alarmSoundRawBuffer = rawBuffer;
+            alarmSoundLoading = false;
+            if (alarmAudioContext) {
+                decodeAlarmAudioBuffer();
+            }
+        })
+        .catch(err => {
+            alarmSoundLoading = false;
+            if (!alarmSoundLoadFailed) {
+                alarmSoundLoadFailed = true;
+                console.warn("[AlarmSound] Audio file preload failed; using oscillator fallback:", err.message);
+            }
+        });
+}
+
+/*
+ * Lazily decode preloaded audio data once AudioContext is available.
+ */
+function decodeAlarmAudioBuffer() {
+    if (alarmAudioBuffer || !alarmSoundRawBuffer || alarmSoundLoadFailed) {
+        return;
+    }
+    const ctx = getAlarmAudioContext();
+    if (!ctx) {
+        return;
+    }
+
+    const bufferToDecode = alarmSoundRawBuffer.slice(0);
+    ctx.decodeAudioData(bufferToDecode)
+        .then(decoded => {
+            alarmAudioBuffer = decoded;
+            alarmSoundRawBuffer = null;
+        })
+        .catch(err => {
+            if (!alarmSoundLoadFailed) {
+                alarmSoundLoadFailed = true;
+                console.warn("[AlarmSound] Audio file decode failed; using oscillator fallback:", err.message);
+            }
+        });
+}
+
+/*
+ * Stop the current AudioBufferSourceNode if one is playing.
+ * Ensures two plays never overlap and mute cuts sound immediately.
+ */
+function stopCurrentAlarmSource() {
+    if (currentAlarmSourceNode) {
+        try {
+            currentAlarmSourceNode.stop();
+        } catch (_) {}
+        try {
+            currentAlarmSourceNode.disconnect();
+        } catch (_) {}
+        currentAlarmSourceNode = null;
+    }
+}
+
+/*
+ * Play the alarm sound burst.
+ * Primary: AudioBufferSourceNode using preloaded & decoded alarm_beep.wav through GainNode.
+ * Fallback: playAlarmTone() (synthesized two-beep square wave) if the audio file
+ * is not ready yet, 404s, or fails to decode.
+ */
+function playAlarmSound() {
+    const ctx = getAlarmAudioContext();
+
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx.state === "suspended") {
+        ctx.resume().then(() => {
+            alarmSoundBlocked = false;
+            updateGlobalAlarmWidget();
+            decodeAlarmAudioBuffer();
+            playAlarmSound();
+        }).catch(() => {
+            alarmSoundBlocked = true;
+            updateGlobalAlarmWidget();
+        });
+        return;
+    }
+
+    alarmSoundBlocked = false;
+    updateGlobalAlarmWidget();
+
+    /* Make sure two plays never overlap */
+    stopCurrentAlarmSource();
+
+    if (alarmAudioBuffer) {
+        try {
+            const source = ctx.createBufferSource();
+            const gain = ctx.createGain();
+
+            source.buffer = alarmAudioBuffer;
+            gain.gain.setValueAtTime(ALARM_SOUND_GAIN, ctx.currentTime);
+
+            source.connect(gain);
+            gain.connect(ctx.destination);
+
+            currentAlarmSourceNode = source;
+            source.onended = () => {
+                if (currentAlarmSourceNode === source) {
+                    currentAlarmSourceNode = null;
+                }
+            };
+
+            source.start(ctx.currentTime);
+            return;
+        } catch (err) {
+            if (!alarmSoundLoadFailed) {
+                alarmSoundLoadFailed = true;
+                console.warn("[AlarmSound] Playback error; using oscillator fallback:", err.message);
+            }
+        }
+    }
+
+    /* If raw buffer exists but not decoded yet, decode for subsequent cycles */
+    if (alarmSoundRawBuffer && !alarmSoundLoadFailed) {
+        decodeAlarmAudioBuffer();
+    }
+
+    /* Fallback: two-beep oscillator burst */
+    playAlarmTone();
+}
+
+/*
+ * Two short beeps from an oscillator. Fallback player when sound file is not ready or fails.
  */
 function playAlarmTone() {
     const ctx = getAlarmAudioContext();
@@ -2634,6 +2844,21 @@ function playAlarmTone() {
     if (!ctx) {
         return;
     }
+
+    if (ctx.state === "suspended") {
+        ctx.resume().then(() => {
+            alarmSoundBlocked = false;
+            updateGlobalAlarmWidget();
+            playAlarmTone();
+        }).catch(() => {
+            alarmSoundBlocked = true;
+            updateGlobalAlarmWidget();
+        });
+        return;
+    }
+
+    alarmSoundBlocked = false;
+    updateGlobalAlarmWidget();
 
     const beep = (startAt, frequency) => {
         const osc = ctx.createOscillator();
@@ -2658,88 +2883,359 @@ function playAlarmTone() {
     beep(now + 0.42, 880);
 }
 
-function soundAlarm() {
-    if (alarmMuted) {
+function startAlarmSoundLoop() {
+    if (alarmSoundTimerId !== null) {
         return;
     }
 
+    /* C5: First burst plays immediately when a trigger appears */
+    playAlarmSound();
+
+    /* Subsequent bursts repeat about every ALARM_REPEAT_MS */
+    alarmSoundTimerId = setInterval(() => {
+        playAlarmSound();
+    }, ALARM_REPEAT_MS);
+
+    updateGlobalAlarmWidget();
+}
+
+function stopAlarmSoundLoop() {
+    if (alarmSoundTimerId !== null) {
+        clearInterval(alarmSoundTimerId);
+        alarmSoundTimerId = null;
+    }
+
+    stopCurrentAlarmSource();
+    updateGlobalAlarmWidget();
+}
+
+function updateGlobalAlarmWidget() {
+    const widget = document.getElementById("globalAlarmWidget");
+    const btn = document.getElementById("globalAlarmMuteBtn");
+    const notice = document.getElementById("globalAudioNotice");
+
+    if (!widget || !btn || !notice) {
+        return;
+    }
+
+    if (consecutiveAlarmPollFailures >= 3) {
+        notice.textContent = "ALARM FEED OFFLINE";
+        notice.classList.remove("is-hidden");
+        btn.classList.add("is-hidden");
+        btn.onclick = null;
+        return;
+    }
+
+    const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+    const totalActiveCount = activeAlarmTriggerKeys.size;
+
+    if (unackCount > 0) {
+        btn.textContent = "MUTE ALARM";
+        btn.className = "global-mute-btn is-sounding";
+        btn.title = "Silence alarm sound (" + unackCount + " unacknowledged)";
+        btn.setAttribute("aria-pressed", "false");
+        btn.onclick = acknowledgeCurrentAlarms;
+        btn.classList.remove("is-hidden");
+
+        if (alarmSoundBlocked) {
+            notice.textContent = "Sound blocked — tap anywhere to enable";
+            notice.classList.remove("is-hidden");
+        } else {
+            notice.textContent = "";
+            notice.classList.add("is-hidden");
+        }
+    } else if (totalActiveCount > 0) {
+        btn.textContent = "MUTED (" + totalActiveCount + ")";
+        btn.className = "global-mute-btn is-muted";
+        btn.title = "Alarms acknowledged (" + totalActiveCount + " active). Click to re-arm sound.";
+        btn.setAttribute("aria-pressed", "true");
+        btn.onclick = unacknowledgeAlarms;
+        btn.classList.remove("is-hidden");
+
+        notice.textContent = "";
+        notice.classList.add("is-hidden");
+    } else {
+        btn.textContent = "";
+        btn.className = "global-mute-btn is-hidden";
+        btn.setAttribute("aria-pressed", "false");
+        btn.onclick = null;
+
+        notice.textContent = "";
+        notice.classList.add("is-hidden");
+    }
+}
+
+function acknowledgeCurrentAlarms() {
+    /* User interaction unlocks audio context naturally */
     const ctx = getAlarmAudioContext();
-
-    if (!ctx) {
-        return;
-    }
-
-    if (ctx.state === "suspended") {
+    if (ctx && ctx.state === "suspended") {
         ctx.resume().then(() => {
             alarmSoundBlocked = false;
-            updateAudioNotice();
-            playAlarmTone();
-        }).catch(() => {
-            alarmSoundBlocked = true;
-            updateAudioNotice();
-        });
-        return;
+            updateGlobalAlarmWidget();
+        }).catch(() => {});
     }
 
-    alarmSoundBlocked = false;
-    updateAudioNotice();
-    playAlarmTone();
+    /* Acknowledge all currently active triggers */
+    activeAlarmTriggerKeys.forEach(key => {
+        acknowledgedAlarmKeys.add(key);
+    });
+
+    writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+    stopAlarmSoundLoop();
+    updateGlobalAlarmWidget();
 }
 
-function updateAudioNotice() {
-    const notice = document.getElementById("alarmAudioNotice");
-
-    if (!notice) {
-        return;
+function unacknowledgeAlarms() {
+    /* User clicked MUTED (n): re-arm sound immediately */
+    const ctx = getAlarmAudioContext();
+    if (ctx && ctx.state === "suspended") {
+        ctx.resume().then(() => {
+            alarmSoundBlocked = false;
+            updateGlobalAlarmWidget();
+        }).catch(() => {});
     }
 
-    if (alarmMuted) {
-        notice.textContent = "Sound muted.";
-    } else if (alarmSoundBlocked) {
-        notice.textContent = "Sound blocked by the browser — press MUTE then UNMUTE to enable it.";
+    acknowledgedAlarmKeys.clear();
+    writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+
+    if (activeAlarmTriggerKeys.size > 0) {
+        startAlarmSoundLoop();
     } else {
-        notice.textContent = "";
-    }
-}
-
-function renderMuteButton() {
-    const button = document.getElementById("alarmMuteButton");
-
-    if (!button) {
-        return;
+        stopAlarmSoundLoop();
     }
 
-    button.textContent = alarmMuted ? "UNMUTE" : "MUTE";
-    button.classList.toggle("muted", alarmMuted);
-    button.setAttribute("aria-pressed", alarmMuted ? "true" : "false");
-    button.title = alarmMuted
-        ? "Alarm sound is off. Alarms are still listed."
-        : "Silence the alarm sound. Alarms stay listed.";
-
-    updateAudioNotice();
+    updateGlobalAlarmWidget();
 }
 
-function toggleAlarmMute() {
-    alarmMuted = !alarmMuted;
-    writeAlarmMuted(alarmMuted);
-
-    /*
-     * Clicking the button is a user gesture, so it is the natural moment to
-     * unlock a suspended audio context. This resumes the context without
-     * bypassing anything: the browser still decides.
-     */
-    if (!alarmMuted) {
+function initGlobalAudioUnlock() {
+    const unlock = () => {
         const ctx = getAlarmAudioContext();
-
         if (ctx && ctx.state === "suspended") {
             ctx.resume().then(() => {
+                globalAudioUnlocked = true;
                 alarmSoundBlocked = false;
-                updateAudioNotice();
+                updateGlobalAlarmWidget();
             }).catch(() => {});
+        } else if (ctx) {
+            globalAudioUnlocked = true;
+            alarmSoundBlocked = false;
+            updateGlobalAlarmWidget();
         }
+    };
+
+    ["pointerdown", "keydown", "touchstart"].forEach(evt => {
+        window.addEventListener(evt, unlock, { capture: true, once: true });
+    });
+}
+
+/*
+ * Check if a unit in alarm is definitively OFF.
+ * Per S1:
+ *   - Only a definite OFF suppresses sound.
+ *   - Unit state unknown / not found / no run-state concept (rooms) -> sounds (fail safe).
+ * Per C7:
+ *   - An EF's own ALARM row (from EF_POLLER) is NEVER suppressed by the OFF check.
+ */
+function checkUnitIsDefinitivelyOff(alarm) {
+    if (!alarm) {
+        return false;
     }
 
-    renderMuteButton();
+    const equipType = String(alarm.equip_type || "").trim().toUpperCase();
+    const equipment = String(alarm.equipment || "").trim();
+
+    /* C7: EF OFF is a trigger, never suppressed */
+    if (equipType === "EF" || alarm.source === "EF_POLLER" || /^EF\s+\d+$/i.test(equipment)) {
+        return false;
+    }
+
+    /* ROOM TEMP & RH: passive sensor, no run state -> fail safe sounds */
+    if (equipType === "ROOM TEMP & RH" || equipType === "ROOM" || /^ROOM\s+/i.test(equipment)) {
+        return false;
+    }
+
+    if (equipType === "AHU" || /^AHU\s+\d+$/i.test(equipment)) {
+        /* If AHU data is missing or stale (> RUN_STATE_MAX_AGE_MS), fail-safe return false (sounds) */
+        if (!allData.AHU || !allData.AHU.length || (Date.now() - lastAhuFetchTime > RUN_STATE_MAX_AGE_MS)) {
+            return false;
+        }
+        const units = Array.isArray(allData.AHU) ? allData.AHU : [];
+        const u = units.find(item => item && String(item.name).trim().toUpperCase() === equipment.toUpperCase());
+        if (u) {
+            return ahuRunState(u) === "off";
+        }
+        /* Unit not found in allData: fail-safe return false (sounds) */
+        return false;
+    }
+
+    if (["CHILLER", "CT", "CCP", "CHWP"].includes(equipType)) {
+        /* If Chiller/G8 data is missing or stale, fail-safe return false (sounds) */
+        if (!allData[equipType] || (Date.now() - lastHvacScFetchTime > RUN_STATE_MAX_AGE_MS)) {
+            return false;
+        }
+        const rawUnits = allData[equipType];
+        const units = Array.isArray(rawUnits) ? rawUnits : (rawUnits && typeof rawUnits === "object" ? Object.values(rawUnits) : []);
+        const cleanName = equipment.replace(/^[A-Z]+\s+/i, "").trim();
+        const u = units.find(item => {
+            if (!item) return false;
+            const iname = String(item.name || "").trim();
+            return iname.toUpperCase() === equipment.toUpperCase()
+                || iname.toUpperCase() === cleanName.toUpperCase()
+                || (equipType + " " + iname).toUpperCase() === equipment.toUpperCase();
+        });
+        if (u) {
+            return g8RunState(u.run) === "off";
+        }
+        return false;
+    }
+
+    return false;
+}
+
+/* Retain last active trigger keys per source to respect C2 if one endpoint fails */
+let lastDbAlarmKeys = new Set();
+let lastEfOffKeys = new Set();
+let lastDbAlarmEfNames = new Set();
+
+function evaluateSoundTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, efSuccess) {
+    const currentDbKeys = new Set();
+    const currentEfKeys = new Set();
+    const currentDbEfNames = new Set();
+    const newSyntheticLiveRows = [];
+
+    /* 1. Evaluate DB alarms (S1, S3) */
+    if (dbSuccess) {
+        (Array.isArray(alarmsList) ? alarmsList : []).forEach(alarm => {
+            if (alarm.status !== "ACTIVE") {
+                return;
+            }
+            /* WARNING (amber) must NEVER make sound */
+            if (alarm.event_class !== "ALARM") {
+                return;
+            }
+
+            const equipName = String(alarm.equipment || "").trim();
+            if (/^EF\s+\d+$/i.test(equipName) || alarm.equip_type === "EF" || alarm.source === "EF_POLLER") {
+                currentDbEfNames.add(equipName.toUpperCase());
+            }
+
+            /* S1: check if unit is definitively OFF */
+            if (checkUnitIsDefinitivelyOff(alarm)) {
+                return;
+            }
+
+            const triggerKey = "ALARM:" + alarm.id;
+            currentDbKeys.add(triggerKey);
+        });
+
+        /* C2: Prune acknowledged ALARM keys only when api_alarm.php succeeded */
+        acknowledgedAlarmKeys.forEach(k => {
+            if (k.startsWith("ALARM:") && !currentDbKeys.has(k)) {
+                acknowledgedAlarmKeys.delete(k);
+            }
+        });
+
+        lastDbAlarmKeys = currentDbKeys;
+        lastDbAlarmEfNames = currentDbEfNames;
+    }
+
+    /* 2. Evaluate Live Exhaust Fans (S2, E1, E2, C1, S3) */
+    if (efSuccess) {
+        const allLiveFans = (Array.isArray(liveEfList) ? liveEfList : [])
+            .concat(Array.isArray(liveG8List) ? liveG8List : []);
+
+        allLiveFans.forEach(fan => {
+            if (!fan) return;
+            const fanName = (fan.name || ("EF " + fan.id)).trim();
+            const fanKeyUpper = fanName.toUpperCase();
+            const status = getEfStatus(fan);
+            const lastUpdate = fan.last_update || "";
+
+            if (status === "off") {
+                /* C1: Distinct poller readings debounce */
+                let entry = efDebounceMap.get(fanKeyUpper);
+                if (!entry) {
+                    entry = { lastUpdate: lastUpdate, distinctCount: 1 };
+                    efDebounceMap.set(fanKeyUpper, entry);
+                } else if (entry.lastUpdate !== lastUpdate) {
+                    entry.distinctCount += 1;
+                    entry.lastUpdate = lastUpdate;
+                }
+
+                if (entry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
+                    /* Track first seen for synthetic row display (C3) */
+                    if (!liveEfFirstSeenMap.has(fanKeyUpper)) {
+                        const now = new Date();
+                        const hh = String(now.getHours()).padStart(2, '0');
+                        const mm = String(now.getMinutes()).padStart(2, '0');
+                        liveEfFirstSeenMap.set(fanKeyUpper, hh + ":" + mm);
+                    }
+
+                    /* S3 de-duplication: if EF_POLLER already wrote an ACTIVE ALARM row, don't double trigger */
+                    if (!lastDbAlarmEfNames.has(fanKeyUpper)) {
+                        const efTriggerKey = "EFOFF:" + fanKeyUpper;
+                        currentEfKeys.add(efTriggerKey);
+
+                        /* Prepare synthetic LIVE row for ALARM tab (E4, C3) */
+                        newSyntheticLiveRows.push({
+                            id: "LIVE:" + fanKeyUpper.replace(/^EF\s+/i, ""),
+                            event_class: "ALARM",
+                            source: "LIVE",
+                            equip_type: "EF",
+                            equipment: fanName,
+                            point_id: null,
+                            ef_point_id: fan.id || null,
+                            panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
+                            metric: "STATUS",
+                            description: "Exhaust Fan stopped (live status OFF)",
+                            status: "ACTIVE",
+                            value: 0,
+                            limit_min: null,
+                            limit_max: null,
+                            raised_at: null, /* C3: Show '—' */
+                            first_seen: liveEfFirstSeenMap.get(fanKeyUpper) || "--",
+                            cleared_at: null,
+                            is_synthetic: true
+                        });
+                    }
+                }
+            } else if (status === "run") {
+                /* Running resets debounce counter and first seen */
+                efDebounceMap.delete(fanKeyUpper);
+                liveEfFirstSeenMap.delete(fanKeyUpper);
+            }
+            /* status === 'unknown' (null/undefined) is never a trigger */
+        });
+
+        /* C2: Prune acknowledged EFOFF keys only when api_ef.php succeeded */
+        acknowledgedAlarmKeys.forEach(k => {
+            if (k.startsWith("EFOFF:") && !currentEfKeys.has(k)) {
+                acknowledgedAlarmKeys.delete(k);
+            }
+        });
+
+        lastEfOffKeys = currentEfKeys;
+        syntheticLiveEfAlarms = newSyntheticLiveRows;
+    }
+
+    /* Merge active trigger keys, retaining prior keys for whichever source failed */
+    const mergedTriggerKeys = new Set();
+    lastDbAlarmKeys.forEach(k => mergedTriggerKeys.add(k));
+    lastEfOffKeys.forEach(k => mergedTriggerKeys.add(k));
+
+    activeAlarmTriggerKeys = mergedTriggerKeys;
+    writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+
+    /* Determine if sound loop should be active */
+    const unacknowledgedTriggers = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k));
+
+    if (unacknowledgedTriggers.length > 0 && consecutiveAlarmPollFailures < 3) {
+        startAlarmSoundLoop();
+    } else {
+        stopAlarmSoundLoop();
+    }
+
+    updateGlobalAlarmWidget();
 }
 
 function formatAlarmTime(value) {
@@ -2769,6 +3265,10 @@ function updateAlarmWindowSwitch() {
 }
 
 function alarmSourceLabel(alarm) {
+    if (alarm.is_synthetic) {
+        return "LIVE" + (alarm.panel_no !== null && alarm.panel_no !== undefined ? " · Panel " + alarm.panel_no : " · G8");
+    }
+
     const parts = [];
 
     if (alarm.point_id) {
@@ -2824,7 +3324,8 @@ function createAlarmRow(alarm) {
 
     row.className = "alarm-row "
         + (isActive ? "alarm-row-active" : "alarm-row-cleared")
-        + " alarm-row-class-" + String(alarm.event_class).toLowerCase();
+        + " alarm-row-class-" + String(alarm.event_class).toLowerCase()
+        + (alarm.is_synthetic ? " alarm-row-synthetic" : "");
 
     const category = document.createElement("div");
     category.className = "alarm-cell";
@@ -2852,7 +3353,11 @@ function createAlarmRow(alarm) {
     row.appendChild(createAlarmCell("Source", alarmSourceLabel(alarm), "alarm-cell-source"));
     row.appendChild(createAlarmCell("Message", alarm.description || "--", "alarm-cell-desc"));
     row.appendChild(createAlarmCell("Limits", alarmLimitsLabel(alarm), "alarm-cell-limits"));
-    row.appendChild(createAlarmCell("Raised", formatAlarmTime(alarm.raised_at), "alarm-cell-time"));
+
+    const raisedLabel = alarm.is_synthetic
+        ? (alarm.first_seen ? "First seen " + alarm.first_seen : "—")
+        : formatAlarmTime(alarm.raised_at);
+    row.appendChild(createAlarmCell("Raised", raisedLabel, "alarm-cell-time"));
 
     const cleared = document.createElement("div");
     cleared.className = "alarm-cell alarm-cell-time";
@@ -2942,9 +3447,24 @@ function renderAlarm() {
     }
 
     const counts = data.counts || {};
-    const activeTotal = Number(counts.active_total || 0);
-    const activeAlarms = data.alarms.filter(a => a.status === "ACTIVE");
+    const dbActiveAlarms = data.alarms.filter(a => a.status === "ACTIVE");
     const clearedAlarms = data.alarms.filter(a => a.status !== "ACTIVE");
+
+    /* E4 & S3: Inject synthetic LIVE rows for debounced stopped EFs without duplicating DB rows */
+    const dbActiveEfNames = new Set(
+        dbActiveAlarms
+            .filter(a => a.equip_type === "EF" || a.source === "EF_POLLER" || /^EF\s+\d+$/i.test(a.equipment))
+            .map(a => String(a.equipment || "").trim().toUpperCase())
+    );
+
+    const syntheticRows = (Array.isArray(syntheticLiveEfAlarms) ? syntheticLiveEfAlarms : []).filter(
+        row => !dbActiveEfNames.has(String(row.equipment || "").trim().toUpperCase())
+    );
+
+    const allActiveAlarms = syntheticRows.concat(dbActiveAlarms);
+    const activeAlarmTotal = Number(counts.active_alarm || 0) + syntheticRows.length;
+    const activeWarningTotal = Number(counts.active_warning || 0);
+    const activeTotal = Number(counts.active_total || 0) + syntheticRows.length;
 
     /*
      * The window actually applied by the API, not the one the page asked for:
@@ -2961,13 +3481,13 @@ function renderAlarm() {
     const page = document.createElement("div");
     page.className = "alarm-page";
 
-    /* ---- Active summary, straight from the table-wide counts ---- */
+    /* ---- Active summary, straight from table counts + live EFs ---- */
     const summary = document.createElement("div");
     summary.className = "alarm-summary";
 
     [
-        { label: "ACTIVE ALARM", value: counts.active_alarm || 0, cls: "alarm-stat-alarm" },
-        { label: "ACTIVE WARNING", value: counts.active_warning || 0, cls: "alarm-stat-warning" },
+        { label: "ACTIVE ALARM", value: activeAlarmTotal, cls: "alarm-stat-alarm" },
+        { label: "ACTIVE WARNING", value: activeWarningTotal, cls: "alarm-stat-warning" },
         { label: "TOTAL ACTIVE", value: activeTotal, cls: "alarm-stat-total" }
     ].forEach(stat => {
         const box = document.createElement("div");
@@ -2986,39 +3506,10 @@ function renderAlarm() {
         summary.appendChild(box);
     });
 
-    /* ---- Mute control. Mute affects sound only, never the list. ---- */
-    const toolbar = document.createElement("div");
-    toolbar.className = "alarm-toolbar";
-
-    const muteButton = document.createElement("button");
-    muteButton.type = "button";
-    muteButton.id = "alarmMuteButton";
-    muteButton.className = "mute-button";
-    muteButton.addEventListener("click", toggleAlarmMute);
-    toolbar.appendChild(muteButton);
-
-    const notice = document.createElement("div");
-    notice.id = "alarmAudioNotice";
-    notice.className = "audio-notice";
-    toolbar.appendChild(notice);
-
-    summary.appendChild(toolbar);
     page.appendChild(summary);
 
     /*
      * Source banner.
-     *
-     * The summary above reads all zeros in three different situations that
-     * mean completely different things:
-     *
-     *   1. the alarm source cannot be read at all (source_available false);
-     *   2. it reads fine but has never held a row (total_events 0);
-     *   3. it holds history and there is simply nothing active right now.
-     *
-     * Only (3) is "the building is fine". Rendering (1) and (2) identically to
-     * (3) is what made the hosted page look like a working feed with nothing to
-     * report. Each case now says which one it is, and the banner disappears
-     * entirely in case (3) so a healthy page is not cluttered by a warning.
      */
     const sourceAvailable = data.source_available !== false;
     const totalEvents = Number(data.total_events || 0);
@@ -3029,7 +3520,7 @@ function renderAlarm() {
         sourceMessage = "ALARM SOURCE UNAVAILABLE — this database has no "
             + "readable alarm_events table, so the counts below are not a "
             + "statement about the building. No alarm data is being reported.";
-    } else if (totalEvents === 0) {
+    } else if (totalEvents === 0 && !syntheticRows.length) {
         sourceMessage = "NO ALARM DATA — the alarm source is reachable but has "
             + "never recorded an event, so nothing has been reported yet. "
             + "This is not the same as a building with no alarms.";
@@ -3044,8 +3535,8 @@ function renderAlarm() {
 
     /* ---- ACTIVE is the prominent group ---- */
     const shownActive = alarmShowAll
-        ? activeAlarms
-        : activeAlarms.slice(0, ALARM_ACTIVE_PREVIEW);
+        ? allActiveAlarms
+        : allActiveAlarms.slice(0, ALARM_ACTIVE_PREVIEW);
 
     page.appendChild(createAlarmGroup(
         "ACTIVE ALARMS / WARNINGS",
@@ -3054,11 +3545,11 @@ function renderAlarm() {
         !sourceAvailable
     ));
 
-    if (shownActive.length < activeAlarms.length) {
+    if (shownActive.length < allActiveAlarms.length) {
         const more = document.createElement("button");
         more.type = "button";
         more.className = "mute-button";
-        more.textContent = "SHOW ALL " + activeAlarms.length + " ACTIVE";
+        more.textContent = "SHOW ALL " + allActiveAlarms.length + " ACTIVE";
         more.addEventListener("click", () => {
             alarmShowAll = true;
             renderAlarm();
@@ -3067,12 +3558,6 @@ function renderAlarm() {
     }
 
     /* ---- Cleared history, compact and receded ---- */
-    /*
-     * The heading names both timestamps because that is what the window now
-     * means: an event is listed when it was RAISED in the window or CLEARED in
-     * it. Saying only "last 24h" was what made a long-lived alarm look like it
-     * had been dropped - it was raised before the window and cleared inside it.
-     */
     page.appendChild(createAlarmGroup(
         "CLEARED — RAISED OR CLEARED IN THE LAST " + windowHours + "h",
         clearedAlarms,
@@ -3082,17 +3567,6 @@ function renderAlarm() {
 
     /*
      * Truncation notice.
-     *
-     * The API caps its payload (LIMIT, default 1000). When the cap bites, the
-     * oldest rows in the window are dropped by the ORDER BY, and the page must
-     * say so rather than presenting a partial list as the whole history. The
-     * counts come from the API's own before-LIMIT count over the identical
-     * predicate, so this is exact and not an estimate.
-     *
-     * "returned" and "matched" are both whole-window figures, not per-class: the
-     * API's LIMIT applies to the combined ACTIVE + CLEARED result set. Naming
-     * the window explicitly is what keeps the two numbers unambiguous - a bare
-     * "in this window" reads as the wrong window the moment the user switches.
      */
     if (data.truncated) {
         const notice2 = document.createElement("div");
@@ -3105,71 +3579,145 @@ function renderAlarm() {
     }
 
     grid.appendChild(page);
-    renderMuteButton();
     syncAlarmStickyOffset();
 }
 
+/* Cache last successfully fetched data */
+let lastSuccessfulAlarmData = null;
+let lastSuccessfulEfData = null;
+
 /*
- * A poll that finds a newly ACTIVE alarm id sounds once. Ids are compared
- * against the previous poll, never against row position, so a reordered or
- * truncated list cannot fake a new alarm.
- */function applyAlarmData(data) {
-    const alarms = Array.isArray(data.alarms) ? data.alarms : [];
-    const currentIds = new Set(
-        alarms.filter(a => a.status === "ACTIVE").map(a => String(a.id))
-    );
+ * The alarm poll targets api_alarm.php and api_ef.php in parallel, so it keeps
+ * running while another equipment page is on screen and can still sound for a
+ * new alarm or stopped exhaust fan.
+ */
+async function loadAlarmData() {
+    const [alarmResult, efResult] = await Promise.allSettled([
+        fetch(
+            ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
+                + "&t=" + Date.now(),
+            { cache: "no-store" }
+        ).then(async r => {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const json = await r.json();
+            if (!json.success) throw new Error("Alarm API returned success=false");
+            return json;
+        }),
+        fetch(
+            ALARM_EF_URL + "?t=" + Date.now(),
+            { cache: "no-store" }
+        ).then(async r => {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const json = await r.json();
+            if (!json.success) throw new Error("EF API returned success=false");
+            return json;
+        })
+    ]);
 
-    if (knownAlarmIds === null) {
-        /* First response: record the baseline and stay silent. */
-        knownAlarmIds = currentIds;
-    } else {
-        let hasNew = false;
+    const dbSuccess = alarmResult.status === "fulfilled";
+    const efSuccess = efResult.status === "fulfilled";
 
-        currentIds.forEach(id => {
-            if (!knownAlarmIds.has(id)) {
-                hasNew = true;
-            }
+    if (!dbSuccess && !efSuccess) {
+        consecutiveAlarmPollFailures++;
+        if (consecutiveAlarmPollFailures >= 3) {
+            stopAlarmSoundLoop();
+            updateGlobalAlarmWidget();
+        }
+        throw new Error("Both Alarm API and EF API requests failed");
+    }
+
+    consecutiveAlarmPollFailures = 0;
+
+    let dbAlarms = [];
+    if (dbSuccess) {
+        lastSuccessfulAlarmData = alarmResult.value;
+        allData.ALARM = alarmResult.value;
+        dbAlarms = Array.isArray(alarmResult.value.alarms) ? alarmResult.value.alarms : [];
+    } else if (lastSuccessfulAlarmData) {
+        dbAlarms = Array.isArray(lastSuccessfulAlarmData.alarms) ? lastSuccessfulAlarmData.alarms : [];
+    }
+
+    let liveEfPanel = [];
+    let liveEfG8 = [];
+    if (efSuccess) {
+        lastSuccessfulEfData = efResult.value;
+        const eq = efResult.value.equipment || {};
+        liveEfPanel = Array.isArray(eq.EXHAUST_FAN) ? eq.EXHAUST_FAN : [];
+        liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
+        allData.EXHAUST_FAN = liveEfPanel;
+        allData.EXHAUST_FAN_G8 = liveEfG8;
+    } else if (lastSuccessfulEfData) {
+        const eq = lastSuccessfulEfData.equipment || {};
+        liveEfPanel = Array.isArray(eq.EXHAUST_FAN) ? eq.EXHAUST_FAN : [];
+        liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
+    }
+
+    /* S1 on-demand fetch: verify run state if an active ALARM is on an AHU or Chiller */
+    if (dbSuccess) {
+        const activeAlarms = dbAlarms.filter(a => a.status === "ACTIVE" && a.event_class === "ALARM");
+        const needAhu = activeAlarms.some(a => {
+            if (a.equip_type !== "AHU" && !/^AHU\s+\d+$/i.test(a.equipment)) return false;
+            if (!allData.AHU || !allData.AHU.length || (Date.now() - lastAhuFetchTime > RUN_STATE_MAX_AGE_MS)) return true;
+            const eqName = String(a.equipment || "").trim().toUpperCase();
+            return !allData.AHU.some(u => u && String(u.name).trim().toUpperCase() === eqName);
+        });
+        const needHvacSc = activeAlarms.some(a => {
+            const et = String(a.equip_type || "").trim().toUpperCase();
+            if (!["CHILLER", "CT", "CCP", "CHWP"].includes(et)) return false;
+            if (!allData[et] || (Date.now() - lastHvacScFetchTime > RUN_STATE_MAX_AGE_MS)) return true;
+            const rawUnits = allData[et];
+            const units = Array.isArray(rawUnits) ? rawUnits : (rawUnits && typeof rawUnits === "object" ? Object.values(rawUnits) : []);
+            const cleanName = String(a.equipment || "").replace(/^[A-Z]+\s+/i, "").trim().toUpperCase();
+            const eqName = String(a.equipment || "").trim().toUpperCase();
+            return !units.some(u => {
+                if (!u) return false;
+                const iname = String(u.name || "").trim().toUpperCase();
+                return iname === eqName || iname === cleanName || (et + " " + iname) === eqName;
+            });
         });
 
-        knownAlarmIds = currentIds;
-
-        if (hasNew) {
-            soundAlarm();
+        if (needAhu) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const r = await fetch("api_ahu.php?t=" + Date.now(), { cache: "no-store", signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.success && d.equipment && d.equipment.AHU) {
+                        allData.AHU = d.equipment.AHU;
+                        lastAhuFetchTime = Date.now();
+                    }
+                }
+            } catch (_) {
+                /* Targeted fetch failed or timed out: lastAhuFetchTime remains old, so checkUnitIsDefinitivelyOff fails safe and sounds */
+            }
+        }
+        if (needHvacSc) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const r = await fetch("api_hvac_sc.php?t=" + Date.now(), { cache: "no-store", signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.success && d.equipment) {
+                        Object.assign(allData, d.equipment);
+                        lastHvacScFetchTime = Date.now();
+                    }
+                }
+            } catch (_) {
+                /* Targeted fetch failed or timed out: lastHvacScFetchTime remains old, fails safe and sounds */
+            }
         }
     }
 
-    allData.ALARM = data;
+    /* Evaluate triggers per S1, S2, S3, C1, C2, C5, C7, E1, E2 */
+    evaluateSoundTriggers(dbAlarms, liveEfPanel, liveEfG8, dbSuccess, efSuccess);
 
     if (currentEquipment === "ALARM") {
         renderAlarm();
     }
-}
-
-/*
- * The alarm poll always targets api_alarm.php, so it keeps running while
- * another equipment page is on screen and can still sound for a new alarm.
- *
- * The selected window is sent on every request, including the first, so a
- * reload restores the user's choice instead of silently reverting to 24h.
- */
-async function loadAlarmData() {
-    const response = await fetch(
-        ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
-            + "&t=" + Date.now(),
-        { cache: "no-store" }
-    );
-
-    if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-    }
-
-    const data = await response.json();
-
-    if (!data.success) {
-        throw new Error("Alarm API returned success=false");
-    }
-
-    applyAlarmData(data);
 }
 
 async function safeLoadAlarmData() {
@@ -10970,9 +11518,11 @@ async function loadData() {
 
             if (ahuRes.status === "fulfilled" && ahuRes.value?.success) {
                 allData.AHU = ahuRes.value.equipment?.AHU || [];
+                lastAhuFetchTime = Date.now();
             }
             if (hvacRes.status === "fulfilled" && hvacRes.value?.success) {
                 Object.assign(allData, hvacRes.value.equipment || {});
+                lastHvacScFetchTime = Date.now();
             }
             if (roomRes.status === "fulfilled" && roomRes.value?.success) {
                 allData.ROOM_TEMP_RH = roomRes.value.equipment?.ROOM_TEMP_RH || [];
@@ -11098,6 +11648,11 @@ async function loadData() {
         }
 
         allData = Object.assign({}, allData, data.equipment || {});
+        if (currentEquipment === "AHU" || currentEquipment === "AHU_G8") {
+            lastAhuFetchTime = Date.now();
+        } else if (currentEquipment === "CHILLER") {
+            lastHvacScFetchTime = Date.now();
+        }
         if (currentEquipment === "CHILLER" && chillerTab === "MODBUS") {
             allData.CHILLER_SUMMARY = data.summary || null;
             allData.CHILLER_THRESHOLDS = data.thresholds || null;
@@ -13736,10 +14291,11 @@ window.addEventListener("resize", () => {
 
 
 /*
- * Restore the persisted mute state before anything can sound, so a refresh
- * during an active alarm never produces a burst of sound.
+ * Initialize global audio unlock listener, preload alarm audio, and read acknowledged alarm keys.
  */
-alarmMuted = readAlarmMuted();
+initGlobalAudioUnlock();
+preloadAlarmSound();
+acknowledgedAlarmKeys = readAcknowledgedAlarmKeys();
 
 /*
  * Restore the persisted history window before the first alarm request, so the
