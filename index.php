@@ -203,6 +203,48 @@ const APP_VERSION = <?= json_encode([
 
 const API_URL = "api.php";
 
+/*
+ * Auto-refresh intervals for history and log pages:
+ * - ACTIVITY_LOG: 30 s timer (active log events update frequently).
+ * - ENERGY: 300 s timer (daily usage snapshots update periodically).
+ * - ROOM_TEMP_RH hourly view and future STATISTICS: NO periodic timer (data written only once per hour;
+ *   refreshed on open, on return after > 10 min, or via manual Refresh button).
+ */
+const ACTLOG_REFRESH_INTERVAL_MS = 30000;    // 30 s
+const ENERGY_REFRESH_INTERVAL_MS = 300000;   // 300 s (5 min)
+const STATISTICS_REFRESH_INTERVAL_MS = "manual"; // Manual / on-event only
+const STATS_STALE_THRESHOLD_MS = 70 * 60 * 1000; // 70 min for manual views
+const STATS_VISIBILITY_REFRESH_MIN_MS = 10 * 60 * 1000; // 10 min threshold for visibility refresh
+
+const BACKOFF_STEPS = [30000, 60000, 120000];
+
+const refreshState = {
+    ACTIVITY_LOG: {
+        timerId: null,
+        isPending: false,
+        lastSuccessTime: null,
+        lastSignature: null,
+        backoffStep: 0,
+        pendingDeferred: false,
+    },
+    ENERGY: {
+        timerId: null,
+        isPending: false,
+        lastSuccessTime: null,
+        lastSignature: null,
+        backoffStep: 0,
+        pendingDeferred: false,
+    },
+    ROOM_TEMP_RH_HOURLY: {
+        timerId: null,
+        isPending: false,
+        lastSuccessTime: null,
+        lastSignature: null,
+        backoffStep: 0,
+        pendingDeferred: false,
+    },
+};
+
 let chillerTab = "MODBUS"; // "MODBUS" | "BACNET"
 
 function getInitialEquipment() {
@@ -2481,6 +2523,8 @@ function selectRoomView(view) {
     if (!isHistoryPage()) {
         safeLoadAlarmData();
     }
+
+    handleActivePageChanged();
 }
 
 /* =========================================================
@@ -2546,6 +2590,7 @@ const ALARM_WINDOW_DEFAULT = 24;
 
 let alarmSoundBlocked = false;
 let alarmShowAll = false;
+let knownAlarmIds = null;
 
 /*
  * The selected window, kept out of the DOM so the 10s poll can re-render
@@ -4187,11 +4232,17 @@ function renderEnergy() {
 
     if (!data || !Array.isArray(data.days)) {
         unitCount.textContent = "0 days";
-        buildFilterBar([
+        const fallbackBar = buildFilterBar([
             { type: "select", name: "category", label: "Category", options: [{ value: "CT", text: "CT" }] },
             { type: "date", name: "from", label: "From" },
             { type: "date", name: "to", label: "To" }
         ], historyFilters.ENERGY, applyEnergyFilter);
+        appendHistoryButtons(fallbackBar, {
+            onToggle: () => {},
+            onExport: () => {},
+            updateTextId: "energyUpdateText"
+        });
+        updateStatusTextUI("ENERGY");
         return;
     }
 
@@ -4256,7 +4307,8 @@ function renderEnergy() {
 
     appendHistoryButtons(bar, {
         onToggle: () => {},
-        onExport: () => exportEnergy(data)
+        onExport: () => exportEnergy(data),
+        updateTextId: "energyUpdateText"
     });
 
     /*
@@ -4391,6 +4443,7 @@ function renderEnergy() {
 
     /* Measure only once the table is in the document. */
     syncHistoryTableOffset();
+    updateStatusTextUI("ENERGY");
 }
 
 /*
@@ -4765,6 +4818,48 @@ function buildEnergyUrl() {
     return url + "&t=" + Date.now();
 }
 
+async function fetchEnergyData(isAutoRefresh = false) {
+    const url = buildEnergyUrl();
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("HTTP " + res.status);
+    }
+    const resText = await res.text();
+    const data = JSON.parse(resText);
+    if (!data.success) {
+        throw new Error("API reported failure");
+    }
+
+    const regKey = "ENERGY";
+    const state = refreshState[regKey];
+    const isIdentical = (isAutoRefresh && state && state.lastSignature !== null && state.lastSignature === resText);
+
+    if (state) {
+        state.lastSignature = resText;
+        state.lastSuccessTime = Date.now();
+        state.backoffStep = 0;
+    }
+
+    if (isIdentical) {
+        updateStatusTextUI(regKey);
+        return { changed: false, data: allData.ENERGY };
+    }
+
+    allData.ENERGY = data;
+
+    if (currentEquipment === "ENERGY") {
+        const scrollY = window.scrollY;
+        renderEnergy();
+        window.scrollTo(0, scrollY);
+        setConnection(true);
+        lastUpdate.textContent = "Energy history: " + (allData.ENERGY.from || "--")
+            + " to " + (allData.ENERGY.to || "--");
+        updateStatusTextUI(regKey);
+    }
+
+    return { changed: true, data: data };
+}
+
 /* =========================================================
    ROOM TEMP & RH — HOURLY HISTORY VIEW
    =========================================================
@@ -4790,7 +4885,7 @@ function renderRoomHourly() {
 
     if (!data || !Array.isArray(data.hours)) {
         unitCount.textContent = "0 hours";
-        buildFilterBar([
+        const fallbackBar = buildFilterBar([
             {
                 type: "select",
                 name: "metric",
@@ -4804,6 +4899,13 @@ function renderRoomHourly() {
             { type: "date", name: "from", label: "From" },
             { type: "date", name: "to", label: "To" }
         ], historyFilters.TEMP_RH_HOURLY, applyTempRhFilter);
+        appendHistoryButtons(fallbackBar, {
+            onToggle: () => {},
+            onExport: () => {},
+            onRefresh: () => triggerManualRefresh("ROOM_TEMP_RH_HOURLY"),
+            updateTextId: "roomHourlyUpdateText"
+        });
+        updateStatusTextUI("ROOM_TEMP_RH_HOURLY");
         return;
     }
 
@@ -4859,7 +4961,9 @@ function renderRoomHourly() {
 
     appendHistoryButtons(bar, {
         onToggle: () => {},
-        onExport: () => exportTempRh(data, peerData)
+        onExport: () => exportTempRh(data, peerData),
+        onRefresh: () => triggerManualRefresh("ROOM_TEMP_RH_HOURLY"),
+        updateTextId: "roomHourlyUpdateText"
     });
 
     /*
@@ -4978,6 +5082,7 @@ function renderRoomHourly() {
 
     /* Measure only once the table is in the document. */
     syncHistoryTableOffset();
+    updateStatusTextUI("ROOM_TEMP_RH_HOURLY");
 }
 
 /*
@@ -5492,6 +5597,69 @@ function buildTempRhHourlyUrl(metricOverride) {
     }
 
     return url + "&t=" + Date.now();
+}
+
+async function fetchRoomHourlyData(isAutoRefresh = false) {
+    const selectedMetric = historyFilters.TEMP_RH_HOURLY.metric;
+    const isCombined = selectedMetric === "combined";
+    const primaryMetric = isCombined ? "temp" : selectedMetric;
+    const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
+
+    const resPrimary = await fetch(buildTempRhHourlyUrl(primaryMetric), { cache: "no-store" });
+    if (!resPrimary.ok) {
+        throw new Error("HTTP " + resPrimary.status);
+    }
+    const textPrimary = await resPrimary.text();
+    const dataPrimary = JSON.parse(textPrimary);
+    if (!dataPrimary.success) {
+        throw new Error("Primary metric fetch failed");
+    }
+
+    let textPeer = "";
+    let dataPeer = null;
+
+    if (isCombined) {
+        try {
+            const resPeer = await fetch(buildTempRhHourlyUrl(peerMetric), { cache: "no-store" });
+            if (resPeer.ok) {
+                textPeer = await resPeer.text();
+                dataPeer = JSON.parse(textPeer);
+            }
+        } catch (peerError) {
+            console.warn("HVAC peer metric unavailable:", peerError);
+        }
+    }
+
+    const regKey = "ROOM_TEMP_RH_HOURLY";
+    const state = refreshState[regKey];
+    const signature = textPrimary + "|||" + textPeer;
+    const isIdentical = (isAutoRefresh && state && state.lastSignature !== null && state.lastSignature === signature);
+
+    if (state) {
+        state.lastSignature = signature;
+        state.lastSuccessTime = Date.now();
+        state.backoffStep = 0;
+    }
+
+    if (isIdentical) {
+        updateStatusTextUI(regKey);
+        return { changed: false, data: allData.TEMP_RH_HOURLY };
+    }
+
+    allData.TEMP_RH_HOURLY = dataPrimary;
+    allData.TEMP_RH_HOURLY_PEER = dataPeer;
+
+    if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) {
+        const scrollY = window.scrollY;
+        renderRoomTempRh();
+        window.scrollTo(0, scrollY);
+        setConnection(true);
+        lastUpdate.textContent = "Hourly history: " + (allData.TEMP_RH_HOURLY.from || "--")
+            + " to " + (allData.TEMP_RH_HOURLY.to || "--");
+        updateStatusTextUI(regKey);
+    }
+
+    return { changed: true, data: dataPrimary };
 }
 
 async function loadHistoryPage(apiUrl) {
@@ -11567,11 +11735,7 @@ async function loadData() {
         }
 
         if (currentEquipment === "ENERGY") {
-            allData.ENERGY = await loadHistoryPage(buildEnergyUrl());
-            setConnection(true);
-            renderEnergy();
-            lastUpdate.textContent = "Energy history: " + (allData.ENERGY.from || "--")
-                + " to " + (allData.ENERGY.to || "--");
+            await fetchEnergyData(false);
             return;
         }
 
@@ -11581,44 +11745,12 @@ async function loadData() {
          * api_temp_rh_hourly.php, the live cards read api_room.php below.
          */
         if (currentEquipment === "ACTIVITY_LOG") {
-            await loadActivityLogData();
+            await loadActivityLogData(false);
             return;
         }
 
         if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) {
-            /*
-             * The table and the export follow the selected metric; the charts
-             * show BOTH. The peer metric is fetched over the identical date
-             * range so the two charts describe the same hours.
-             *
-             * The selected metric is fatal — it drives the table, so a failure
-             * there is a real load failure. The peer is NOT: it feeds one chart,
-             * and letting it blank the whole page would mean a single flaky
-             * request costs the reader the table as well. It degrades to one
-             * chart plus a note saying why.
-             */
-            const selectedMetric = historyFilters.TEMP_RH_HOURLY.metric;
-            const isCombined = selectedMetric === "combined";
-            const primaryMetric = isCombined ? "temp" : selectedMetric;
-            const peerMetric = primaryMetric === "rh" ? "temp" : "rh";
-
-            allData.TEMP_RH_HOURLY = await loadHistoryPage(buildTempRhHourlyUrl(primaryMetric));
-
-            if (isCombined) {
-                try {
-                    allData.TEMP_RH_HOURLY_PEER = await loadHistoryPage(buildTempRhHourlyUrl(peerMetric));
-                } catch (peerError) {
-                    allData.TEMP_RH_HOURLY_PEER = null;
-                    console.warn("HVAC peer metric unavailable:", peerError);
-                }
-            } else {
-                allData.TEMP_RH_HOURLY_PEER = null;
-            }
-
-            setConnection(true);
-            renderRoomTempRh();
-            lastUpdate.textContent = "Hourly history: " + (allData.TEMP_RH_HOURLY.from || "--")
-                + " to " + (allData.TEMP_RH_HOURLY.to || "--");
+            await fetchRoomHourlyData(false);
             return;
         }
 
@@ -11792,6 +11924,8 @@ function navigateTo(equipment, filter = "") {
     if (!isHistoryPage()) {
         safeLoadAlarmData();
     }
+
+    handleActivePageChanged();
 }
 
 document.querySelectorAll(".nav-button").forEach(button => {
@@ -13495,6 +13629,16 @@ let showChart = false;
 function appendHistoryButtons(bar, config) {
     if (!bar) return;
 
+    if (config && config.onRefresh) {
+        const refreshBtn = document.createElement("button");
+        refreshBtn.type = "button";
+        refreshBtn.className = "filter-button filter-button-refresh";
+        refreshBtn.textContent = "REFRESH";
+        refreshBtn.setAttribute("aria-label", "Refresh data");
+        refreshBtn.addEventListener("click", config.onRefresh);
+        bar.appendChild(refreshBtn);
+    }
+
     const chart = document.createElement("button");
     chart.type = "button";
     chart.className = "filter-button filter-button-chart" + (showChart ? " is-active" : "");
@@ -13513,6 +13657,13 @@ function appendHistoryButtons(bar, config) {
     exportBtn.textContent = "EXPORT TO EXCEL";
     exportBtn.addEventListener("click", config.onExport);
     bar.appendChild(exportBtn);
+
+    if (config && config.updateTextId) {
+        const updateText = document.createElement("span");
+        updateText.id = config.updateTextId;
+        updateText.className = "page-update-text";
+        bar.appendChild(updateText);
+    }
 }
 
 
@@ -13955,6 +14106,12 @@ function actlogBuildFilters(availableTypes) {
     searchWrap.appendChild(searchBtn);
 
     quickBar.appendChild(searchWrap);
+
+    const updateText = document.createElement("span");
+    updateText.id = "actlogUpdateText";
+    updateText.className = "page-update-text";
+    quickBar.appendChild(updateText);
+
     pageFilters.appendChild(quickBar);
 
     /* Collapsible Drawer (Date pickers + New Status + Inline Action buttons) */
@@ -14211,6 +14368,7 @@ function renderActivityLog() {
     grid.appendChild(page);
     unitCount.textContent = totalEvents + " event" + (totalEvents !== 1 ? "s" : "");
     actlogSyncStickyOffset();
+    updateStatusTextUI("ACTIVITY_LOG");
 }
 
 /* ---- Sync sticky offset (mirrors syncAlarmStickyOffset) ---- */
@@ -14231,12 +14389,14 @@ function actlogSyncStickyOffset() {
 
 /* ---- Fetch and render ---- */
 
-async function loadActivityLogData() {
-    actlogState.loading = true;
-    actlogState.error   = null;
+async function loadActivityLogData(isAutoRefresh = false) {
+    if (!isAutoRefresh) {
+        actlogState.loading = true;
+        actlogState.error   = null;
 
-    if (currentEquipment === "ACTIVITY_LOG") {
-        renderActivityLog();
+        if (currentEquipment === "ACTIVITY_LOG") {
+            renderActivityLog();
+        }
     }
 
     const params = new URLSearchParams({
@@ -14258,29 +14418,57 @@ async function loadActivityLogData() {
             throw new Error("HTTP " + res.status);
         }
 
-        const data = await res.json();
+        const resText = await res.text();
+        const data = JSON.parse(resText);
 
         if (!data.success) {
             throw new Error("API returned success=false");
         }
 
-        actlogState.data    = data;
+        const regKey = "ACTIVITY_LOG";
+        const state = refreshState[regKey];
+        const isIdentical = (isAutoRefresh && state && state.lastSignature !== null && state.lastSignature === resText);
+
+        if (state) {
+            state.lastSignature = resText;
+            state.lastSuccessTime = Date.now();
+            state.backoffStep = 0;
+        }
+
         actlogState.loading = false;
         actlogState.error   = null;
+
+        if (isIdentical) {
+            updateStatusTextUI(regKey);
+            return { changed: false, data: actlogState.data };
+        }
+
+        actlogState.data    = data;
         actlogState.page    = data.page || actlogState.page;
+
+        if (currentEquipment === "ACTIVITY_LOG") {
+            const scrollY = window.scrollY;
+            renderActivityLog();
+            window.scrollTo(0, scrollY);
+            setConnection(true);
+            lastUpdate.textContent = actlogState.data && actlogState.data.events && actlogState.data.events.length > 0
+                ? "Latest event: " + (actlogState.data.events[0].event_time || "--").slice(0, 19)
+                : "Activity Log loaded";
+            updateStatusTextUI(regKey);
+        }
+
+        return { changed: true, data: data };
 
     } catch (err) {
         console.error("Activity Log API error:", err);
         actlogState.loading = false;
         actlogState.error   = err.message || "Unknown error";
-    }
 
-    if (currentEquipment === "ACTIVITY_LOG") {
-        renderActivityLog();
-        setConnection(actlogState.error === null);
-        lastUpdate.textContent = actlogState.data && actlogState.data.events && actlogState.data.events.length > 0
-            ? "Latest event: " + (actlogState.data.events[0].event_time || "--").slice(0, 19)
-            : "Activity Log loaded";
+        if (currentEquipment === "ACTIVITY_LOG" && !isAutoRefresh) {
+            renderActivityLog();
+            setConnection(false);
+        }
+        throw err;
     }
 }
 
@@ -14288,6 +14476,248 @@ async function loadActivityLogData() {
 window.addEventListener("resize", () => {
     actlogSyncStickyOffset();
 });
+
+/* =========================================================
+   AUTO-REFRESH REGISTRY CONTROLLER (ACTIVITY_LOG, ENERGY, ROOM_TEMP_RH)
+   ========================================================= */
+
+const REFRESH_REGISTRY = {
+    ACTIVITY_LOG: {
+        interval: ACTLOG_REFRESH_INTERVAL_MS,
+        fetch: (isAuto) => loadActivityLogData(isAuto),
+        staleAfterMs: ACTLOG_REFRESH_INTERVAL_MS * 3,
+        updateTextId: "actlogUpdateText"
+    },
+    ENERGY: {
+        interval: ENERGY_REFRESH_INTERVAL_MS,
+        fetch: (isAuto) => fetchEnergyData(isAuto),
+        staleAfterMs: ENERGY_REFRESH_INTERVAL_MS * 3,
+        updateTextId: "energyUpdateText"
+    },
+    ROOM_TEMP_RH_HOURLY: {
+        interval: STATISTICS_REFRESH_INTERVAL_MS,
+        fetch: (isAuto) => fetchRoomHourlyData(isAuto),
+        staleAfterMs: STATS_STALE_THRESHOLD_MS,
+        updateTextId: "roomHourlyUpdateText"
+    }
+    /* Future views (e.g. STATISTICS) register with one entry */
+};
+
+function getActiveRefreshKey() {
+    if (currentEquipment === "ACTIVITY_LOG") return "ACTIVITY_LOG";
+    if (currentEquipment === "ENERGY") return "ENERGY";
+    if (currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY) return "ROOM_TEMP_RH_HOURLY";
+    return null;
+}
+
+function formatTimeHHMMSS(date) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
+}
+
+function updateStatusTextUI(key) {
+    const entry = REFRESH_REGISTRY[key];
+    const state = refreshState[key];
+    if (!entry || !state || !entry.updateTextId) return;
+
+    const el = document.getElementById(entry.updateTextId);
+    if (!el) return;
+
+    if (!state.lastSuccessTime) {
+        el.textContent = "";
+        el.classList.remove("is-stale");
+        return;
+    }
+
+    const elapsed = Date.now() - state.lastSuccessTime;
+    const isStale = (elapsed > entry.staleAfterMs);
+    const timeStr = formatTimeHHMMSS(new Date(state.lastSuccessTime));
+
+    el.textContent = "Updated " + timeStr + (isStale ? " (stale)" : "");
+    el.classList.toggle("is-stale", isStale);
+}
+
+function updateAllStatusTexts() {
+    for (const key of Object.keys(REFRESH_REGISTRY)) {
+        updateStatusTextUI(key);
+    }
+}
+
+let lastUserInteractionTime = 0;
+
+document.addEventListener("input", () => {
+    lastUserInteractionTime = Date.now();
+}, { passive: true });
+
+document.addEventListener("change", () => {
+    lastUserInteractionTime = Date.now();
+}, { passive: true });
+
+function isModalOrPopoverOpen() {
+    if (document.body.classList.contains("modal-open")) return true;
+    if (document.querySelector(".actlog-modal-backdrop")) return true;
+    if (document.querySelector(".modal.show, .modal-backdrop")) return true;
+    if (typeof activeDetailModal !== "undefined" && activeDetailModal !== null) return true;
+    if (typeof activePopoverAnchor !== "undefined" && activePopoverAnchor !== null) return true;
+    return false;
+}
+
+function isRefreshBlocked() {
+    const isInteracting = (Date.now() - lastUserInteractionTime < 10000);
+    return isInteracting || isModalOrPopoverOpen();
+}
+
+function scheduleNextTick(key, delayMs) {
+    const entry = REFRESH_REGISTRY[key];
+    const state = refreshState[key];
+    if (!entry || !state) return;
+
+    if (state.timerId) {
+        clearTimeout(state.timerId);
+        state.timerId = null;
+    }
+
+    if (getActiveRefreshKey() !== key || document.hidden) {
+        return;
+    }
+
+    state.timerId = setTimeout(() => {
+        state.timerId = null;
+        executeRefresh(key, true);
+    }, delayMs);
+}
+
+async function executeRefresh(key, isAuto = false) {
+    const entry = REFRESH_REGISTRY[key];
+    const state = refreshState[key];
+    if (!entry || !state) return;
+
+    /* Rule 2: Skip tick if already pending - no overlapping requests */
+    if (state.isPending) {
+        return;
+    }
+
+    /* Rule 8: If typing within 10s or modal open, defer auto-refresh */
+    if (isAuto && isRefreshBlocked()) {
+        state.pendingDeferred = true;
+        return;
+    }
+
+    state.isPending = true;
+
+    try {
+        await entry.fetch(isAuto);
+        state.backoffStep = 0;
+        updateStatusTextUI(key);
+    } catch (err) {
+        console.warn("Auto-refresh error for " + key + ":", err);
+        const delay = BACKOFF_STEPS[Math.min(state.backoffStep, BACKOFF_STEPS.length - 1)];
+        state.backoffStep = Math.min(state.backoffStep + 1, BACKOFF_STEPS.length - 1);
+
+        if (typeof entry.interval === "number") {
+            scheduleNextTick(key, delay);
+            return;
+        }
+    } finally {
+        state.isPending = false;
+    }
+
+    /* Schedule next tick if periodic */
+    if (typeof entry.interval === "number") {
+        scheduleNextTick(key, entry.interval);
+    }
+}
+
+let currentActiveRefreshKey = null;
+
+function handleActivePageChanged() {
+    const nextKey = getActiveRefreshKey();
+    if (nextKey === currentActiveRefreshKey) {
+        return;
+    }
+
+    /* Clear timer and deferred flag when leaving previous page */
+    if (currentActiveRefreshKey && refreshState[currentActiveRefreshKey]) {
+        if (refreshState[currentActiveRefreshKey].timerId) {
+            clearTimeout(refreshState[currentActiveRefreshKey].timerId);
+            refreshState[currentActiveRefreshKey].timerId = null;
+        }
+        refreshState[currentActiveRefreshKey].pendingDeferred = false;
+    }
+
+    currentActiveRefreshKey = nextKey;
+
+    if (nextKey && REFRESH_REGISTRY[nextKey]) {
+        const entry = REFRESH_REGISTRY[nextKey];
+        updateStatusTextUI(nextKey);
+        if (typeof entry.interval === "number") {
+            scheduleNextTick(nextKey, entry.interval);
+        }
+    }
+}
+
+function triggerManualRefresh(key) {
+    if (!key) key = getActiveRefreshKey();
+    if (!key || !REFRESH_REGISTRY[key]) return;
+    executeRefresh(key, false);
+}
+
+/* Visibility change: pause when hidden; on resume, refresh once and restart periodic timer */
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        for (const k of Object.keys(refreshState)) {
+            if (refreshState[k].timerId) {
+                clearTimeout(refreshState[k].timerId);
+                refreshState[k].timerId = null;
+            }
+        }
+    } else {
+        const key = getActiveRefreshKey();
+        if (!key) return;
+
+        const entry = REFRESH_REGISTRY[key];
+        const state = refreshState[key];
+        if (!entry || !state) return;
+
+        if (typeof entry.interval === "number") {
+            executeRefresh(key, true);
+        } else if (entry.interval === "manual") {
+            const elapsed = state.lastSuccessTime ? (Date.now() - state.lastSuccessTime) : Infinity;
+            if (elapsed > STATS_VISIBILITY_REFRESH_MIN_MS) {
+                executeRefresh(key, true);
+            }
+        }
+    }
+});
+
+/* Deferred refresh processor (Rule 1 & 8): runs deferred refresh as soon as typing/modal unblocks */
+setInterval(() => {
+    const key = getActiveRefreshKey();
+    if (!key) return;
+    const state = refreshState[key];
+    if (state && state.pendingDeferred && !state.isPending && !isRefreshBlocked()) {
+        state.pendingDeferred = false;
+        executeRefresh(key, true);
+    }
+}, 1000);
+
+/* Stale textual cue updater (Rule 7) */
+setInterval(updateAllStatusTexts, 5000);
+
+/* Hook for automated test verification */
+window.__autoRefreshTest = {
+    registry: REFRESH_REGISTRY,
+    state: refreshState,
+    getActiveRefreshKey,
+    isRefreshBlocked,
+    executeRefresh,
+    scheduleNextTick,
+    handleActivePageChanged,
+    triggerManualRefresh,
+    getLastUserInteractionTime: () => lastUserInteractionTime,
+    setLastUserInteractionTime: (t) => { lastUserInteractionTime = t; },
+    isModalOrPopoverOpen
+};
 
 
 /*
@@ -14304,6 +14734,7 @@ acknowledgedAlarmKeys = readAcknowledgedAlarmKeys();
 alarmWindowHours = readAlarmWindowHours();
 
 safeLoadData();
+handleActivePageChanged();
 startNotesPolling();
 
 /*
