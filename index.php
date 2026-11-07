@@ -117,13 +117,21 @@ $appVersion = app_version_info();
     <link rel="stylesheet" href="ef.css?v=<?= filemtime(__DIR__ . '/ef.css') ?>">
     <style>
         @keyframes tabBlinkDanger {
-            0% { background-color: #dc3545 !important; color: white !important; }
-            50% { background-color: transparent !important; }
-            100% { background-color: #dc3545 !important; color: white !important; }
+            0%, 100% { 
+                background: #dc3545 !important; 
+                color: #ffffff !important; 
+                border-color: #dc3545 !important;
+                box-shadow: 0 0 10px rgba(220, 53, 69, 0.8) !important;
+            }
+            50% { 
+                background: #2c2c2c !important; /* Warna gelap tab bawaan */
+                color: #e0e0e0 !important; 
+                border-color: #444 !important;
+                box-shadow: none !important;
+            }
         }
         .tab-blinking {
             animation: tabBlinkDanger 1s infinite !important;
-            border-color: #dc3545 !important;
         }
     </style>
 </head>
@@ -2705,62 +2713,22 @@ function selectAlarmWindow(hours) {
 }
 
 /*
- * Tab title blink indicator for unacknowledged active alarms or offline alarm feed.
- * Alternates between:
- *   - "(!) FEED OFFLINE - <originalTitle>" and "<originalTitle>" (when alarm feed is offline)
- *   - "(!) ALARM n - <originalTitle>" and "<originalTitle>" (when active alarms are unacknowledged)
- * every 1 s. When feed is online and unack === 0, stops blinking and restores <originalTitle>.
+ * Static document title indicator for alarms or offline feed (without blinking).
  */
-let originalDocumentTitle = "";
-let alarmTitleBlinkTimerId = null;
-let alarmTitleBlinkState = false;
-let currentAlarmTitleMode = "NORMAL";
-let currentUnackAlarmCount = 0;
+let alarmTitleTimerId = null;
 
-function updateAlarmDocumentTitle(unackCount, isOffline = false) {
-    if (!originalDocumentTitle) {
-        originalDocumentTitle = document.title || "HVAC Monitoring";
+function updateAlarmDocumentTitle(unackCount) {
+    if (alarmTitleTimerId !== null) {
+        clearInterval(alarmTitleTimerId);
+        alarmTitleTimerId = null;
     }
-
-    currentUnackAlarmCount = unackCount;
-    const targetMode = isOffline ? "OFFLINE" : (unackCount > 0 ? "ALARM" : "NORMAL");
-    currentAlarmTitleMode = targetMode;
-
-    if (targetMode !== "NORMAL") {
-        const getAlertTitle = () => {
-            if (currentAlarmTitleMode === "OFFLINE") {
-                return "(!) FEED OFFLINE - " + originalDocumentTitle;
-            }
-            return "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
-        };
-
-        /* If timer not yet started, set initial alert title and start 1s blinking loop */
-        if (alarmTitleBlinkTimerId === null) {
-            alarmTitleBlinkState = true;
-            document.title = getAlertTitle();
-
-            alarmTitleBlinkTimerId = setInterval(() => {
-                alarmTitleBlinkState = !alarmTitleBlinkState;
-                if (alarmTitleBlinkState) {
-                    document.title = getAlertTitle();
-                } else {
-                    document.title = originalDocumentTitle;
-                }
-            }, 1000);
-        } else if (alarmTitleBlinkState) {
-            /* If already blinking and on alert phase, update text immediately */
-            document.title = getAlertTitle();
-        }
+    
+    if (unackCount > 0) {
+        document.title = "(!) ALARM - HVAC Monitoring";
+    } else if (typeof consecutiveAlarmPollFailures !== 'undefined' && consecutiveAlarmPollFailures >= 3) {
+        document.title = "(!) OFFLINE - HVAC Monitoring";
     } else {
-        /* Normal state (feed online and no unacknowledged alarms): stop blinking */
-        if (alarmTitleBlinkTimerId !== null) {
-            clearInterval(alarmTitleBlinkTimerId);
-            alarmTitleBlinkTimerId = null;
-        }
-        alarmTitleBlinkState = false;
-        if (document.title !== originalDocumentTitle) {
-            document.title = originalDocumentTitle;
-        }
+        document.title = "HVAC Monitoring";
     }
 }
 
