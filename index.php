@@ -118,20 +118,21 @@ $appVersion = app_version_info();
     <style>
         @keyframes tabBlinkDanger {
             0%, 100% { 
-                background: #dc3545 !important; 
-                color: #ffffff !important; 
-                border-color: #dc3545 !important;
-                box-shadow: 0 0 10px rgba(220, 53, 69, 0.8) !important;
+                background: #dc3545; 
+                color: #ffffff; 
+                border-color: #dc3545;
+                box-shadow: 0 0 10px rgba(220, 53, 69, 0.8);
             }
             50% { 
-                background: #2c2c2c !important; /* Warna gelap tab bawaan */
-                color: #e0e0e0 !important; 
-                border-color: #444 !important;
-                box-shadow: none !important;
+                background: #2c2c2c; /* Warna gelap tab bawaan */
+                color: #e0e0e0; 
+                border-color: #444;
+                box-shadow: none;
             }
         }
-        .tab-blinking {
+        .tab-blinking, .tab-blinking:hover, button.tab-blinking {
             animation: tabBlinkDanger 1s infinite !important;
+            background-image: none !important;
         }
     </style>
 </head>
@@ -2718,18 +2719,7 @@ function selectAlarmWindow(hours) {
 let alarmTitleTimerId = null;
 
 function updateAlarmDocumentTitle(unackCount) {
-    if (alarmTitleTimerId !== null) {
-        clearInterval(alarmTitleTimerId);
-        alarmTitleTimerId = null;
-    }
-    
-    if (unackCount > 0) {
-        document.title = "(!) ALARM - HVAC Monitoring";
-    } else if (typeof consecutiveAlarmPollFailures !== 'undefined' && consecutiveAlarmPollFailures >= 3) {
-        document.title = "(!) OFFLINE - HVAC Monitoring";
-    } else {
-        document.title = "HVAC Monitoring";
-    }
+    document.title = "HVAC Monitoring";
 }
 
 function updateGlobalAlarmWidget() {
@@ -2752,7 +2742,7 @@ function updateGlobalAlarmWidget() {
 
     const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
     const totalActiveCount = activeAlarmTriggerKeys.size;
-    const navAlarmTab = document.getElementById("tab-alarm");
+    const navAlarmTab = document.querySelector('button[data-equipment="ALARM"]');
 
     updateAlarmDocumentTitle(unackCount, false);
 
