@@ -2778,22 +2778,20 @@ function updateGlobalAlarmWidget() {
 
     if (unackCount > 0) {
         btn.textContent = "ACK ALARM";
-        btn.className = "global-mute-btn is-sounding";
+        btn.className = "global-mute-btn is-sounding is-hidden";
         btn.title = "Acknowledge alarms (" + unackCount + " unacknowledged)";
         btn.setAttribute("aria-pressed", "false");
         btn.onclick = acknowledgeCurrentAlarms;
-        btn.classList.remove("is-hidden");
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
         if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("PLAY_ALARM"); }
     } else if (totalActiveCount > 0) {
         btn.textContent = "ACKED (" + totalActiveCount + ")";
-        btn.className = "global-mute-btn is-muted";
+        btn.className = "global-mute-btn is-muted is-hidden";
         btn.title = "Alarms acknowledged (" + totalActiveCount + " active). Click to re-arm.";
         btn.setAttribute("aria-pressed", "true");
         btn.onclick = unacknowledgeAlarms;
-        btn.classList.remove("is-hidden");
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
@@ -14464,6 +14462,14 @@ window.__autoRefreshTest = {
     isModalOrPopoverOpen
 };
 
+
+if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener('message', function(event) {
+        if (event.data === "ACK_FROM_C#") {
+            acknowledgeCurrentAlarms();
+        }
+    });
+}
 
 /*
  * Read acknowledged alarm keys on initialization.
