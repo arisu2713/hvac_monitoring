@@ -2953,6 +2953,54 @@ function stopAlarmSoundLoop() {
     updateGlobalAlarmWidget();
 }
 
+/*
+ * Tab title blink indicator for unacknowledged active alarms.
+ * Alternates between "(!) ALARM n - <originalTitle>" and "<originalTitle>" every 1 s
+ * while there is at least one unacknowledged trigger.
+ */
+let originalDocumentTitle = "";
+let alarmTitleBlinkTimerId = null;
+let alarmTitleBlinkState = false;
+let currentUnackAlarmCount = 0;
+
+function updateAlarmDocumentTitle(unackCount) {
+    if (!originalDocumentTitle) {
+        originalDocumentTitle = document.title || "HVAC Monitoring";
+    }
+
+    currentUnackAlarmCount = unackCount;
+
+    if (unackCount > 0) {
+        /* If timer not yet started, set initial alarm title and start 1s blinking loop */
+        if (alarmTitleBlinkTimerId === null) {
+            alarmTitleBlinkState = true;
+            document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+
+            alarmTitleBlinkTimerId = setInterval(() => {
+                alarmTitleBlinkState = !alarmTitleBlinkState;
+                if (alarmTitleBlinkState) {
+                    document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+                } else {
+                    document.title = originalDocumentTitle;
+                }
+            }, 1000);
+        } else if (alarmTitleBlinkState) {
+            /* If already blinking and on alarm phase, update count immediately */
+            document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+        }
+    } else {
+        /* No unacknowledged alarms: stop blinking and restore original title */
+        if (alarmTitleBlinkTimerId !== null) {
+            clearInterval(alarmTitleBlinkTimerId);
+            alarmTitleBlinkTimerId = null;
+        }
+        alarmTitleBlinkState = false;
+        if (document.title !== originalDocumentTitle) {
+            document.title = originalDocumentTitle;
+        }
+    }
+}
+
 function updateGlobalAlarmWidget() {
     const widget = document.getElementById("globalAlarmWidget");
     const btn = document.getElementById("globalAlarmMuteBtn");
@@ -2967,11 +3015,14 @@ function updateGlobalAlarmWidget() {
         notice.classList.remove("is-hidden");
         btn.classList.add("is-hidden");
         btn.onclick = null;
+        updateAlarmDocumentTitle(0);
         return;
     }
 
     const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
     const totalActiveCount = activeAlarmTriggerKeys.size;
+
+    updateAlarmDocumentTitle(unackCount);
 
     if (unackCount > 0) {
         btn.textContent = "MUTE ALARM";
