@@ -126,7 +126,7 @@ $appVersion = app_version_info();
     </div>
 
     <div id="globalAlarmWidget" class="global-alarm-widget">
-        <button id="globalAlarmMuteBtn" type="button" class="global-mute-btn is-hidden" aria-label="Alarm sound control"></button>
+        <button id="globalAlarmMuteBtn" type="button" class="global-mute-btn is-hidden" aria-label="Alarm acknowledge control"></button>
         <span id="globalAudioNotice" class="global-audio-notice is-hidden"></span>
     </div>
 
@@ -2543,19 +2543,6 @@ const ALARM_ACK_KEY = "hvac_alarm_acknowledged_keys";
 const ALARM_WINDOW_KEY = "hvac_alarm_window_hours";
 
 /*
- * Alarm sound file configuration:
- * ALARM_SOUND_URL: Relative path to alarm sound file with version query for cache busting.
- *                  Works both in root domain and subfolder deployments.
- * ALARM_SOUND_GAIN: Volume gain for audio playback (1.0 = full volume, peak -3.1 dBFS).
- * ALARM_REPEAT_MS: Repeat interval between bursts (4000 ms; the audio file duration is
- *                  0.715 s, so 4000 ms guarantees silence between bursts and ensures
- *                  two scheduled plays never overlap).
- */
-const ALARM_SOUND_URL = "sounds/alarm_beep.wav?v=1";
-const ALARM_SOUND_GAIN = 1.0;
-const ALARM_REPEAT_MS = 4000;
-
-/*
  * Number of distinct poller cycles an Exhaust Fan must remain definitively OFF (status === "off")
  * before triggering an audible alarm and appearing in the active alarm list.
  *
@@ -2583,7 +2570,6 @@ const ALARM_WINDOW_OPTIONS = [
 ];
 const ALARM_WINDOW_DEFAULT = 24;
 
-let alarmSoundBlocked = false;
 let alarmShowAll = false;
 let knownAlarmIds = null;
 
@@ -2593,16 +2579,7 @@ let knownAlarmIds = null;
  * survives a reload.
  */
 let alarmWindowHours = ALARM_WINDOW_DEFAULT;
-
-let alarmAudioContext = null;
-let alarmAudioBuffer = null;
-let alarmSoundLoading = false;
-let alarmSoundLoadFailed = false;
-let alarmSoundRawBuffer = null;
-let currentAlarmSourceNode = null;
-let alarmSoundTimerId = null;
 let consecutiveAlarmPollFailures = 0;
-let globalAudioUnlocked = false;
 
 /*
  * Freshness tracking for equipment run states (S1 on-demand fetch):
@@ -2716,280 +2693,55 @@ function selectAlarmWindow(hours) {
     safeLoadAlarmData();
 }
 
-function getAlarmAudioContext() {
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-
-    if (!Ctor) {
-        return null;
-    }
-
-    if (!alarmAudioContext) {
-        alarmAudioContext = new Ctor();
-        decodeAlarmAudioBuffer();
-    }
-
-    return alarmAudioContext;
-}
-
 /*
- * Preload the alarm sound file without a user gesture.
- * An HTTP fetch does not require AudioContext or user interaction.
- */
-function preloadAlarmSound() {
-    if (alarmSoundLoading || alarmAudioBuffer || alarmSoundLoadFailed) {
-        return;
-    }
-    alarmSoundLoading = true;
-
-    fetch(ALARM_SOUND_URL)
-        .then(res => {
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status);
-            }
-            return res.arrayBuffer();
-        })
-        .then(rawBuffer => {
-            alarmSoundRawBuffer = rawBuffer;
-            alarmSoundLoading = false;
-            if (alarmAudioContext) {
-                decodeAlarmAudioBuffer();
-            }
-        })
-        .catch(err => {
-            alarmSoundLoading = false;
-            if (!alarmSoundLoadFailed) {
-                alarmSoundLoadFailed = true;
-                console.warn("[AlarmSound] Audio file preload failed; using oscillator fallback:", err.message);
-            }
-        });
-}
-
-/*
- * Lazily decode preloaded audio data once AudioContext is available.
- */
-function decodeAlarmAudioBuffer() {
-    if (alarmAudioBuffer || !alarmSoundRawBuffer || alarmSoundLoadFailed) {
-        return;
-    }
-    const ctx = getAlarmAudioContext();
-    if (!ctx) {
-        return;
-    }
-
-    const bufferToDecode = alarmSoundRawBuffer.slice(0);
-    ctx.decodeAudioData(bufferToDecode)
-        .then(decoded => {
-            alarmAudioBuffer = decoded;
-            alarmSoundRawBuffer = null;
-        })
-        .catch(err => {
-            if (!alarmSoundLoadFailed) {
-                alarmSoundLoadFailed = true;
-                console.warn("[AlarmSound] Audio file decode failed; using oscillator fallback:", err.message);
-            }
-        });
-}
-
-/*
- * Stop the current AudioBufferSourceNode if one is playing.
- * Ensures two plays never overlap and mute cuts sound immediately.
- */
-function stopCurrentAlarmSource() {
-    if (currentAlarmSourceNode) {
-        try {
-            currentAlarmSourceNode.stop();
-        } catch (_) {}
-        try {
-            currentAlarmSourceNode.disconnect();
-        } catch (_) {}
-        currentAlarmSourceNode = null;
-    }
-}
-
-/*
- * Play the alarm sound burst.
- * Primary: AudioBufferSourceNode using preloaded & decoded alarm_beep.wav through GainNode.
- * Fallback: playAlarmTone() (synthesized two-beep square wave) if the audio file
- * is not ready yet, 404s, or fails to decode.
- */
-function playAlarmSound() {
-    const ctx = getAlarmAudioContext();
-
-    if (!ctx) {
-        return;
-    }
-
-    if (ctx.state === "suspended") {
-        alarmSoundBlocked = true;
-        updateGlobalAlarmWidget();
-        ctx.resume().then(() => {
-            alarmSoundBlocked = false;
-            updateGlobalAlarmWidget();
-            decodeAlarmAudioBuffer();
-            playAlarmSound();
-        }).catch(() => {
-            alarmSoundBlocked = true;
-            updateGlobalAlarmWidget();
-        });
-        return;
-    }
-
-    alarmSoundBlocked = false;
-    updateGlobalAlarmWidget();
-
-    /* Make sure two plays never overlap */
-    stopCurrentAlarmSource();
-
-    if (alarmAudioBuffer) {
-        try {
-            const source = ctx.createBufferSource();
-            const gain = ctx.createGain();
-
-            source.buffer = alarmAudioBuffer;
-            gain.gain.setValueAtTime(ALARM_SOUND_GAIN, ctx.currentTime);
-
-            source.connect(gain);
-            gain.connect(ctx.destination);
-
-            currentAlarmSourceNode = source;
-            source.onended = () => {
-                if (currentAlarmSourceNode === source) {
-                    currentAlarmSourceNode = null;
-                }
-            };
-
-            source.start(ctx.currentTime);
-            return;
-        } catch (err) {
-            if (!alarmSoundLoadFailed) {
-                alarmSoundLoadFailed = true;
-                console.warn("[AlarmSound] Playback error; using oscillator fallback:", err.message);
-            }
-        }
-    }
-
-    /* If raw buffer exists but not decoded yet, decode for subsequent cycles */
-    if (alarmSoundRawBuffer && !alarmSoundLoadFailed) {
-        decodeAlarmAudioBuffer();
-    }
-
-    /* Fallback: two-beep oscillator burst */
-    playAlarmTone();
-}
-
-/*
- * Two short beeps from an oscillator. Fallback player when sound file is not ready or fails.
- */
-function playAlarmTone() {
-    const ctx = getAlarmAudioContext();
-
-    if (!ctx) {
-        return;
-    }
-
-    if (ctx.state === "suspended") {
-        alarmSoundBlocked = true;
-        updateGlobalAlarmWidget();
-        ctx.resume().then(() => {
-            alarmSoundBlocked = false;
-            updateGlobalAlarmWidget();
-            playAlarmTone();
-        }).catch(() => {
-            alarmSoundBlocked = true;
-            updateGlobalAlarmWidget();
-        });
-        return;
-    }
-
-    alarmSoundBlocked = false;
-    updateGlobalAlarmWidget();
-
-    const beep = (startAt, frequency) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-
-        osc.type = "square";
-        osc.frequency.value = frequency;
-
-        /* Short ramps instead of hard edges: a raw square wave clicks. */
-        gain.gain.setValueAtTime(0.0001, startAt);
-        gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.32);
-
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(startAt);
-        osc.stop(startAt + 0.34);
-    };
-
-    const now = ctx.currentTime;
-    beep(now, 880);
-    beep(now + 0.42, 880);
-}
-
-function startAlarmSoundLoop() {
-    if (alarmSoundTimerId !== null) {
-        return;
-    }
-
-    /* C5: First burst plays immediately when a trigger appears */
-    playAlarmSound();
-
-    /* Subsequent bursts repeat about every ALARM_REPEAT_MS */
-    alarmSoundTimerId = setInterval(() => {
-        playAlarmSound();
-    }, ALARM_REPEAT_MS);
-
-    updateGlobalAlarmWidget();
-}
-
-function stopAlarmSoundLoop() {
-    if (alarmSoundTimerId !== null) {
-        clearInterval(alarmSoundTimerId);
-        alarmSoundTimerId = null;
-    }
-
-    stopCurrentAlarmSource();
-    updateGlobalAlarmWidget();
-}
-
-/*
- * Tab title blink indicator for unacknowledged active alarms.
- * Alternates between "(!) ALARM n - <originalTitle>" and "<originalTitle>" every 1 s
- * while there is at least one unacknowledged trigger.
+ * Tab title blink indicator for unacknowledged active alarms or offline alarm feed.
+ * Alternates between:
+ *   - "(!) FEED OFFLINE - <originalTitle>" and "<originalTitle>" (when alarm feed is offline)
+ *   - "(!) ALARM n - <originalTitle>" and "<originalTitle>" (when active alarms are unacknowledged)
+ * every 1 s. When feed is online and unack === 0, stops blinking and restores <originalTitle>.
  */
 let originalDocumentTitle = "";
 let alarmTitleBlinkTimerId = null;
 let alarmTitleBlinkState = false;
+let currentAlarmTitleMode = "NORMAL";
 let currentUnackAlarmCount = 0;
 
-function updateAlarmDocumentTitle(unackCount) {
+function updateAlarmDocumentTitle(unackCount, isOffline = false) {
     if (!originalDocumentTitle) {
         originalDocumentTitle = document.title || "HVAC Monitoring";
     }
 
     currentUnackAlarmCount = unackCount;
+    const targetMode = isOffline ? "OFFLINE" : (unackCount > 0 ? "ALARM" : "NORMAL");
+    currentAlarmTitleMode = targetMode;
 
-    if (unackCount > 0) {
-        /* If timer not yet started, set initial alarm title and start 1s blinking loop */
+    if (targetMode !== "NORMAL") {
+        const getAlertTitle = () => {
+            if (currentAlarmTitleMode === "OFFLINE") {
+                return "(!) FEED OFFLINE - " + originalDocumentTitle;
+            }
+            return "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+        };
+
+        /* If timer not yet started, set initial alert title and start 1s blinking loop */
         if (alarmTitleBlinkTimerId === null) {
             alarmTitleBlinkState = true;
-            document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+            document.title = getAlertTitle();
 
             alarmTitleBlinkTimerId = setInterval(() => {
                 alarmTitleBlinkState = !alarmTitleBlinkState;
                 if (alarmTitleBlinkState) {
-                    document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+                    document.title = getAlertTitle();
                 } else {
                     document.title = originalDocumentTitle;
                 }
             }, 1000);
         } else if (alarmTitleBlinkState) {
-            /* If already blinking and on alarm phase, update count immediately */
-            document.title = "(!) ALARM " + currentUnackAlarmCount + " - " + originalDocumentTitle;
+            /* If already blinking and on alert phase, update text immediately */
+            document.title = getAlertTitle();
         }
     } else {
-        /* No unacknowledged alarms: stop blinking and restore original title */
+        /* Normal state (feed online and no unacknowledged alarms): stop blinking */
         if (alarmTitleBlinkTimerId !== null) {
             clearInterval(alarmTitleBlinkTimerId);
             alarmTitleBlinkTimerId = null;
@@ -3015,34 +2767,29 @@ function updateGlobalAlarmWidget() {
         notice.classList.remove("is-hidden");
         btn.classList.add("is-hidden");
         btn.onclick = null;
-        updateAlarmDocumentTitle(0);
+        updateAlarmDocumentTitle(0, true);
         return;
     }
 
     const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
     const totalActiveCount = activeAlarmTriggerKeys.size;
 
-    updateAlarmDocumentTitle(unackCount);
+    updateAlarmDocumentTitle(unackCount, false);
 
     if (unackCount > 0) {
-        btn.textContent = "MUTE ALARM";
+        btn.textContent = "ACK ALARM";
         btn.className = "global-mute-btn is-sounding";
-        btn.title = "Silence alarm sound (" + unackCount + " unacknowledged)";
+        btn.title = "Acknowledge alarms (" + unackCount + " unacknowledged)";
         btn.setAttribute("aria-pressed", "false");
         btn.onclick = acknowledgeCurrentAlarms;
         btn.classList.remove("is-hidden");
 
-        if (alarmSoundBlocked) {
-            notice.textContent = "Sound blocked — tap anywhere to enable";
-            notice.classList.remove("is-hidden");
-        } else {
-            notice.textContent = "";
-            notice.classList.add("is-hidden");
-        }
+        notice.textContent = "";
+        notice.classList.add("is-hidden");
     } else if (totalActiveCount > 0) {
-        btn.textContent = "MUTED (" + totalActiveCount + ")";
+        btn.textContent = "ACKED (" + totalActiveCount + ")";
         btn.className = "global-mute-btn is-muted";
-        btn.title = "Alarms acknowledged (" + totalActiveCount + " active). Click to re-arm sound.";
+        btn.title = "Alarms acknowledged (" + totalActiveCount + " active). Click to re-arm.";
         btn.setAttribute("aria-pressed", "true");
         btn.onclick = unacknowledgeAlarms;
         btn.classList.remove("is-hidden");
@@ -3061,86 +2808,19 @@ function updateGlobalAlarmWidget() {
 }
 
 function acknowledgeCurrentAlarms() {
-    /* User interaction unlocks audio context naturally */
-    const ctx = getAlarmAudioContext();
-    if (ctx && ctx.state === "suspended") {
-        ctx.resume().then(() => {
-            alarmSoundBlocked = false;
-            updateGlobalAlarmWidget();
-        }).catch(() => {});
-    }
-
     /* Acknowledge all currently active triggers */
     activeAlarmTriggerKeys.forEach(key => {
         acknowledgedAlarmKeys.add(key);
     });
 
     writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
-    stopAlarmSoundLoop();
     updateGlobalAlarmWidget();
 }
 
 function unacknowledgeAlarms() {
-    /* User clicked MUTED (n): re-arm sound immediately */
-    const ctx = getAlarmAudioContext();
-    if (ctx && ctx.state === "suspended") {
-        ctx.resume().then(() => {
-            alarmSoundBlocked = false;
-            updateGlobalAlarmWidget();
-        }).catch(() => {});
-    }
-
     acknowledgedAlarmKeys.clear();
     writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
-
-    if (activeAlarmTriggerKeys.size > 0) {
-        startAlarmSoundLoop();
-    } else {
-        stopAlarmSoundLoop();
-    }
-
     updateGlobalAlarmWidget();
-}
-
-function initGlobalAudioUnlock() {
-    const events = ["pointerdown", "keydown", "touchstart"];
-    const removeListeners = () => {
-        events.forEach(evt => {
-            window.removeEventListener(evt, unlock, { capture: true });
-        });
-    };
-
-    const unlock = (e) => {
-        if (globalAudioUnlocked) {
-            removeListeners();
-            return;
-        }
-
-        const isMuteClick = Boolean(e && e.target && e.target.closest && e.target.closest("#globalAlarmMuteBtn"));
-
-        const ctx = getAlarmAudioContext();
-        if (ctx) {
-            ctx.resume().then(() => {
-                globalAudioUnlocked = true;
-                alarmSoundBlocked = false;
-                decodeAlarmAudioBuffer();
-                updateGlobalAlarmWidget();
-                removeListeners();
-
-                /* Do NOT trigger immediate beep if user clicked MUTE, or if loop is already running */
-                if (!isMuteClick && activeAlarmTriggerKeys && activeAlarmTriggerKeys.size > 0) {
-                    const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
-                    if (unackCount > 0 && alarmSoundTimerId === null) {
-                        startAlarmSoundLoop();
-                    }
-                }
-            }).catch(() => {});
-        }
-    };
-
-    events.forEach(evt => {
-        window.addEventListener(evt, unlock, { capture: true });
-    });
 }
 
 /*
@@ -3212,7 +2892,7 @@ let lastDbAlarmKeys = new Set();
 let lastEfOffKeys = new Set();
 let lastDbAlarmEfNames = new Set();
 
-function evaluateSoundTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, efSuccess) {
+function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, efSuccess) {
     const currentDbKeys = new Set();
     const currentEfKeys = new Set();
     const currentDbEfNames = new Set();
@@ -3340,15 +3020,6 @@ function evaluateSoundTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
 
     activeAlarmTriggerKeys = mergedTriggerKeys;
     writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
-
-    /* Determine if sound loop should be active */
-    const unacknowledgedTriggers = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k));
-
-    if (unacknowledgedTriggers.length > 0 && consecutiveAlarmPollFailures < 3) {
-        startAlarmSoundLoop();
-    } else {
-        stopAlarmSoundLoop();
-    }
 
     updateGlobalAlarmWidget();
 }
@@ -3743,7 +3414,6 @@ async function loadAlarmData() {
     if (!dbSuccess && !efSuccess) {
         consecutiveAlarmPollFailures++;
         if (consecutiveAlarmPollFailures >= 3) {
-            stopAlarmSoundLoop();
             updateGlobalAlarmWidget();
         }
         throw new Error("Both Alarm API and EF API requests failed");
@@ -3836,7 +3506,7 @@ async function loadAlarmData() {
     }
 
     /* Evaluate triggers per S1, S2, S3, C1, C2, C5, C7, E1, E2 */
-    evaluateSoundTriggers(dbAlarms, liveEfPanel, liveEfG8, dbSuccess, efSuccess);
+    evaluateAlarmTriggers(dbAlarms, liveEfPanel, liveEfG8, dbSuccess, efSuccess);
 
     if (currentEquipment === "ALARM") {
         renderAlarm();
@@ -14793,10 +14463,8 @@ window.__autoRefreshTest = {
 
 
 /*
- * Initialize global audio unlock listener, preload alarm audio, and read acknowledged alarm keys.
+ * Read acknowledged alarm keys on initialization.
  */
-initGlobalAudioUnlock();
-preloadAlarmSound();
 acknowledgedAlarmKeys = readAcknowledgedAlarmKeys();
 
 /*
