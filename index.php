@@ -2516,14 +2516,7 @@ function selectRoomView(view) {
     renderRoomTempRh();
     safeLoadData();
 
-    /*
-     * Mirrors the nav handler: the alarm poll is skipped while the hourly
-     * (history) view is on screen, and returning to the live view restarts it.
-     */
-    if (!isHistoryPage()) {
-        safeLoadAlarmData();
-    }
-
+    safeLoadAlarmData();
     handleActivePageChanged();
 }
 
@@ -2544,6 +2537,8 @@ function selectRoomView(view) {
 const ALARM_API_URL = "api_alarm.php";
 const ALARM_EF_URL = "api_ef.php";
 const ALARM_POLL_MS = 10000;
+const ALARM_FETCH_TIMEOUT_MS = 8000;
+const ALARM_GUARD_EXPIRY_MS = 30000;
 const ALARM_ACK_KEY = "hvac_alarm_acknowledged_keys";
 const ALARM_WINDOW_KEY = "hvac_alarm_window_hours";
 
@@ -2825,6 +2820,8 @@ function playAlarmSound() {
     }
 
     if (ctx.state === "suspended") {
+        alarmSoundBlocked = true;
+        updateGlobalAlarmWidget();
         ctx.resume().then(() => {
             alarmSoundBlocked = false;
             updateGlobalAlarmWidget();
@@ -2891,6 +2888,8 @@ function playAlarmTone() {
     }
 
     if (ctx.state === "suspended") {
+        alarmSoundBlocked = true;
+        updateGlobalAlarmWidget();
         ctx.resume().then(() => {
             alarmSoundBlocked = false;
             updateGlobalAlarmWidget();
@@ -3053,23 +3052,43 @@ function unacknowledgeAlarms() {
 }
 
 function initGlobalAudioUnlock() {
-    const unlock = () => {
+    const events = ["pointerdown", "keydown", "touchstart"];
+    const removeListeners = () => {
+        events.forEach(evt => {
+            window.removeEventListener(evt, unlock, { capture: true });
+        });
+    };
+
+    const unlock = (e) => {
+        if (globalAudioUnlocked) {
+            removeListeners();
+            return;
+        }
+
+        const isMuteClick = Boolean(e && e.target && e.target.closest && e.target.closest("#globalAlarmMuteBtn"));
+
         const ctx = getAlarmAudioContext();
-        if (ctx && ctx.state === "suspended") {
+        if (ctx) {
             ctx.resume().then(() => {
                 globalAudioUnlocked = true;
                 alarmSoundBlocked = false;
+                decodeAlarmAudioBuffer();
                 updateGlobalAlarmWidget();
+                removeListeners();
+
+                /* Do NOT trigger immediate beep if user clicked MUTE, or if loop is already running */
+                if (!isMuteClick && activeAlarmTriggerKeys && activeAlarmTriggerKeys.size > 0) {
+                    const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                    if (unackCount > 0 && alarmSoundTimerId === null) {
+                        startAlarmSoundLoop();
+                    }
+                }
             }).catch(() => {});
-        } else if (ctx) {
-            globalAudioUnlocked = true;
-            alarmSoundBlocked = false;
-            updateGlobalAlarmWidget();
         }
     };
 
-    ["pointerdown", "keydown", "touchstart"].forEach(evt => {
-        window.addEventListener(evt, unlock, { capture: true, once: true });
+    events.forEach(evt => {
+        window.addEventListener(evt, unlock, { capture: true });
     });
 }
 
@@ -3637,27 +3656,35 @@ let lastSuccessfulEfData = null;
  * new alarm or stopped exhaust fan.
  */
 async function loadAlarmData() {
-    const [alarmResult, efResult] = await Promise.allSettled([
-        fetch(
-            ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
-                + "&t=" + Date.now(),
-            { cache: "no-store" }
-        ).then(async r => {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            const json = await r.json();
-            if (!json.success) throw new Error("Alarm API returned success=false");
-            return json;
-        }),
-        fetch(
-            ALARM_EF_URL + "?t=" + Date.now(),
-            { cache: "no-store" }
-        ).then(async r => {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            const json = await r.json();
-            if (!json.success) throw new Error("EF API returned success=false");
-            return json;
-        })
-    ]);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ALARM_FETCH_TIMEOUT_MS);
+
+    let alarmResult, efResult;
+    try {
+        [alarmResult, efResult] = await Promise.allSettled([
+            fetch(
+                ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
+                    + "&t=" + Date.now(),
+                { cache: "no-store", signal: controller.signal }
+            ).then(async r => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const json = await r.json();
+                if (!json.success) throw new Error("Alarm API returned success=false");
+                return json;
+            }),
+            fetch(
+                ALARM_EF_URL + "?t=" + Date.now(),
+                { cache: "no-store", signal: controller.signal }
+            ).then(async r => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const json = await r.json();
+                if (!json.success) throw new Error("EF API returned success=false");
+                return json;
+            })
+        ]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
 
     const dbSuccess = alarmResult.status === "fulfilled";
     const efSuccess = efResult.status === "fulfilled";
@@ -3765,7 +3792,17 @@ async function loadAlarmData() {
     }
 }
 
+let loadingAlarmData = false;
+let loadingAlarmStartTime = 0;
+
 async function safeLoadAlarmData() {
+    const now = Date.now();
+    if (loadingAlarmData && (now - loadingAlarmStartTime < ALARM_GUARD_EXPIRY_MS)) {
+        return;
+    }
+    loadingAlarmData = true;
+    loadingAlarmStartTime = now;
+
     try {
         await loadAlarmData();
     } catch (error) {
@@ -3774,6 +3811,8 @@ async function safeLoadAlarmData() {
         if (currentEquipment === "ALARM") {
             setConnection(false);
         }
+    } finally {
+        loadingAlarmData = false;
     }
 }
 
@@ -11920,11 +11959,7 @@ function navigateTo(equipment, filter = "") {
 
     renderEquipment();
     safeLoadData();
-
-    if (!isHistoryPage()) {
-        safeLoadAlarmData();
-    }
-
+    safeLoadAlarmData();
     handleActivePageChanged();
 }
 
@@ -11975,21 +12010,7 @@ function isHistoryPage() {
     return currentEquipment === "ROOM_TEMP_RH" && roomView === ROOM_VIEW_HOURLY;
 }
 
-async function safeLoadAlarmData() {
-    if (isHistoryPage()) {
-        return;
-    }
 
-    try {
-        await loadAlarmData();
-    } catch (error) {
-        console.error("HVAC alarm API error:", error);
-
-        if (currentEquipment === "ALARM") {
-            setConnection(false);
-        }
-    }
-}
 
 /*
  * The wall display can change resolution, and the viewport can change when a
