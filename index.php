@@ -115,6 +115,17 @@ $appVersion = app_version_info();
     <title>HVAC Monitoring</title>
     <link rel="stylesheet" href="style.css?v=<?= filemtime(__DIR__ . '/style.css') ?>">
     <link rel="stylesheet" href="ef.css?v=<?= filemtime(__DIR__ . '/ef.css') ?>">
+    <style>
+        @keyframes tabBlinkDanger {
+            0% { background-color: #dc3545 !important; color: white !important; }
+            50% { background-color: transparent !important; }
+            100% { background-color: #dc3545 !important; color: white !important; }
+        }
+        .tab-blinking {
+            animation: tabBlinkDanger 1s infinite !important;
+            border-color: #dc3545 !important;
+        }
+    </style>
 </head>
 
 <body class="is-main-view">
@@ -165,7 +176,7 @@ $appVersion = app_version_info();
     <button class="nav-button" data-equipment="ROOM_TEMP_RH">Room Temp &amp; RH</button>
     <button class="nav-button" data-equipment="EXHAUST_FAN">Exhaust Fan</button>
     <button class="nav-button" data-equipment="AHU_G8">AHU / EF G8</button>
-    <button class="nav-button" data-equipment="ALARM">Alarm</button>
+    <button id="tab-alarm" class="nav-button" data-equipment="ALARM">Alarm</button>
     <button class="nav-button" data-equipment="ENERGY">Energy</button>
     <button class="nav-button" data-equipment="ACTIVITY_LOG">Activity Log</button>
 </nav>
@@ -2773,6 +2784,7 @@ function updateGlobalAlarmWidget() {
 
     const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
     const totalActiveCount = activeAlarmTriggerKeys.size;
+    const navAlarmTab = document.getElementById("tab-alarm");
 
     updateAlarmDocumentTitle(unackCount, false);
 
@@ -2785,6 +2797,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (navAlarmTab) navAlarmTab.classList.add("tab-blinking");
         if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("PLAY_ALARM"); }
     } else if (totalActiveCount > 0) {
         btn.textContent = "ACKED (" + totalActiveCount + ")";
@@ -2795,6 +2808,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (navAlarmTab) navAlarmTab.classList.remove("tab-blinking");
         if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("STOP_ALARM"); }
     } else {
         btn.textContent = "";
@@ -2804,6 +2818,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (navAlarmTab) navAlarmTab.classList.remove("tab-blinking");
         if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("STOP_ALARM"); }
     }
 }
