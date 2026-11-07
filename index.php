@@ -2786,6 +2786,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("PLAY_ALARM"); }
     } else if (totalActiveCount > 0) {
         btn.textContent = "ACKED (" + totalActiveCount + ")";
         btn.className = "global-mute-btn is-muted";
@@ -2796,6 +2797,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("STOP_ALARM"); }
     } else {
         btn.textContent = "";
         btn.className = "global-mute-btn is-hidden";
@@ -2804,6 +2806,7 @@ function updateGlobalAlarmWidget() {
 
         notice.textContent = "";
         notice.classList.add("is-hidden");
+        if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage("STOP_ALARM"); }
     }
 }
 
