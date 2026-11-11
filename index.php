@@ -265,12 +265,16 @@ const refreshState = {
     },
 };
 
-let chillerTab = "MODBUS"; // "MODBUS" | "BACNET"
+let chillerTab = "MODBUS"; // "MODBUS" | "BACNET" | "SETPOINT"
 
 function getInitialEquipment() {
     const hash = (window.location.hash || "").replace(/^#/, "").trim().toUpperCase();
     if (hash === "CHILLER_BACNET" || hash === "CHILLER/BACNET" || hash === "CHILLER-BACNET" || hash === "HVAC_SC") {
         chillerTab = "BACNET";
+        return "CHILLER";
+    }
+    if (hash === "CHILLER_SETPOINT" || hash === "CHILLER/SETPOINT" || hash === "CHILLER-SETPOINT") {
+        chillerTab = "SETPOINT";
         return "CHILLER";
     }
     if (hash === "CHILLER" || hash === "CHILLER_MODBUS" || hash === "CHILLER/MODBUS" || hash === "CHILLER-MODBUS") {
@@ -286,6 +290,8 @@ function getInitialEquipment() {
     const tabParam = (params.get("tab") || "").trim().toUpperCase();
     if (tabParam === "BACNET") {
         chillerTab = "BACNET";
+    } else if (tabParam === "SETPOINT") {
+        chillerTab = "SETPOINT";
     } else if (tabParam === "MODBUS") {
         chillerTab = "MODBUS";
     }
@@ -415,6 +421,28 @@ function createEfCard(unit) {
     const status = getEfStatus(unit);
     card.className = "unit-card ef-card status-" + status;
     card.dataset.status = status;
+    card.tabIndex = 0;
+
+    const unitName = unit.name ?? "";
+    const isPm = typeof isUnitInMaintenance === "function" && isUnitInMaintenance("EXHAUST_FAN", unitName);
+
+    // Operator Sticky Note badge/button (top-left) if open note exists
+    const k = typeof noteKey === "function" ? noteKey("EXHAUST_FAN", unitName) : ("EXHAUST_FAN:" + unitName);
+    const note = typeof notesByUnit !== "undefined" ? notesByUnit.get(k) : null;
+    if (note && typeof buildNoteIconButton === "function") {
+        card.classList.add("has-note");
+        card.appendChild(buildNoteIconButton("EXHAUST_FAN", unit, note));
+    }
+
+    // Preventive Maintenance (PM) text badge (top-left) if active
+    if (isPm) {
+        card.classList.add("has-pm");
+        const pmBadge = document.createElement("span");
+        pmBadge.className = "ef-pm-badge";
+        pmBadge.textContent = "PM";
+        pmBadge.title = "Preventive Maintenance aktif (alarm OFF dibisukan)";
+        card.appendChild(pmBadge);
+    }
 
     const dot = document.createElement("span");
     dot.className = "ef-run-dot is-" + status;
@@ -423,7 +451,7 @@ function createEfCard(unit) {
 
     const name = document.createElement("div");
     name.className = "ef-name";
-    name.textContent = unit.name ?? "";
+    name.textContent = unitName;
     card.appendChild(name);
 
     if (status !== "run") {
@@ -431,7 +459,149 @@ function createEfCard(unit) {
         label.className = "ef-status-label is-" + status;
         label.textContent = status === "off" ? "OFF" : "UNKNOWN";
         card.appendChild(label);
+    } else if (isPm) {
+        // If EF is RUN while PM is still active: display notice without auto-clearing PM
+        const notice = document.createElement("div");
+        notice.className = "ef-pm-notice";
+        notice.textContent = "EF RUN, PM aktif";
+        card.appendChild(notice);
     }
+
+    /* ---- Exhaust Fan Card Interaction & Gestures ---- */
+    // Mouse hover: show note popover if note exists or PM is active
+    card.addEventListener("pointerenter", (e) => {
+        if (e.pointerType === "mouse" && typeof showNotePopover === "function") {
+            const currentNote = typeof notesByUnit !== "undefined" ? notesByUnit.get(k) : null;
+            const pmActive = typeof isUnitInMaintenance === "function" && isUnitInMaintenance("EXHAUST_FAN", unitName);
+            if (currentNote || pmActive) {
+                showNotePopover(card, "EXHAUST_FAN", unit, currentNote);
+            }
+        }
+    });
+
+    card.addEventListener("pointerleave", (e) => {
+        if (e.pointerType === "mouse") {
+            setTimeout(() => {
+                if (activePopoverAnchor && activePopoverAnchor.hoveringPopover) return;
+                if (activePopoverAnchor && activePopoverAnchor.tileElement === card) {
+                    hideNotePopover();
+                }
+            }, 50);
+        }
+    });
+
+    // Mouse double-click opens detail modal (single click does nothing)
+    card.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".ahu-note-btn")) return;
+        if (typeof openUnitDetailModal === "function") {
+            openUnitDetailModal("EXHAUST_FAN", unit, card);
+        }
+    });
+
+    // Touch: double-tap or long-press opens detail modal (single tap does nothing)
+    let touchStartTime = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchMoved = false;
+    let longPressTimer = null;
+    let longPressTriggered = false;
+    let lastTapTime = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    card.addEventListener("touchstart", (e) => {
+        if (e.target.closest(".ahu-note-btn")) return;
+        if (e.touches.length !== 1) return;
+
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchStartTime = Date.now();
+        touchMoved = false;
+        longPressTriggered = false;
+
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+        }
+
+        longPressTimer = setTimeout(() => {
+            if (!touchMoved) {
+                longPressTriggered = true;
+                if (typeof openUnitDetailModal === "function") {
+                    openUnitDetailModal("EXHAUST_FAN", unit, card);
+                }
+            }
+        }, 500);
+    }, { passive: true });
+
+    card.addEventListener("touchmove", (e) => {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - touchStartX);
+        const dy = Math.abs(touch.clientY - touchStartY);
+        if (dx > 10 || dy > 10) {
+            touchMoved = true;
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }
+    }, { passive: true });
+
+    card.addEventListener("touchend", (e) => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+
+        if (e.target.closest(".ahu-note-btn")) return;
+        if (longPressTriggered) {
+            if (e.cancelable) e.preventDefault();
+            return;
+        }
+        if (touchMoved) return;
+
+        const now = Date.now();
+        const tapDuration = now - touchStartTime;
+        if (tapDuration > 450) {
+            return;
+        }
+
+        const timeSinceLastTap = now - lastTapTime;
+        const dx = Math.abs(touchStartX - lastTapX);
+        const dy = Math.abs(touchStartY - lastTapY);
+
+        if (timeSinceLastTap > 40 && timeSinceLastTap < 400 && dx < 35 && dy < 35) {
+            if (e.cancelable) e.preventDefault();
+            lastTapTime = 0;
+            if (typeof openUnitDetailModal === "function") {
+                openUnitDetailModal("EXHAUST_FAN", unit, card);
+            }
+        } else {
+            lastTapTime = now;
+            lastTapX = touchStartX;
+            lastTapY = touchStartY;
+        }
+    });
+
+    card.addEventListener("touchcancel", () => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        touchMoved = false;
+        longPressTriggered = false;
+    });
+
+    // Keyboard Enter opens detail modal
+    card.addEventListener("keydown", (e) => {
+        if (e.target === card && e.key === "Enter") {
+            e.preventDefault();
+            if (typeof openUnitDetailModal === "function") {
+                openUnitDetailModal("EXHAUST_FAN", unit, card);
+            }
+        }
+    });
 
     return card;
 }
@@ -2893,6 +3063,13 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                 return;
             }
 
+            /* PM CHECK: If EF unit has active Preventive Maintenance, suppress sound trigger */
+            const isPmActive = isEf && (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", equipName);
+            alarm.is_pm = isPmActive;
+            if (isPmActive) {
+                return; /* Muted from sound triggers */
+            }
+
             const triggerKey = "ALARM:" + alarm.id;
             currentDbKeys.add(triggerKey);
         });
@@ -2942,8 +3119,11 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
 
                     /* S3 de-duplication: if EF_POLLER already wrote an ACTIVE ALARM row, don't double trigger */
                     if (!lastDbAlarmEfNames.has(fanKeyUpper)) {
+                        const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
                         const efTriggerKey = "EFOFF:" + fanKeyUpper;
-                        currentEfKeys.add(efTriggerKey);
+                        if (!isPmActive) {
+                            currentEfKeys.add(efTriggerKey);
+                        }
 
                         /* Prepare synthetic LIVE row for ALARM tab (E4, C3) */
                         newSyntheticLiveRows.push({
@@ -2964,6 +3144,7 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                             raised_at: null, /* C3: Show '—' */
                             first_seen: liveEfFirstSeenMap.get(fanKeyUpper) || "--",
                             cleared_at: null,
+                            is_pm: isPmActive,
                             is_synthetic: true
                         });
                     }
@@ -3096,6 +3277,14 @@ function createAlarmRow(alarm) {
         + (alarm.event_class === "ALARM" ? "alarm-badge-alarm" : "alarm-badge-warning");
     badge.textContent = alarm.event_class;
     category.appendChild(badge);
+
+    if (alarm.is_pm) {
+        const pmBadge = document.createElement("span");
+        pmBadge.className = "alarm-badge alarm-badge-pm";
+        pmBadge.textContent = "PM";
+        pmBadge.title = "Preventive Maintenance aktif (alarm OFF dibisukan)";
+        category.appendChild(pmBadge);
+    }
 
     const status = document.createElement("div");
     status.className = "alarm-cell";
@@ -3355,9 +3544,9 @@ async function loadAlarmData() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), ALARM_FETCH_TIMEOUT_MS);
 
-    let alarmResult, efResult;
+    let alarmResult, efResult, maintResult;
     try {
-        [alarmResult, efResult] = await Promise.allSettled([
+        [alarmResult, efResult, maintResult] = await Promise.allSettled([
             fetch(
                 ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
                     + "&t=" + Date.now(),
@@ -3376,6 +3565,15 @@ async function loadAlarmData() {
                 const json = await r.json();
                 if (!json.success) throw new Error("EF API returned success=false");
                 return json;
+            }),
+            fetch(
+                (typeof MAINTENANCE_API_URL !== "undefined" ? MAINTENANCE_API_URL : "api_maintenance.php") + "?active=1&t=" + Date.now(),
+                { cache: "no-store", signal: controller.signal }
+            ).then(async r => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const json = await r.json();
+                if (!json.success) throw new Error("Maintenance API returned success=false");
+                return json;
             })
         ]);
     } finally {
@@ -3384,6 +3582,25 @@ async function loadAlarmData() {
 
     const dbSuccess = alarmResult.status === "fulfilled";
     const efSuccess = efResult.status === "fulfilled";
+
+    /* Update Preventive Maintenance (PM) state */
+    const maintSuccess = maintResult && maintResult.status === "fulfilled" && maintResult.value;
+    if (maintSuccess) {
+        maintenanceFetchSuccess = true;
+        pmEditEnabled = Boolean(maintResult.value.pm_edit_enabled);
+        const maintList = Array.isArray(maintResult.value.maintenance) ? maintResult.value.maintenance : [];
+        if (typeof maintenanceByUnit !== "undefined") {
+            maintenanceByUnit.clear();
+            const fetchNow = Date.now();
+            maintList.forEach(m => {
+                const k = typeof maintenanceKey === "function" ? maintenanceKey(m.equip_type, m.unit_name) : (m.equip_type + ":" + m.unit_name);
+                maintenanceByUnit.set(k, Object.assign({}, m, { fetched_at: fetchNow }));
+            });
+        }
+    } else {
+        /* Fail-safe: if maintenance status failed to load or timed out, alarms sound normally */
+        maintenanceFetchSuccess = false;
+    }
 
     if (!dbSuccess && !efSuccess) {
         consecutiveAlarmPollFailures++;
@@ -3484,6 +3701,8 @@ async function loadAlarmData() {
 
     if (currentEquipment === "ALARM") {
         renderAlarm();
+    } else if (currentEquipment === "EXHAUST_FAN" && typeof refreshUnitCardsNotes === "function") {
+        refreshUnitCardsNotes();
     }
 }
 
@@ -5688,7 +5907,7 @@ function ahuTagFor(unit, band) {
 }
 
 /* =========================================================
-   OPERATOR STICKY NOTES & UNIT DETAIL MODAL
+   OPERATOR STICKY NOTES & PREVENTIVE MAINTENANCE (PM)
    ========================================================= */
 
 const NOTES_API_URL = "api_notes.php";
@@ -5700,6 +5919,49 @@ const notesByUnit = new Map();
 // Draft map to preserve typing in textarea across 10s re-renders: key -> string
 const noteDraftsByUnit = new Map();
 let notesUnavailable = false;
+
+/* Preventive Maintenance (PM) State */
+const MAINTENANCE_API_URL = "api_maintenance.php";
+let pmEditEnabled = false;
+let maintenanceFetchSuccess = false;
+// Keyed by maintenanceKey(equipType, unitName) -> Maintenance object
+const maintenanceByUnit = new Map();
+
+function maintenanceKey(equipType, unitName) {
+    return String(equipType || "").toUpperCase() + ":" + String(unitName || "").trim().toUpperCase();
+}
+
+function isUnitInMaintenance(equipType, unitName) {
+    // Fail-safe: if maintenance status failed to load or not yet loaded, alarms sound normally
+    if (!maintenanceFetchSuccess) return false;
+    const k = maintenanceKey(equipType, unitName);
+    const m = maintenanceByUnit.get(k);
+    if (!m || m.active !== 1 || !m.is_active) return false;
+    // Check remaining seconds minus elapsed client time
+    const elapsedSec = Math.floor((Date.now() - (m.fetched_at || Date.now())) / 1000);
+    const remaining = (m.remaining_seconds || 0) - elapsedSec;
+    return remaining > 0;
+}
+
+function getUnitMaintenance(equipType, unitName) {
+    if (!maintenanceFetchSuccess) return null;
+    const k = maintenanceKey(equipType, unitName);
+    const m = maintenanceByUnit.get(k);
+    if (!m || m.active !== 1 || !m.is_active) return null;
+    const elapsedSec = Math.floor((Date.now() - (m.fetched_at || Date.now())) / 1000);
+    const remaining = Math.max(0, (m.remaining_seconds || 0) - elapsedSec);
+    return Object.assign({}, m, { client_remaining_seconds: remaining });
+}
+
+function formatRemainingSeconds(seconds) {
+    if (seconds <= 0) return "kedaluwarsa";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) {
+        return h + "j " + (m > 0 ? m + "m " : "") + "tersisa";
+    }
+    return Math.max(1, m) + "m tersisa";
+}
 
 let activePopoverAnchor = null; // { equipType, unitId, tileElement, unit, note, hoveringPopover }
 let activeDetailModal = null;   // { equipType, unitId, unit, anchorTile, serverUpdatedAt }
@@ -5723,6 +5985,16 @@ function getUnitAutoReason(equipType, unit) {
         }
         return parts.length ? parts.join(", ") : (band ? band.toUpperCase() : "NORMAL");
     }
+    if (equipType === "EXHAUST_FAN") {
+        const status = getEfStatus(unit);
+        const isPm = isUnitInMaintenance("EXHAUST_FAN", unit.name);
+        if (status === "run") {
+            return isPm ? "RUNNING (PM aktif)" : "RUNNING";
+        } else if (status === "off") {
+            return isPm ? "STOPPED (PM aktif)" : "STOPPED";
+        }
+        return isPm ? "UNKNOWN (PM aktif)" : "UNKNOWN";
+    }
     return "Status Normal";
 }
 
@@ -5741,6 +6013,11 @@ function getOrCreateNotePopover() {
         const reason = document.createElement("div");
         reason.className = "unp-reason";
         popover.appendChild(reason);
+
+        const pmRow = document.createElement("div");
+        pmRow.className = "unp-pm-row";
+        pmRow.style.display = "none";
+        popover.appendChild(pmRow);
 
         const text = document.createElement("div");
         text.className = "unp-text";
@@ -5799,16 +6076,51 @@ function positionNotePopover(tile, popover) {
 }
 
 function showNotePopover(tile, equipType, unit, note) {
-    if (!note) return;
     const popover = getOrCreateNotePopover();
     const reasonEl = popover.querySelector(".unp-reason");
+    const pmRowEl = popover.querySelector(".unp-pm-row");
     const textEl = popover.querySelector(".unp-text");
     const metaEl = popover.querySelector(".unp-meta");
     const editBtn = popover.querySelector(".unp-edit-btn");
 
     reasonEl.textContent = getUnitAutoReason(equipType, unit);
-    textEl.textContent = note.note || "";
-    metaEl.textContent = "— " + (note.author || "operator") + " • " + (note.updated_at || "").slice(0, 16);
+
+    if (equipType === "EXHAUST_FAN") {
+        const maint = getUnitMaintenance("EXHAUST_FAN", unit.name);
+        const isPm = Boolean(maint && maint.client_remaining_seconds > 0);
+        pmRowEl.style.display = "flex";
+        pmRowEl.innerHTML = "";
+
+        const pmBadge = document.createElement("span");
+        pmBadge.className = "unp-pm-badge" + (isPm ? " is-active" : "");
+        pmBadge.textContent = isPm ? "PM AKTIF" : "PM NONAKTIF";
+        pmRowEl.appendChild(pmBadge);
+
+        const pmTimer = document.createElement("span");
+        pmTimer.className = "unp-pm-timer";
+        if (isPm) {
+            pmTimer.textContent = "(" + formatRemainingSeconds(maint.client_remaining_seconds) + ")";
+        } else {
+            pmTimer.textContent = "";
+        }
+        pmRowEl.appendChild(pmTimer);
+
+        editBtn.textContent = "Edit Note / PM";
+    } else {
+        pmRowEl.style.display = "none";
+        editBtn.textContent = "Edit Note";
+    }
+
+    if (note) {
+        textEl.textContent = note.note || "";
+        textEl.style.color = "var(--note-ink)";
+        metaEl.style.display = "block";
+        metaEl.textContent = "— " + (note.author || "operator") + " • " + (note.updated_at || "").slice(0, 16);
+    } else {
+        textEl.textContent = "Tidak ada catatan operator.";
+        textEl.style.color = "var(--note-meta)";
+        metaEl.style.display = "none";
+    }
 
     editBtn.onclick = (e) => {
         e.stopPropagation();
@@ -5841,10 +6153,12 @@ function reanchorOrHideNotePopover() {
     if (!activePopoverAnchor) return;
     const { equipType, unitId } = activePopoverAnchor;
 
-    const cards = document.querySelectorAll(".ahu-card");
+    const selector = equipType === "EXHAUST_FAN" ? ".ef-card" : ".ahu-card";
+    const nameSelector = equipType === "EXHAUST_FAN" ? ".ef-name" : ".ahu-card-name";
+    const cards = document.querySelectorAll(selector);
     let foundTile = null;
     for (let i = 0; i < cards.length; i++) {
-        const nameEl = cards[i].querySelector(".ahu-card-name");
+        const nameEl = cards[i].querySelector(nameSelector);
         if (nameEl && nameEl.textContent.trim() === unitId) {
             foundTile = cards[i];
             break;
@@ -5852,7 +6166,8 @@ function reanchorOrHideNotePopover() {
     }
 
     const currentNote = notesByUnit.get(noteKey(equipType, unitId));
-    if (foundTile && currentNote) {
+    const isPm = equipType === "EXHAUST_FAN" && isUnitInMaintenance("EXHAUST_FAN", unitId);
+    if (foundTile && (currentNote || isPm)) {
         activePopoverAnchor.tileElement = foundTile;
         activePopoverAnchor.note = currentNote;
         const popover = document.getElementById("unitNotePopover");
@@ -5902,7 +6217,7 @@ function buildNoteIconButton(equipType, unit, note) {
 
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const card = btn.closest(".ahu-card");
+        const card = btn.closest(".ahu-card, .ef-card");
         if (activePopoverAnchor && activePopoverAnchor.unitId === unit.name) {
             hideNotePopover();
         } else if (card) {
@@ -5911,7 +6226,7 @@ function buildNoteIconButton(equipType, unit, note) {
     });
 
     btn.addEventListener("focus", () => {
-        const card = btn.closest(".ahu-card");
+        const card = btn.closest(".ahu-card, .ef-card");
         if (card) showNotePopover(card, equipType, unit, note);
     });
 
@@ -5989,34 +6304,179 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
     const statRow = document.createElement("div");
     statRow.className = "ahu-detail-summary-row";
 
-    const band = ahuBandOf(unit);
-    const runState = ahuRunState(unit);
-    const reading = ahuCardReading(unit);
-    const tag = ahuTagFor(unit, band);
+    if (equipType === "EXHAUST_FAN") {
+        const status = getEfStatus(unit);
+        const isPm = isUnitInMaintenance("EXHAUST_FAN", unit.name);
+        const panelText = unit.panel_no !== undefined ? "Panel " + unit.panel_no : (unit.source || "G8");
+        const statusText = status === "run" ? "RUNNING" : (status === "off" ? "STOPPED" : "UNKNOWN");
+        const statusClass = status === "run" ? "is-run" : (status === "off" ? "is-off" : "is-unknown");
 
-    statRow.innerHTML = `
-        <div>
-            <div class="ahu-detail-stat-label">Health Status</div>
-            <div class="ahu-detail-stat-value is-${band}">${band.toUpperCase()}</div>
-        </div>
-        <div>
-            <div class="ahu-detail-stat-label">Operating</div>
-            <div class="ahu-detail-stat-value is-${runState}">${runState === 'on' ? 'RUNNING' : (runState === 'off' ? 'STOPPED' : 'UNKNOWN')}</div>
-        </div>
-        <div>
-            <div class="ahu-detail-stat-label">Reading</div>
-            <div class="ahu-detail-stat-value"></div>
-        </div>
-        <div>
-            <div class="ahu-detail-stat-label">Deviation / Condition</div>
-            <div class="ahu-detail-stat-value"></div>
-        </div>
-    `;
-    const statVals = statRow.querySelectorAll(".ahu-detail-stat-value");
-    if (statVals[2]) statVals[2].textContent = reading || "—";
-    if (statVals[3]) statVals[3].textContent = tag || "Within Limits";
+        statRow.innerHTML = `
+            <div>
+                <div class="ahu-detail-stat-label">Operating Status</div>
+                <div class="ahu-detail-stat-value ${statusClass}">${statusText}</div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Panel / Group</div>
+                <div class="ahu-detail-stat-value">${panelText}</div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Maintenance (PM)</div>
+                <div class="ahu-detail-stat-value is-pm-stat">${isPm ? 'AKTIF' : 'NONAKTIF'}</div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Condition Note</div>
+                <div class="ahu-detail-stat-value is-pm-notice">${(status === 'run' && isPm) ? 'EF sudah RUN, PM masih aktif' : (isPm ? 'Alarm OFF dibisukan' : 'Normal')}</div>
+            </div>
+        `;
+    } else {
+        const band = ahuBandOf(unit);
+        const runState = ahuRunState(unit);
+        const reading = ahuCardReading(unit);
+        const tag = ahuTagFor(unit, band);
+
+        statRow.innerHTML = `
+            <div>
+                <div class="ahu-detail-stat-label">Health Status</div>
+                <div class="ahu-detail-stat-value is-${band}">${band.toUpperCase()}</div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Operating</div>
+                <div class="ahu-detail-stat-value is-${runState}">${runState === 'on' ? 'RUNNING' : (runState === 'off' ? 'STOPPED' : 'UNKNOWN')}</div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Reading</div>
+                <div class="ahu-detail-stat-value"></div>
+            </div>
+            <div>
+                <div class="ahu-detail-stat-label">Deviation / Condition</div>
+                <div class="ahu-detail-stat-value"></div>
+            </div>
+        `;
+        const statVals = statRow.querySelectorAll(".ahu-detail-stat-value");
+        if (statVals[2]) statVals[2].textContent = reading || "—";
+        if (statVals[3]) statVals[3].textContent = tag || "Within Limits";
+    }
 
     modal.appendChild(statRow);
+
+    /* ---- Preventive Maintenance (PM) Toggle Section (Exhaust Fan) ---- */
+    if (equipType === "EXHAUST_FAN") {
+        const pmSec = document.createElement("div");
+        pmSec.className = "ef-pm-modal-section";
+
+        const pmHeader = document.createElement("div");
+        pmHeader.className = "ef-pm-modal-header";
+
+        const pmLabel = document.createElement("label");
+        pmLabel.className = "ef-pm-toggle-label";
+
+        const pmCheckbox = document.createElement("input");
+        pmCheckbox.type = "checkbox";
+        pmCheckbox.className = "ef-pm-checkbox";
+
+        const maint = getUnitMaintenance("EXHAUST_FAN", unit.name);
+        const isPmActive = Boolean(maint && maint.client_remaining_seconds > 0);
+        pmCheckbox.checked = isPmActive;
+
+        const pmTitleSpan = document.createElement("span");
+        pmTitleSpan.className = "ef-pm-toggle-title";
+        pmTitleSpan.textContent = "PM (Preventive Maintenance)";
+
+        pmLabel.appendChild(pmCheckbox);
+        pmLabel.appendChild(pmTitleSpan);
+        pmHeader.appendChild(pmLabel);
+
+        const pmTimerSpan = document.createElement("span");
+        pmTimerSpan.className = "ef-pm-modal-timer";
+        if (isPmActive) {
+            pmTimerSpan.textContent = "(" + formatRemainingSeconds(maint.client_remaining_seconds) + ")";
+        }
+        pmHeader.appendChild(pmTimerSpan);
+        pmSec.appendChild(pmHeader);
+
+        const pmNotice = document.createElement("div");
+        pmNotice.className = "ef-pm-modal-notice";
+        if (!pmEditEnabled) {
+            pmCheckbox.disabled = true;
+            pmNotice.textContent = "PM hanya dapat diatur dari PC control room";
+            pmNotice.classList.add("is-disabled-notice");
+        } else if (isPmActive) {
+            pmNotice.textContent = "PM aktif: Alarm EF OFF dibisukan untuk unit ini.";
+            pmNotice.classList.add("is-active-notice");
+        } else {
+            pmNotice.textContent = "Centang untuk membisukan alarm EF OFF selama maintenance (otomatis kedaluwarsa 8 jam).";
+        }
+        pmSec.appendChild(pmNotice);
+
+        pmCheckbox.addEventListener("change", async () => {
+            if (!pmEditEnabled) return;
+            const targetActive = pmCheckbox.checked;
+            pmCheckbox.disabled = true;
+            pmNotice.textContent = targetActive ? "Mengaktifkan PM..." : "Menonaktifkan PM...";
+
+            try {
+                const res = await fetch(MAINTENANCE_API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: targetActive ? "enable" : "disable",
+                        equip_type: "EXHAUST_FAN",
+                        unit_name: unit.name,
+                        duration_hours: 8
+                    })
+                });
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || data.error || "Gagal mengubah status PM");
+                }
+
+                const k = maintenanceKey("EXHAUST_FAN", unit.name);
+                if (data.active && data.maintenance) {
+                    maintenanceByUnit.set(k, Object.assign({}, data.maintenance, { fetched_at: Date.now() }));
+                    pmCheckbox.checked = true;
+                    pmNotice.textContent = "PM aktif: Alarm EF OFF dibisukan untuk unit ini.";
+                    pmNotice.className = "ef-pm-modal-notice is-active-notice";
+                    pmTimerSpan.textContent = "(" + formatRemainingSeconds(data.maintenance.remaining_seconds) + ")";
+                } else {
+                    maintenanceByUnit.delete(k);
+                    pmCheckbox.checked = false;
+                    pmNotice.textContent = "PM nonaktif: Alarm EF OFF kembali normal.";
+                    pmNotice.className = "ef-pm-modal-notice";
+                    pmTimerSpan.textContent = "";
+                }
+
+                // Re-evaluate alarms immediately (instant PLAY_ALARM / STOP_ALARM)
+                const currentAlarms = allData.ALARM?.alarms || [];
+                const liveEf = allData.EXHAUST_FAN || [];
+                const liveG8 = allData.EXHAUST_FAN_G8 || [];
+                evaluateAlarmTriggers(currentAlarms, liveEf, liveG8, true, true);
+
+                // Refresh EF cards UI
+                refreshUnitCardsNotes();
+
+                // Update summary values in open modal
+                const statPm = statRow.querySelector(".is-pm-stat");
+                if (statPm) statPm.textContent = data.active ? "AKTIF" : "NONAKTIF";
+                const statNotice = statRow.querySelector(".is-pm-notice");
+                if (statNotice) {
+                    const st = getEfStatus(unit);
+                    statNotice.textContent = (st === "run" && data.active) ? "EF sudah RUN, PM masih aktif" : (data.active ? "Alarm OFF dibisukan" : "Normal");
+                }
+
+            } catch (err) {
+                console.error("PM toggle error:", err);
+                pmCheckbox.checked = !targetActive; // revert checkbox
+                pmNotice.textContent = err.message || "Gagal mengubah status PM";
+                pmNotice.className = "ef-pm-modal-notice is-error-notice";
+            } finally {
+                pmCheckbox.disabled = false;
+            }
+        });
+
+        modal.appendChild(pmSec);
+    }
 
     const noteSec = document.createElement("div");
     noteSec.className = "ahu-note-editor-section";
@@ -6232,33 +6692,92 @@ function notifyDetailModalIfNoteChanged(serverNote) {
 }
 
 function refreshUnitCardsNotes() {
-    if (currentEquipment !== "AHU") return;
-    const cards = document.querySelectorAll(".ahu-card");
-    cards.forEach(card => {
-        const nameEl = card.querySelector(".ahu-card-name");
-        if (!nameEl) return;
-        const unitName = nameEl.textContent.trim();
-        const key = noteKey("AHU", unitName);
-        const note = notesByUnit.get(key);
+    if (currentEquipment === "AHU") {
+        const cards = document.querySelectorAll(".ahu-card");
+        cards.forEach(card => {
+            const nameEl = card.querySelector(".ahu-card-name");
+            if (!nameEl) return;
+            const unitName = nameEl.textContent.trim();
+            const key = noteKey("AHU", unitName);
+            const note = notesByUnit.get(key);
 
-        let existingBtn = card.querySelector(".ahu-note-btn");
-        if (note) {
-            card.classList.add("has-note");
-            if (!existingBtn) {
-                const unit = ahuUnits.find(u => u.name === unitName) || { name: unitName };
-                const btn = buildNoteIconButton("AHU", unit, note);
-                card.appendChild(btn);
+            let existingBtn = card.querySelector(".ahu-note-btn");
+            if (note) {
+                card.classList.add("has-note");
+                if (!existingBtn) {
+                    const unit = ahuUnits.find(u => u.name === unitName) || { name: unitName };
+                    const btn = buildNoteIconButton("AHU", unit, note);
+                    card.appendChild(btn);
+                } else {
+                    existingBtn.setAttribute("aria-label", "Operator note for " + unitName + ": " + (note.note || ""));
+                    existingBtn.title = "Operator note: " + (note.note || "");
+                }
             } else {
-                existingBtn.setAttribute("aria-label", "Operator note for " + unitName + ": " + (note.note || ""));
-                existingBtn.title = "Operator note: " + (note.note || "");
+                card.classList.remove("has-note");
+                if (existingBtn) existingBtn.remove();
             }
-        } else {
-            card.classList.remove("has-note");
-            if (existingBtn) existingBtn.remove();
-        }
-    });
+        });
+        reanchorOrHideNotePopover();
+    } else if (currentEquipment === "EXHAUST_FAN") {
+        const cards = document.querySelectorAll(".ef-card");
+        cards.forEach(card => {
+            const nameEl = card.querySelector(".ef-name");
+            if (!nameEl) return;
+            const unitName = nameEl.textContent.trim();
+            const key = noteKey("EXHAUST_FAN", unitName);
+            const note = notesByUnit.get(key);
+            const isPm = isUnitInMaintenance("EXHAUST_FAN", unitName);
 
-    reanchorOrHideNotePopover();
+            // 1. Note button / badge
+            let existingBtn = card.querySelector(".ahu-note-btn");
+            if (note) {
+                card.classList.add("has-note");
+                if (!existingBtn) {
+                    const allEf = (allData.EXHAUST_FAN || []).concat(allData.EXHAUST_FAN_G8 || []);
+                    const unit = allEf.find(u => u.name === unitName) || { name: unitName };
+                    const btn = buildNoteIconButton("EXHAUST_FAN", unit, note);
+                    card.appendChild(btn);
+                } else {
+                    existingBtn.setAttribute("aria-label", "Operator note for " + unitName + ": " + (note.note || ""));
+                    existingBtn.title = "Operator note: " + (note.note || "");
+                }
+            } else {
+                card.classList.remove("has-note");
+                if (existingBtn) existingBtn.remove();
+            }
+
+            // 2. PM badge & notices
+            let existingPmBadge = card.querySelector(".ef-pm-badge");
+            let existingPmNotice = card.querySelector(".ef-pm-notice");
+            const status = card.dataset.status;
+
+            if (isPm) {
+                card.classList.add("has-pm");
+                if (!existingPmBadge) {
+                    const pmBadge = document.createElement("span");
+                    pmBadge.className = "ef-pm-badge";
+                    pmBadge.textContent = "PM";
+                    pmBadge.title = "Preventive Maintenance aktif (alarm OFF dibisukan)";
+                    card.appendChild(pmBadge);
+                }
+                if (status === "run") {
+                    if (!existingPmNotice) {
+                        const notice = document.createElement("div");
+                        notice.className = "ef-pm-notice";
+                        notice.textContent = "EF RUN, PM aktif";
+                        card.appendChild(notice);
+                    }
+                } else if (existingPmNotice) {
+                    existingPmNotice.remove();
+                }
+            } else {
+                card.classList.remove("has-pm");
+                if (existingPmBadge) existingPmBadge.remove();
+                if (existingPmNotice) existingPmNotice.remove();
+            }
+        });
+        reanchorOrHideNotePopover();
+    }
 }
 
 /* ---- Polling & Loading ---- */
@@ -6316,10 +6835,18 @@ function startNotesPolling() {
     if (notesPollTimer) {
         clearInterval(notesPollTimer);
     }
-    loadNotes("AHU");
+    if (currentEquipment === "AHU" || currentEquipment === "EXHAUST_FAN") {
+        loadNotes(currentEquipment);
+    } else {
+        loadNotes("AHU");
+    }
     notesPollTimer = setInterval(() => {
-        if (!isNotesPollPaused && currentEquipment === "AHU") {
-            loadNotes("AHU");
+        if (!isNotesPollPaused) {
+            if (currentEquipment === "AHU") {
+                loadNotes("AHU");
+            } else if (currentEquipment === "EXHAUST_FAN") {
+                loadNotes("EXHAUST_FAN");
+            }
         }
     }, NOTES_POLL_MS);
 }
@@ -6329,8 +6856,8 @@ document.addEventListener("visibilitychange", () => {
         isNotesPollPaused = true;
     } else {
         isNotesPollPaused = false;
-        if (currentEquipment === "AHU") {
-            loadNotes("AHU");
+        if (currentEquipment === "AHU" || currentEquipment === "EXHAUST_FAN") {
+            loadNotes(currentEquipment);
         }
     }
 });
@@ -8138,10 +8665,11 @@ function chillerMatchesSearch(u) {
 function renderChillerDashboard() {
     sectionTitle.textContent = "CHILLER";
 
-    // Build Tab Switch (Modbus | BACnet) into #pageSwitch
+    // Build Tab Switch (Modbus | BACnet | Setpoint & Max RLA) into #pageSwitch
     buildPageSwitch([
         { value: "MODBUS", label: "Modbus" },
-        { value: "BACNET", label: "BACnet" }
+        { value: "BACNET", label: "BACnet" },
+        { value: "SETPOINT", label: "Setpoint & Max RLA" }
     ], chillerTab, (newTab) => {
         if (chillerTab === newTab) return;
         chillerTab = newTab;
@@ -8152,6 +8680,8 @@ function renderChillerDashboard() {
 
     if (chillerTab === "BACNET") {
         renderChillerBacnet();
+    } else if (chillerTab === "SETPOINT") {
+        renderChillerSetpoint();
     } else {
         renderChillerModbus();
     }
@@ -9055,6 +9585,439 @@ function renderChillerBacnet() {
         search.focus();
         search.setSelectionRange(search.value.length, search.value.length);
     }
+}
+
+/* =========================================================
+   CHILLER SETPOINT & MAX RLA (HOURLY TELEMETRY)
+   ========================================================= */
+
+let chillerSetpointState = {
+    data: null,
+    isLoading: false,
+    lastFetchTime: null,
+    error: null,
+};
+
+async function fetchChillerSetpointData(force = false) {
+    if (chillerSetpointState.isLoading) return;
+    chillerSetpointState.isLoading = true;
+    if (force || !chillerSetpointState.data) {
+        renderChillerSetpoint();
+    }
+
+    try {
+        const res = await fetch("api_chiller_setpoint.php?t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || "Failed to load setpoint data");
+        chillerSetpointState.data = json;
+        chillerSetpointState.error = null;
+        chillerSetpointState.lastFetchTime = Date.now();
+    } catch (err) {
+        console.error("fetchChillerSetpointData error:", err);
+        chillerSetpointState.error = err.message || "Network error";
+    } finally {
+        chillerSetpointState.isLoading = false;
+        if (currentEquipment === "CHILLER" && chillerTab === "SETPOINT") {
+            renderChillerSetpoint();
+        }
+    }
+}
+
+function renderChillerSetpoint() {
+    sectionTitle.textContent = "CHILLER";
+
+    // Pastikan tab switch Modbus | BACnet | Setpoint & Max RLA selalu ter-render persisten di #pageSwitch
+    buildPageSwitch([
+        { value: "MODBUS", label: "Modbus" },
+        { value: "BACNET", label: "BACnet" },
+        { value: "SETPOINT", label: "Setpoint & Max RLA" }
+    ], "SETPOINT", (newTab) => {
+        if (chillerTab === newTab) return;
+        chillerTab = newTab;
+        updateChillerHash();
+        renderEquipment();
+        safeLoadData();
+    });
+
+    const state = chillerSetpointState;
+    const data = state.data;
+
+    if (data && data.data_timestamp) {
+        unitCount.textContent = "Hourly Snapshot: " + data.data_timestamp;
+    } else if (state.isLoading) {
+        unitCount.textContent = "Loading Setpoint Telemetry...";
+    } else {
+        unitCount.textContent = "Setpoint & Max RLA";
+    }
+
+    grid.innerHTML = "";
+
+    const page = document.createElement("div");
+    page.className = "chiller-dashboard";
+
+    // 1. Control & Status Bar (termasuk Navigasi Tab Modbus & BACnet persisten)
+    const toolbar = document.createElement("div");
+    toolbar.className = "chiller-summary";
+    toolbar.style.display = "flex";
+    toolbar.style.justifyContent = "space-between";
+    toolbar.style.alignItems = "center";
+    toolbar.style.flexWrap = "wrap";
+    toolbar.style.gap = "12px";
+    toolbar.style.padding = "10px 16px";
+    toolbar.style.background = "#151b22";
+    toolbar.style.border = "1px solid #2c3846";
+    toolbar.style.borderRadius = "10px";
+    toolbar.style.marginBottom = "18px";
+
+    // Left Box: Status & Info Snapshot
+    const leftBox = document.createElement("div");
+    leftBox.style.display = "flex";
+    leftBox.style.alignItems = "center";
+    leftBox.style.gap = "8px";
+
+    const statusDot = document.createElement("span");
+    statusDot.className = "connection-dot " + (data ? "online" : (state.isLoading ? "warning" : "offline"));
+    leftBox.appendChild(statusDot);
+
+    const infoText = document.createElement("span");
+    infoText.style.fontSize = "13px";
+    infoText.style.color = "#94a3b8";
+    infoText.textContent = data
+        ? ("Source: chiller_setpoint_hourly • Snapshot: " + (data.data_timestamp || "--"))
+        : (state.isLoading ? "Loading snapshot..." : "No data");
+    leftBox.appendChild(infoText);
+
+    toolbar.appendChild(leftBox);
+
+    // Right Box: Filter Tampilan Tabel & Tombol Refresh
+    const actionDiv = document.createElement("div");
+    actionDiv.style.display = "flex";
+    actionDiv.style.alignItems = "center";
+    actionDiv.style.flexWrap = "wrap";
+    actionDiv.style.gap = "8px";
+
+    if (!chillerSetpointState.tableMode) chillerSetpointState.tableMode = "ALL";
+
+    const modes = [
+        { key: "ALL", label: "Semua Tabel" },
+        { key: "LATEST", label: "Status Terkini" },
+        { key: "HISTORY", label: "Riwayat Log" }
+    ];
+
+    modes.forEach(m => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "nav-button" + (chillerSetpointState.tableMode === m.key ? " active" : "");
+        btn.style.padding = "5px 12px";
+        btn.style.fontSize = "12px";
+        btn.style.borderRadius = "6px";
+        btn.textContent = m.label;
+        btn.addEventListener("click", () => {
+            chillerSetpointState.tableMode = m.key;
+            renderChillerSetpoint();
+        });
+        actionDiv.appendChild(btn);
+    });
+
+    const refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.className = "nav-button";
+    refreshBtn.style.padding = "5px 12px";
+    refreshBtn.style.fontSize = "12px";
+    refreshBtn.style.borderRadius = "6px";
+    refreshBtn.textContent = state.isLoading ? "Refreshing..." : "↻ Refresh";
+    refreshBtn.disabled = state.isLoading;
+    refreshBtn.addEventListener("click", () => fetchChillerSetpointData(true));
+    actionDiv.appendChild(refreshBtn);
+
+    toolbar.appendChild(actionDiv);
+    page.appendChild(toolbar);
+
+    if (state.error) {
+        const errBox = document.createElement("div");
+        errBox.className = "chiller-warn-box";
+        errBox.style.marginBottom = "16px";
+        errBox.textContent = "⚠ " + state.error;
+        page.appendChild(errBox);
+    }
+
+    const units = (data && Array.isArray(data.units)) ? data.units : [];
+    const historyList = (data && Array.isArray(data.history)) ? data.history : [];
+
+    if (units.length === 0 && historyList.length === 0 && !state.isLoading) {
+        const emptyBox = document.createElement("div");
+        emptyBox.className = "chiller-empty";
+        emptyBox.textContent = "No data found in chiller_setpoint_hourly table.";
+        page.appendChild(emptyBox);
+        grid.appendChild(page);
+        return;
+    }
+
+    // 2. Table 1: Status Terkini (Chiller 1–9)
+    if (chillerSetpointState.tableMode === "ALL" || chillerSetpointState.tableMode === "LATEST") {
+        const latestSection = document.createElement("section");
+        latestSection.className = "chiller-building-group";
+        latestSection.style.marginBottom = "24px";
+
+        const secHeader = document.createElement("div");
+        secHeader.className = "chiller-building-header";
+
+        const titleRow = document.createElement("div");
+        titleRow.className = "chiller-building-title-row";
+
+        const titleEl = document.createElement("h2");
+        titleEl.className = "chiller-building-title";
+        titleEl.textContent = "Status Terkini (Latest Snapshot)";
+        titleRow.appendChild(titleEl);
+
+        const metaEl = document.createElement("span");
+        metaEl.className = "chiller-building-meta";
+        metaEl.textContent = "Data Setpoint & Active Setpoint RLA terbaru per unit Chiller";
+        titleRow.appendChild(metaEl);
+
+        secHeader.appendChild(titleRow);
+
+        const countEl = document.createElement("span");
+        countEl.className = "chiller-building-badge";
+        countEl.textContent = units.length + " unit Chiller";
+        secHeader.appendChild(countEl);
+
+        latestSection.appendChild(secHeader);
+
+        const tableWrap = document.createElement("div");
+        tableWrap.style.overflowX = "auto";
+        tableWrap.style.background = "#151b22";
+        tableWrap.style.border = "1px solid #2c3846";
+        tableWrap.style.borderRadius = "10px";
+        tableWrap.style.marginTop = "12px";
+
+        const table = document.createElement("table");
+        table.style.width = "100%";
+        table.style.borderCollapse = "collapse";
+        table.style.fontSize = "13px";
+        table.style.textAlign = "left";
+
+        const thead = document.createElement("thead");
+        thead.style.background = "#1e293b";
+        thead.style.borderBottom = "1px solid #334155";
+        thead.innerHTML = `
+            <tr>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Unit</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Gedung</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Gateway</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Setpoint (SP)</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Active Setpoint RLA</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Status Telemetri</th>
+                <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Snapshot Time</th>
+            </tr>
+        `;
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        units.forEach((unit, idx) => {
+            const hasData = unit.setpoint !== null || unit.active_setpoint_rla !== null;
+            const tr = document.createElement("tr");
+            tr.style.borderBottom = "1px solid #232d3b";
+            if (idx % 2 === 1) tr.style.background = "#11161d";
+
+            tr.innerHTML = `
+                <td style="padding: 10px 14px; color: #f8fafc; font-weight: 600;">
+                    <span class="connection-dot ${hasData ? 'online' : 'offline'}" style="display:inline-block; margin-right:8px; vertical-align:middle;"></span>
+                    ${unit.name}
+                </td>
+                <td style="padding: 10px 14px; color: #cbd5e1;">${unit.building} Building</td>
+                <td style="padding: 10px 14px; color: #94a3b8; font-family: monospace;">${unit.gateway}</td>
+                <td style="padding: 10px 14px; color: ${unit.setpoint !== null ? '#38bdf8' : '#64748b'}; font-weight: 700; font-size: 14px;">
+                    ${unit.setpoint !== null ? (unit.setpoint.toFixed(1) + ' °C') : '--'}
+                </td>
+                <td style="padding: 10px 14px; color: ${unit.active_setpoint_rla !== null ? '#4ade80' : '#64748b'}; font-weight: 700; font-size: 14px;">
+                    ${unit.active_setpoint_rla !== null ? (unit.active_setpoint_rla.toFixed(0) + ' %') : '--'}
+                </td>
+                <td style="padding: 10px 14px;">
+                    <span class="chiller-badge ${hasData ? 'is-running' : 'is-nodata'}">
+                        ${hasData ? 'TELEMETRY OK' : 'NO DATA'}
+                    </span>
+                </td>
+                <td style="padding: 10px 14px; color: #cbd5e1; font-family: monospace;">${unit.timestamp || '--'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        tableWrap.appendChild(table);
+        latestSection.appendChild(tableWrap);
+        page.appendChild(latestSection);
+    }
+
+    // 3. Table 2: Riwayat Log Hourly (History) dengan Tombol Export to CSV
+    if (chillerSetpointState.tableMode === "ALL" || chillerSetpointState.tableMode === "HISTORY") {
+        if (historyList.length > 0) {
+            const historySection = document.createElement("section");
+            historySection.className = "chiller-building-group";
+
+            const histHeader = document.createElement("div");
+            histHeader.className = "chiller-building-header";
+
+            const histTitleRow = document.createElement("div");
+            histTitleRow.className = "chiller-building-title-row";
+
+            const histTitle = document.createElement("h2");
+            histTitle.className = "chiller-building-title";
+            histTitle.textContent = "Riwayat Log Hourly (Hourly History)";
+            histTitleRow.appendChild(histTitle);
+
+            const histMeta = document.createElement("span");
+            histMeta.className = "chiller-building-meta";
+            histMeta.textContent = "Catatan rekaman historis dari tabel chiller_setpoint_hourly";
+            histTitleRow.appendChild(histMeta);
+
+            histHeader.appendChild(histTitleRow);
+
+            // Container sisi kanan header (Badge Jumlah Rekaman & Tombol Export CSV)
+            const headerRight = document.createElement("div");
+            headerRight.style.display = "flex";
+            headerRight.style.alignItems = "center";
+            headerRight.style.gap = "10px";
+
+            const histCount = document.createElement("span");
+            histCount.className = "chiller-building-badge";
+            histCount.textContent = historyList.length + " rekaman";
+            headerRight.appendChild(histCount);
+
+            // Tombol Export to CSV
+            const exportBtn = document.createElement("button");
+            exportBtn.id = "btnExportCsv";
+            exportBtn.className = "btn btn-sm btn-outline-light nav-button";
+            exportBtn.type = "button";
+            exportBtn.style.padding = "4px 12px";
+            exportBtn.style.fontSize = "12px";
+            exportBtn.style.borderRadius = "6px";
+            exportBtn.style.cursor = "pointer";
+            exportBtn.style.display = "inline-flex";
+            exportBtn.style.alignItems = "center";
+            exportBtn.style.gap = "6px";
+            exportBtn.style.background = "#1e293b";
+            exportBtn.style.border = "1px solid #475569";
+            exportBtn.style.color = "#f8fafc";
+            exportBtn.innerHTML = "📥 Export to CSV";
+            exportBtn.addEventListener("click", exportChillerHistoryTableToCsv);
+            headerRight.appendChild(exportBtn);
+
+            histHeader.appendChild(headerRight);
+
+            historySection.appendChild(histHeader);
+
+            const tableWrap = document.createElement("div");
+            tableWrap.style.overflowX = "auto";
+            tableWrap.style.background = "#151b22";
+            tableWrap.style.border = "1px solid #2c3846";
+            tableWrap.style.borderRadius = "10px";
+            tableWrap.style.marginTop = "12px";
+
+            const table = document.createElement("table");
+            table.id = "chillerHistoryTable";
+            table.style.width = "100%";
+            table.style.borderCollapse = "collapse";
+            table.style.fontSize = "13px";
+            table.style.textAlign = "left";
+
+            const thead = document.createElement("thead");
+            thead.style.background = "#1e293b";
+            thead.style.borderBottom = "1px solid #334155";
+            thead.innerHTML = `
+                <tr>
+                    <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Timestamp</th>
+                    <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Chiller</th>
+                    <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Setpoint (SP)</th>
+                    <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Active Setpoint RLA</th>
+                    <th style="padding: 10px 14px; color: #94a3b8; font-weight: 600;">Created At</th>
+                </tr>
+            `;
+            table.appendChild(thead);
+
+            const tbody = document.createElement("tbody");
+            historyList.forEach((row, idx) => {
+                const tr = document.createElement("tr");
+                tr.style.borderBottom = "1px solid #232d3b";
+                if (idx % 2 === 1) tr.style.background = "#11161d";
+
+                tr.innerHTML = `
+                    <td style="padding: 8px 14px; color: #cbd5e1; font-family: monospace;">${row.timestamp || '--'}</td>
+                    <td style="padding: 8px 14px; color: #f8fafc; font-weight: 600;">${row.chiller_name || row.equip_type}</td>
+                    <td style="padding: 8px 14px; color: ${row.setpoint !== null ? '#38bdf8' : '#64748b'}; font-weight: 600;">
+                        ${row.setpoint !== null ? (row.setpoint.toFixed(1) + ' °C') : '--'}
+                    </td>
+                    <td style="padding: 8px 14px; color: ${row.active_setpoint_rla !== null ? '#4ade80' : '#64748b'}; font-weight: 600;">
+                        ${row.active_setpoint_rla !== null ? (row.active_setpoint_rla.toFixed(0) + ' %') : '--'}
+                    </td>
+                    <td style="padding: 8px 14px; color: #64748b; font-size: 12px; font-family: monospace;">${row.created_at || '--'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            tableWrap.appendChild(table);
+            historySection.appendChild(tableWrap);
+            page.appendChild(historySection);
+        }
+    }
+
+    grid.appendChild(page);
+}
+
+// Fungsi Export Data Tabel Riwayat ke File CSV
+function exportChillerHistoryTableToCsv() {
+    const table = document.getElementById("chillerHistoryTable");
+    if (!table) {
+        alert("Tabel riwayat tidak ditemukan untuk diekspor.");
+        return;
+    }
+
+    // Inisialisasi konten CSV dengan UTF-8 BOM agar Excel otomatis membaca encoding UTF-8 (simbol °C aman)
+    let csvContent = "\uFEFF";
+    const lines = [];
+
+    // 1. Ambil Baris Header
+    const thElements = table.querySelectorAll("thead tr th");
+    if (thElements.length > 0) {
+        const headerCols = Array.from(thElements).map(th => {
+            let text = th.textContent.trim().replace(/"/g, '""');
+            return '"' + text + '"';
+        });
+        lines.push(headerCols.join(";"));
+    } else {
+        lines.push('"Timestamp";"Chiller";"Setpoint (SP)";"Active Setpoint RLA";"Created At"');
+    }
+
+    // 2. Ambil Baris Data Body
+    const trElements = table.querySelectorAll("tbody tr");
+    trElements.forEach(tr => {
+        const tdElements = tr.querySelectorAll("td");
+        if (tdElements.length === 0) return;
+        const rowCols = Array.from(tdElements).map(td => {
+            let text = td.textContent.trim().replace(/"/g, '""');
+            return '"' + text + '"';
+        });
+        lines.push(rowCols.join(";"));
+    });
+
+    if (lines.length <= 1) {
+        alert("Tidak ada data riwayat untuk diekspor.");
+        return;
+    }
+
+    // Gabungkan baris-baris dengan pemisah baris baru
+    csvContent += lines.join("\r\n");
+
+    // 3. Trigger Download Blob CSV
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "chiller_setpoint_log.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 /* =========================================================
@@ -11488,6 +12451,11 @@ async function loadData() {
             return;
         }
 
+        if (currentEquipment === "CHILLER" && chillerTab === "SETPOINT") {
+            await fetchChillerSetpointData(false);
+            return;
+        }
+
         const apiUrl = currentEquipment === "CHILLER"
             ? (chillerTab === "BACNET" ? "api_hvac_sc.php" : "api_chiller.php")
             : (currentEquipment === "AHU" || currentEquipment === "AHU_G8"
@@ -11568,6 +12536,8 @@ function updateChillerHash() {
         let hashVal = "#CHILLER";
         if (chillerTab === "BACNET") {
             hashVal = "#CHILLER_BACNET";
+        } else if (chillerTab === "SETPOINT") {
+            hashVal = "#CHILLER_SETPOINT";
         }
         if (window.history && window.history.replaceState) {
             window.history.replaceState(null, "", hashVal);
@@ -11595,6 +12565,9 @@ function navigateTo(equipment, filter = "") {
     if (equipment === "CHILLER") {
         if (filter === "BACNET") {
             chillerTab = "BACNET";
+            filter = "";
+        } else if (filter === "SETPOINT") {
+            chillerTab = "SETPOINT";
             filter = "";
         } else if (filter === "MODBUS") {
             chillerTab = "MODBUS";
@@ -11629,10 +12602,12 @@ function navigateTo(equipment, filter = "") {
             let hashVal = equipment === "MAIN" ? window.location.pathname : "#" + equipment;
             if (equipment === "CHILLER" && chillerTab === "BACNET") {
                 hashVal = "#CHILLER_BACNET";
+            } else if (equipment === "CHILLER" && chillerTab === "SETPOINT") {
+                hashVal = "#CHILLER_SETPOINT";
             }
             window.history.replaceState(null, "", hashVal);
         } else {
-            window.location.hash = equipment === "MAIN" ? "" : (equipment === "CHILLER" && chillerTab === "BACNET" ? "CHILLER_BACNET" : equipment);
+            window.location.hash = equipment === "MAIN" ? "" : (equipment === "CHILLER" && chillerTab === "BACNET" ? "CHILLER_BACNET" : (equipment === "CHILLER" && chillerTab === "SETPOINT" ? "CHILLER_SETPOINT" : equipment));
         }
     } catch (e) {
         // Safe fallback in restricted environments
@@ -11648,8 +12623,8 @@ function navigateTo(equipment, filter = "") {
     if (activeDetailModal) {
         closeUnitDetailModal();
     }
-    if (equipment === "AHU") {
-        loadNotes("AHU");
+    if (equipment === "AHU" || equipment === "EXHAUST_FAN") {
+        loadNotes(equipment);
     }
 
     renderEquipment();
