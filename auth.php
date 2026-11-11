@@ -52,3 +52,13 @@ function current_user(): ?array
         'is_admin' => $_SESSION['is_admin'],
     ];
 }
+
+/**
+ * Centralized permission check for managing PM (Preventive Maintenance).
+ * Currently returns true for any authenticated user with a valid username.
+ * Prepared for future role-based access control (e.g. admin-only) without modifying callers.
+ */
+function can_manage_maintenance(): bool
+{
+    return !empty($_SESSION['user_id']) && !empty($_SESSION['username']);
+}

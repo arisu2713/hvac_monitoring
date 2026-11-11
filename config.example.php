@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 return [
     'host' => '127.0.0.1',
@@ -6,4 +6,5 @@ return [
     'database' => 'hvac_current',
     'username' => 'root',
     'password' => '',
+    'pm_edit_enabled' => false,
 ];
