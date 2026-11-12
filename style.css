@@ -1855,6 +1855,74 @@ html:has(.alarm-page) .alarm-page {
     color: #ff6b6b;
 }
 
+.alarm-group-critical.alarm-group-active {
+    border-color: #ed3c3c;
+}
+
+.alarm-group-critical.alarm-group-active .alarm-group-title {
+    color: #ff6b6b;
+}
+
+.alarm-group-warning.alarm-group-active {
+    border-color: #ffad32;
+}
+
+.alarm-group-warning.alarm-group-active .alarm-group-title {
+    color: #ffc46b;
+}
+
+/* ---------- Sections: CRITICAL ALARMS vs WARNINGS ---------- */
+
+.alarm-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 6px;
+}
+
+.alarm-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 6px;
+    border-bottom: 2px solid #2c2c2c;
+}
+
+.alarm-section-critical .alarm-section-header {
+    border-bottom-color: #ed3c3c;
+}
+
+.alarm-section-warning .alarm-section-header {
+    border-bottom-color: #ffad32;
+}
+
+.alarm-section-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.alarm-section-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: #999;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.alarm-section-count-active {
+    color: #ccc;
+}
+
+.alarm-section-count-cleared {
+    color: #777;
+}
+
+.alarm-section-count-sep {
+    color: #555;
+}
+
 /* ---------- Rows ---------- */
 
 .alarm-row {
@@ -2071,6 +2139,11 @@ html:has(.alarm-page) .alarm-page {
 }
 
 @media (max-width: 600px) {
+
+    .alarm-section-header {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
 
     .equipment-grid:has(.alarm-page) {
         padding-left: 10px;

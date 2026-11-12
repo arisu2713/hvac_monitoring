@@ -3054,7 +3054,8 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
             }
 
             const equipName = String(alarm.equipment || "").trim();
-            if (/^EF\s+\d+$/i.test(equipName) || alarm.equip_type === "EF" || alarm.source === "EF_POLLER") {
+            const isEf = /^EF\s+\d+$/i.test(equipName) || alarm.equip_type === "EF" || alarm.source === "EF_POLLER";
+            if (isEf) {
                 currentDbEfNames.add(equipName.toUpperCase());
             }
 
@@ -3334,10 +3335,12 @@ function createAlarmHeaderRow() {
     return row;
 }
 
-function createAlarmGroup(title, alarms, isActive, unavailable) {
+function createAlarmGroup(title, alarms, isActive, unavailable, extraClass) {
     const group = document.createElement("div");
 
-    group.className = "alarm-group" + (isActive ? " alarm-group-active" : "");
+    group.className = "alarm-group"
+        + (isActive ? " alarm-group-active" : "")
+        + (extraClass ? " " + extraClass : "");
 
     const header = document.createElement("div");
     header.className = "alarm-group-header";
@@ -3359,13 +3362,14 @@ function createAlarmGroup(title, alarms, isActive, unavailable) {
         empty.className = "alarm-empty";
 
         /*
-         * "No active alarms" is a claim about the building. It can only be
-         * made when the source was actually read; otherwise the honest
-         * statement is that nothing is known.
+         * Empty text claims must be specific to alarm vs warning and source availability.
          */
+        const isWarning = title.toUpperCase().includes("WARNING");
         empty.textContent = unavailable
             ? "No data — the alarm source is unavailable"
-            : (isActive ? "No active alarms" : "No cleared alarms in the window");
+            : (isActive
+                ? (isWarning ? "No active warnings" : "No active alarms")
+                : (isWarning ? "No cleared warnings in the window" : "No cleared alarms in the window"));
 
         group.appendChild(empty);
         return group;
@@ -3395,9 +3399,9 @@ function renderAlarm() {
         return;
     }
 
-    const counts = data.counts || {};
-    const dbActiveAlarms = data.alarms.filter(a => a.status === "ACTIVE");
-    const clearedAlarms = data.alarms.filter(a => a.status !== "ACTIVE");
+    const rawAlarms = data.alarms;
+    const dbActiveAlarms = rawAlarms.filter(a => a.status === "ACTIVE");
+    const dbClearedAlarms = rawAlarms.filter(a => a.status !== "ACTIVE");
 
     /* E4 & S3: Inject synthetic LIVE rows for debounced stopped EFs without duplicating DB rows */
     const dbActiveEfNames = new Set(
@@ -3410,10 +3414,24 @@ function renderAlarm() {
         row => !dbActiveEfNames.has(String(row.equipment || "").trim().toUpperCase())
     );
 
-    const allActiveAlarms = syntheticRows.concat(dbActiveAlarms);
-    const activeAlarmTotal = Number(counts.active_alarm || 0) + syntheticRows.length;
-    const activeWarningTotal = Number(counts.active_warning || 0);
-    const activeTotal = Number(counts.active_total || 0) + syntheticRows.length;
+    /*
+     * Partition into ALARMS and WARNINGS:
+     * - Active ALARMS: syntheticRows + dbActiveAlarms (event_class === "ALARM").
+     *   Per requirement: ALARMs are NEVER suppressed by checkUnitIsDefinitivelyOff.
+     * - Active WARNINGS: dbActiveAlarms (event_class === "WARNING").
+     *   Per requirement: active warnings belonging to definitively OFF units ARE hidden.
+     * - Cleared ALARMS: dbClearedAlarms (event_class === "ALARM").
+     * - Cleared WARNINGS: dbClearedAlarms (event_class === "WARNING").
+     */
+    const activeAlarmItems = syntheticRows.concat(dbActiveAlarms.filter(a => a.event_class === "ALARM"));
+    const activeWarningItems = dbActiveAlarms.filter(a => a.event_class === "WARNING" && !checkUnitIsDefinitivelyOff(a));
+    const clearedAlarmItems = dbClearedAlarms.filter(a => a.event_class === "ALARM");
+    const clearedWarningItems = dbClearedAlarms.filter(a => a.event_class === "WARNING");
+
+    /* Recompute counts from displayed data (requirement 3) */
+    const activeAlarmTotal = activeAlarmItems.length;
+    const activeWarningTotal = activeWarningItems.length;
+    const activeTotal = activeAlarmTotal + activeWarningTotal;
 
     /*
      * The window actually applied by the API, not the one the page asked for:
@@ -3430,7 +3448,7 @@ function renderAlarm() {
     const page = document.createElement("div");
     page.className = "alarm-page";
 
-    /* ---- Active summary, straight from table counts + live EFs ---- */
+    /* ---- Active summary, recomputed from rendered data ---- */
     const summary = document.createElement("div");
     summary.className = "alarm-summary";
 
@@ -3482,37 +3500,121 @@ function renderAlarm() {
         page.appendChild(banner);
     }
 
-    /* ---- ACTIVE is the prominent group ---- */
-    const shownActive = alarmShowAll
-        ? allActiveAlarms
-        : allActiveAlarms.slice(0, ALARM_ACTIVE_PREVIEW);
+    /* ---- SECTION 1: CRITICAL ALARMS ---- */
+    const criticalSection = document.createElement("section");
+    criticalSection.className = "alarm-section alarm-section-critical";
 
-    page.appendChild(createAlarmGroup(
-        "ACTIVE ALARMS / WARNINGS",
-        shownActive,
+    const criticalHeader = document.createElement("div");
+    criticalHeader.className = "alarm-section-header";
+
+    const criticalTitleWrap = document.createElement("div");
+    criticalTitleWrap.className = "alarm-section-title-wrap";
+    const criticalBadge = document.createElement("span");
+    criticalBadge.className = "alarm-badge alarm-badge-alarm";
+    criticalBadge.textContent = "CRITICAL ALARMS";
+    criticalTitleWrap.appendChild(criticalBadge);
+
+    const criticalCount = document.createElement("div");
+    criticalCount.className = "alarm-section-count";
+    criticalCount.innerHTML = '<span class="alarm-section-count-active">' + activeAlarmTotal + ' active</span>'
+        + '<span class="alarm-section-count-sep">·</span>'
+        + '<span class="alarm-section-count-cleared">' + clearedAlarmItems.length + ' cleared</span>';
+
+    criticalHeader.appendChild(criticalTitleWrap);
+    criticalHeader.appendChild(criticalCount);
+    criticalSection.appendChild(criticalHeader);
+
+    const shownActiveAlarms = alarmShowAll
+        ? activeAlarmItems
+        : activeAlarmItems.slice(0, ALARM_ACTIVE_PREVIEW);
+
+    criticalSection.appendChild(createAlarmGroup(
+        "ACTIVE ALARMS",
+        shownActiveAlarms,
         true,
-        !sourceAvailable
+        !sourceAvailable,
+        "alarm-group-critical"
     ));
 
-    if (shownActive.length < allActiveAlarms.length) {
+    if (shownActiveAlarms.length < activeAlarmItems.length) {
         const more = document.createElement("button");
         more.type = "button";
         more.className = "mute-button";
-        more.textContent = "SHOW ALL " + allActiveAlarms.length + " ACTIVE";
+        more.textContent = "SHOW ALL " + activeAlarmItems.length + " ACTIVE ALARMS";
         more.addEventListener("click", () => {
             alarmShowAll = true;
             renderAlarm();
         });
-        page.appendChild(more);
+        criticalSection.appendChild(more);
     }
 
-    /* ---- Cleared history, compact and receded ---- */
-    page.appendChild(createAlarmGroup(
-        "CLEARED — RAISED OR CLEARED IN THE LAST " + windowHours + "h",
-        clearedAlarms,
+    criticalSection.appendChild(createAlarmGroup(
+        "CLEARED ALARMS — LAST " + windowHours + "h",
+        clearedAlarmItems,
         false,
-        !sourceAvailable
+        !sourceAvailable,
+        "alarm-group-critical"
     ));
+
+    page.appendChild(criticalSection);
+
+    /* ---- SECTION 2: WARNINGS ---- */
+    const warningSection = document.createElement("section");
+    warningSection.className = "alarm-section alarm-section-warning";
+
+    const warningHeader = document.createElement("div");
+    warningHeader.className = "alarm-section-header";
+
+    const warningTitleWrap = document.createElement("div");
+    warningTitleWrap.className = "alarm-section-title-wrap";
+    const warningBadge = document.createElement("span");
+    warningBadge.className = "alarm-badge alarm-badge-warning";
+    warningBadge.textContent = "WARNINGS";
+    warningTitleWrap.appendChild(warningBadge);
+
+    const warningCount = document.createElement("div");
+    warningCount.className = "alarm-section-count";
+    warningCount.innerHTML = '<span class="alarm-section-count-active">' + activeWarningTotal + ' active</span>'
+        + '<span class="alarm-section-count-sep">·</span>'
+        + '<span class="alarm-section-count-cleared">' + clearedWarningItems.length + ' cleared</span>';
+
+    warningHeader.appendChild(warningTitleWrap);
+    warningHeader.appendChild(warningCount);
+    warningSection.appendChild(warningHeader);
+
+    const shownActiveWarnings = alarmShowAll
+        ? activeWarningItems
+        : activeWarningItems.slice(0, ALARM_ACTIVE_PREVIEW);
+
+    warningSection.appendChild(createAlarmGroup(
+        "ACTIVE WARNINGS",
+        shownActiveWarnings,
+        true,
+        !sourceAvailable,
+        "alarm-group-warning"
+    ));
+
+    if (shownActiveWarnings.length < activeWarningItems.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "mute-button";
+        more.textContent = "SHOW ALL " + activeWarningItems.length + " ACTIVE WARNINGS";
+        more.addEventListener("click", () => {
+            alarmShowAll = true;
+            renderAlarm();
+        });
+        warningSection.appendChild(more);
+    }
+
+    warningSection.appendChild(createAlarmGroup(
+        "CLEARED WARNINGS — LAST " + windowHours + "h",
+        clearedWarningItems,
+        false,
+        !sourceAvailable,
+        "alarm-group-warning"
+    ));
+
+    page.appendChild(warningSection);
 
     /*
      * Truncation notice.
@@ -3636,16 +3738,16 @@ async function loadAlarmData() {
         liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
     }
 
-    /* S1 on-demand fetch: verify run state if an active ALARM is on an AHU or Chiller */
+    /* S1 on-demand fetch: verify run state if an active ALARM or WARNING is on an AHU or Chiller */
     if (dbSuccess) {
-        const activeAlarms = dbAlarms.filter(a => a.status === "ACTIVE" && a.event_class === "ALARM");
-        const needAhu = activeAlarms.some(a => {
+        const activeEvents = dbAlarms.filter(a => a.status === "ACTIVE");
+        const needAhu = activeEvents.some(a => {
             if (a.equip_type !== "AHU" && !/^AHU\s+\d+$/i.test(a.equipment)) return false;
             if (!allData.AHU || !allData.AHU.length || (Date.now() - lastAhuFetchTime > RUN_STATE_MAX_AGE_MS)) return true;
             const eqName = String(a.equipment || "").trim().toUpperCase();
             return !allData.AHU.some(u => u && String(u.name).trim().toUpperCase() === eqName);
         });
-        const needHvacSc = activeAlarms.some(a => {
+        const needHvacSc = activeEvents.some(a => {
             const et = String(a.equip_type || "").trim().toUpperCase();
             if (!["CHILLER", "CT", "CCP", "CHWP"].includes(et)) return false;
             if (!allData[et] || (Date.now() - lastHvacScFetchTime > RUN_STATE_MAX_AGE_MS)) return true;
