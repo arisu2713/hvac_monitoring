@@ -9748,7 +9748,7 @@ function renderChillerSetpoint() {
     if (units.length === 0 && historyList.length === 0 && !state.isLoading) {
         const emptyBox = document.createElement("div");
         emptyBox.className = "chiller-empty";
-        emptyBox.textContent = "No data found in chiller_setpoint_hourly table.";
+        emptyBox.textContent = "Data setpoint belum tersedia.";
         page.appendChild(emptyBox);
         grid.appendChild(page);
         return;
