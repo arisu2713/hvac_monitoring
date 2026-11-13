@@ -15571,6 +15571,22 @@ if (window.chrome && window.chrome.webview) {
             acknowledgeCurrentAlarms();
         }
     });
+
+    /*
+     * Teardown guard: send STOP_ALARM to wrapper on pagehide if alarms are actively sounding
+     * so that the C# host process does not keep playing alarm audio when navigated away/reloaded.
+     */
+    window.addEventListener("pagehide", function() {
+        let unackCount = 0;
+        activeAlarmTriggerKeys.forEach(function(k) {
+            if (!acknowledgedAlarmKeys.has(k)) {
+                unackCount++;
+            }
+        });
+        if (unackCount > 0) {
+            window.chrome.webview.postMessage("STOP_ALARM");
+        }
+    });
 }
 
 /*
