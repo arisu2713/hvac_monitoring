@@ -2768,7 +2768,6 @@ const ALARM_WINDOW_OPTIONS = [
 const ALARM_WINDOW_DEFAULT = 24;
 
 let alarmShowAll = false;
-let knownAlarmIds = null;
 
 /*
  * The selected window, kept out of the DOM so the 10s poll can re-render
@@ -2882,12 +2881,9 @@ function selectAlarmWindow(hours) {
     writeAlarmWindowHours(hours);
 
     /*
-     * A new window is a new row set; the fold state and the "already seen"
-     * baseline both belong to the old one. Resetting the baseline keeps a
-     * window change from being mistaken for newly raised alarms and sounding.
+     * A new window is a new row set; the fold state belongs to the old one.
      */
     alarmShowAll = false;
-    knownAlarmIds = null;
 
     /*
      * The page is not re-rendered from the old payload here: the group heading
@@ -15636,9 +15632,8 @@ handleActivePageChanged();
 startNotesPolling();
 
 /*
- * The alarm poll is independent of the visible page so a new alarm still
- * sounds while another equipment view is on screen. The first response only
- * records the baseline; it never sounds.
+ * The alarm poll is independent of the visible page so an active alarm
+ * sounds immediately regardless of which equipment view is on screen.
  */
 safeLoadAlarmData();
 
