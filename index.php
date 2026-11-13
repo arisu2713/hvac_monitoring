@@ -2797,6 +2797,17 @@ let activeAlarmTriggers = [];
 let syntheticLiveEfAlarms = [];
 
 /*
+ * Pending early ACK tracking:
+ * If an ACK_FROM_C# message arrives before the very first alarm poll evaluates,
+ * it is held for at most PENDING_EARLY_ACK_MAX_MS (15 s) and applied only to that
+ * first evaluation, then discarded. ACKs arriving after the first evaluation with
+ * no active triggers are safely ignored.
+ */
+let initialAlarmEvaluationDone = false;
+let pendingEarlyAckUntil = 0;
+const PENDING_EARLY_ACK_MAX_MS = 15000;
+
+/*
  * Debounce tracking for Exhaust Fans:
  * Map: fanKey -> { lastUpdate: string|null, distinctCount: number }
  * Requires status 0 on >= EF_OFF_CONFIRM_READINGS distinct poller cycles (distinct last_update).
@@ -3221,6 +3232,16 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
         const mergedTriggerKeys = new Set();
         lastDbAlarmKeys.forEach(k => mergedTriggerKeys.add(k));
         lastEfOffKeys.forEach(k => mergedTriggerKeys.add(k));
+
+        /* Pending early ACK: applied ONLY on the first evaluation if received within the 15s window */
+        if (!initialAlarmEvaluationDone && pendingEarlyAckUntil > 0) {
+            if (Date.now() <= pendingEarlyAckUntil) {
+                mergedTriggerKeys.forEach(k => acknowledgedAlarmKeys.add(k));
+                writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+            }
+            pendingEarlyAckUntil = 0;
+        }
+        initialAlarmEvaluationDone = true;
 
         activeAlarmTriggerKeys = mergedTriggerKeys;
         writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
@@ -15568,7 +15589,17 @@ window.__autoRefreshTest = {
 if (window.chrome && window.chrome.webview) {
     window.chrome.webview.addEventListener('message', function(event) {
         if (event.data === "ACK_FROM_C#") {
-            acknowledgeCurrentAlarms();
+            if (activeAlarmTriggerKeys.size > 0) {
+                /* Existing triggers present: acknowledge immediately */
+                acknowledgeCurrentAlarms();
+            } else if (!initialAlarmEvaluationDone) {
+                /* Early ACK before initial poll finishes: hold as pending for up to 15s */
+                pendingEarlyAckUntil = Date.now() + PENDING_EARLY_ACK_MAX_MS;
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage("STOP_ALARM");
+                }
+            }
+            /* If initialAlarmEvaluationDone is true and no triggers are active, ignore */
         }
     });
 
