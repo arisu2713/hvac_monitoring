@@ -22,7 +22,8 @@
  *     - Verified session with user_id and username (401 / 403 otherwise)
  *     - Whitelisted equip_type and sanitized unit_name
  *   Timing:
- *     - Uses SQL NOW() and DATE_ADD() for started_at and expires_at
+ *     - Daily reset time (default 18:00, configurable via 'pm_reset_time')
+ *     - Uses SQL NOW(), CURDATE(), and DATE_ADD() for started_at and expires_at
  *     - Auto-expires rows where expires_at <= NOW() before operations
  */
 
@@ -73,9 +74,7 @@ const ALLOWED_EQUIP_TYPES = [
     'AHU'
 ];
 
-const DEFAULT_PM_DURATION_HOURS = 8;
-const MIN_PM_DURATION_HOURS = 1;
-const MAX_PM_DURATION_HOURS = 24;
+const DEFAULT_PM_RESET_TIME = '18:00';
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -87,6 +86,17 @@ if (defined('PM_EDIT_ENABLED')) {
     $pmEditEnabled = (bool)PM_EDIT_ENABLED;
 } elseif (isset($config['pm_edit_enabled'])) {
     $pmEditEnabled = (bool)$config['pm_edit_enabled'];
+}
+
+// PM daily reset time (HH:MM format, default '18:00')
+$pmResetTime = DEFAULT_PM_RESET_TIME;
+if (isset($config['pm_reset_time'])) {
+    $cfgReset = $config['pm_reset_time'];
+    if (is_string($cfgReset) && preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $cfgReset)) {
+        $pmResetTime = $cfgReset;
+    } else {
+        error_log('[' . basename(__FILE__) . '] Invalid pm_reset_time format in config ("' . (is_scalar($cfgReset) ? (string)$cfgReset : gettype($cfgReset)) . '"), falling back to default ' . DEFAULT_PM_RESET_TIME);
+    }
 }
 
 try {
@@ -180,6 +190,7 @@ try {
         echo json_encode([
             'success'         => true,
             'pm_edit_enabled' => $pmEditEnabled,
+            'pm_reset_time'   => $pmResetTime,
             'server_time'     => date('Y-m-d H:i:s'),
             'maintenance'     => $rows,
         ], JSON_UNESCAPED_UNICODE);
@@ -283,17 +294,6 @@ try {
             exit;
         }
 
-        // Duration in hours (default 8, clamped between 1 and 24 hours)
-        $durationHours = DEFAULT_PM_DURATION_HOURS;
-        if (isset($data['duration_hours']) && is_numeric($data['duration_hours'])) {
-            $durationHours = (int)$data['duration_hours'];
-            if ($durationHours < MIN_PM_DURATION_HOURS) {
-                $durationHours = MIN_PM_DURATION_HOURS;
-            } elseif ($durationHours > MAX_PM_DURATION_HOURS) {
-                $durationHours = MAX_PM_DURATION_HOURS;
-            }
-        }
-
         // Determine target active state
         // action 'toggle': inverts current active state
         // action 'set' / 'save': uses provided 'active' boolean/int
@@ -328,24 +328,29 @@ try {
 
         if ($targetActive) {
             // Activate or extend PM
+            // Expiration is calculated in SQL using server clock:
+            // If NOW() < today at reset_time -> expires today at reset_time
+            // Else -> expires tomorrow at reset_time
             if ($existingActive) {
-                // Update existing active row with fresh SQL NOW() and DATE_ADD()
+                // Update existing active row with fresh SQL NOW() and reset time expiration
                 $stmtUpdate = $pdo->prepare(
                     "UPDATE unit_maintenance
                      SET active = 1,
                          started_by = :author,
                          started_at = NOW(),
-                         expires_at = DATE_ADD(NOW(), INTERVAL :hours HOUR),
+                         expires_at = IF(NOW() < CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                         CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                         DATE_ADD(CONCAT(CURDATE(), ' ', :reset_time, ':00'), INTERVAL 1 DAY)),
                          ended_at = NULL,
                          ended_by = NULL,
                          reason = :reason
                      WHERE id = :id"
                 );
                 $stmtUpdate->execute([
-                    'author' => $sessionUsername,
-                    'hours'  => $durationHours,
-                    'reason' => $reason,
-                    'id'     => $existingActive['id'],
+                    'author'     => $sessionUsername,
+                    'reset_time' => $pmResetTime,
+                    'reason'     => $reason,
+                    'id'         => $existingActive['id'],
                 ]);
                 $recordId = (int)$existingActive['id'];
             } else {
@@ -353,14 +358,18 @@ try {
                 try {
                     $stmtInsert = $pdo->prepare(
                         "INSERT INTO unit_maintenance (equip_type, unit_name, active, started_by, started_at, expires_at, reason)
-                         VALUES (:equip, :unit, 1, :author, NOW(), DATE_ADD(NOW(), INTERVAL :hours HOUR), :reason)"
+                         VALUES (:equip, :unit, 1, :author, NOW(),
+                                 IF(NOW() < CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                    CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                    DATE_ADD(CONCAT(CURDATE(), ' ', :reset_time, ':00'), INTERVAL 1 DAY)),
+                                 :reason)"
                     );
                     $stmtInsert->execute([
-                        'equip'  => $equipType,
-                        'unit'   => $unitName,
-                        'author' => $sessionUsername,
-                        'hours'  => $durationHours,
-                        'reason' => $reason,
+                        'equip'      => $equipType,
+                        'unit'       => $unitName,
+                        'author'     => $sessionUsername,
+                        'reset_time' => $pmResetTime,
+                        'reason'     => $reason,
                     ]);
                     $recordId = (int)$pdo->lastInsertId();
                 } catch (PDOException $e) {
@@ -373,18 +382,20 @@ try {
                              SET active = 1,
                                  started_by = :author,
                                  started_at = NOW(),
-                                 expires_at = DATE_ADD(NOW(), INTERVAL :hours HOUR),
+                                 expires_at = IF(NOW() < CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                                 CONCAT(CURDATE(), ' ', :reset_time, ':00'),
+                                                 DATE_ADD(CONCAT(CURDATE(), ' ', :reset_time, ':00'), INTERVAL 1 DAY)),
                                  ended_at = NULL,
                                  ended_by = NULL,
                                  reason = :reason
                              WHERE equip_type = :equip AND unit_name = :unit AND active = 1"
                         );
                         $stmtRetry->execute([
-                            'author' => $sessionUsername,
-                            'hours'  => $durationHours,
-                            'reason' => $reason,
-                            'equip'  => $equipType,
-                            'unit'   => $unitName,
+                            'author'     => $sessionUsername,
+                            'reset_time' => $pmResetTime,
+                            'reason'     => $reason,
+                            'equip'      => $equipType,
+                            'unit'       => $unitName,
                         ]);
 
                         $stmtFetchId = $pdo->prepare(
@@ -452,12 +463,13 @@ try {
         }
 
         echo json_encode([
-            'success'     => true,
-            'action'      => $action,
-            'active'      => $targetActive,
-            'unit_name'   => $unitName,
-            'equip_type'  => $equipType,
-            'maintenance' => $resultRow,
+            'success'       => true,
+            'action'        => $action,
+            'active'        => $targetActive,
+            'unit_name'     => $unitName,
+            'equip_type'    => $equipType,
+            'pm_reset_time' => $pmResetTime,
+            'maintenance'   => $resultRow,
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }

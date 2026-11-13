@@ -3759,6 +3759,9 @@ async function loadAlarmData() {
     if (maintSuccess) {
         maintenanceFetchSuccess = true;
         pmEditEnabled = Boolean(maintResult.value.pm_edit_enabled);
+        if (maintResult.value.pm_reset_time) {
+            pmResetTime = String(maintResult.value.pm_reset_time);
+        }
         const maintList = Array.isArray(maintResult.value.maintenance) ? maintResult.value.maintenance : [];
         if (typeof maintenanceByUnit !== "undefined") {
             maintenanceByUnit.clear();
@@ -6094,6 +6097,7 @@ let notesUnavailable = false;
 /* Preventive Maintenance (PM) State */
 const MAINTENANCE_API_URL = "api_maintenance.php";
 let pmEditEnabled = false;
+let pmResetTime = "18:00";
 let maintenanceFetchSuccess = false;
 // Keyed by maintenanceKey(equipType, unitName) -> Maintenance object
 const maintenanceByUnit = new Map();
@@ -6275,6 +6279,11 @@ function showNotePopover(tile, equipType, unit, note) {
             pmTimer.textContent = "";
         }
         pmRowEl.appendChild(pmTimer);
+
+        const pmResetSpan = document.createElement("span");
+        pmResetSpan.className = "unp-pm-reset";
+        pmResetSpan.textContent = "Otomatis reset pukul " + (pmResetTime || "18:00");
+        pmRowEl.appendChild(pmResetSpan);
 
         editBtn.textContent = "Edit Note / PM";
     } else {
@@ -6558,12 +6567,22 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
         pmLabel.appendChild(pmTitleSpan);
         pmHeader.appendChild(pmLabel);
 
+        const pmMetaDiv = document.createElement("div");
+        pmMetaDiv.className = "ef-pm-modal-meta";
+
         const pmTimerSpan = document.createElement("span");
         pmTimerSpan.className = "ef-pm-modal-timer";
         if (isPmActive) {
             pmTimerSpan.textContent = "(" + formatRemainingSeconds(maint.client_remaining_seconds) + ")";
         }
-        pmHeader.appendChild(pmTimerSpan);
+
+        const pmResetSpan = document.createElement("span");
+        pmResetSpan.className = "ef-pm-modal-reset";
+        pmResetSpan.textContent = "Otomatis reset pukul " + (pmResetTime || "18:00");
+
+        pmMetaDiv.appendChild(pmTimerSpan);
+        pmMetaDiv.appendChild(pmResetSpan);
+        pmHeader.appendChild(pmMetaDiv);
         pmSec.appendChild(pmHeader);
 
         const pmNotice = document.createElement("div");
@@ -6576,7 +6595,7 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
             pmNotice.textContent = "PM aktif: Alarm EF OFF dibisukan untuk unit ini.";
             pmNotice.classList.add("is-active-notice");
         } else {
-            pmNotice.textContent = "Centang untuk membisukan alarm EF OFF selama maintenance (otomatis kedaluwarsa 8 jam).";
+            pmNotice.textContent = "Centang untuk membisukan alarm EF OFF selama maintenance.";
         }
         pmSec.appendChild(pmNotice);
 
@@ -6593,14 +6612,17 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                     body: JSON.stringify({
                         action: targetActive ? "enable" : "disable",
                         equip_type: "EXHAUST_FAN",
-                        unit_name: unit.name,
-                        duration_hours: 8
+                        unit_name: unit.name
                     })
                 });
 
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || !data.success) {
                     throw new Error(data.message || data.error || "Gagal mengubah status PM");
+                }
+
+                if (data.pm_reset_time) {
+                    pmResetTime = String(data.pm_reset_time);
                 }
 
                 const k = maintenanceKey("EXHAUST_FAN", unit.name);
@@ -6610,12 +6632,14 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                     pmNotice.textContent = "PM aktif: Alarm EF OFF dibisukan untuk unit ini.";
                     pmNotice.className = "ef-pm-modal-notice is-active-notice";
                     pmTimerSpan.textContent = "(" + formatRemainingSeconds(data.maintenance.remaining_seconds) + ")";
+                    pmResetSpan.textContent = "Otomatis reset pukul " + (pmResetTime || "18:00");
                 } else {
                     maintenanceByUnit.delete(k);
                     pmCheckbox.checked = false;
                     pmNotice.textContent = "PM nonaktif: Alarm EF OFF kembali normal.";
                     pmNotice.className = "ef-pm-modal-notice";
                     pmTimerSpan.textContent = "";
+                    pmResetSpan.textContent = "Otomatis reset pukul " + (pmResetTime || "18:00");
                 }
 
                 // Re-evaluate alarms immediately (instant PLAY_ALARM / STOP_ALARM)

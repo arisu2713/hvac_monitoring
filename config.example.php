@@ -7,4 +7,5 @@ return [
     'username' => 'root',
     'password' => '',
     'pm_edit_enabled' => false,
+    'pm_reset_time' => '18:00',
 ];
