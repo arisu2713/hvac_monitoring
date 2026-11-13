@@ -2746,6 +2746,13 @@ const ALARM_WINDOW_KEY = "hvac_alarm_window_hours";
  */
 const EF_OFF_CONFIRM_READINGS = 2;
 
+/*
+ * Fallback time-based confirmation threshold when fan.last_update is null or empty.
+ * Ensures an exhaust fan stopped in the field is confirmed OFF within 20 seconds
+ * even if poller timestamp metadata is absent.
+ */
+const EF_OFF_CONFIRM_SECONDS = 20;
+
 /* Active rows shown before the list is folded behind a "show all" toggle. */
 const ALARM_ACTIVE_PREVIEW = 50;
 
@@ -3112,17 +3119,39 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                     const lastUpdate = fan.last_update || "";
 
                     if (status === "off") {
-                        /* C1: Distinct poller readings debounce */
+                        const nowMs = Date.now();
                         let entry = efDebounceMap.get(fanKeyUpper);
-                        if (!entry) {
-                            entry = { lastUpdate: lastUpdate, distinctCount: 1 };
-                            efDebounceMap.set(fanKeyUpper, entry);
-                        } else if (entry.lastUpdate !== lastUpdate) {
-                            entry.distinctCount += 1;
-                            entry.lastUpdate = lastUpdate;
+                        let isConfirmed = false;
+
+                        if (lastUpdate) {
+                            /* C1: Distinct poller readings debounce (primary path when last_update is present) */
+                            if (!entry) {
+                                entry = { lastUpdate: lastUpdate, distinctCount: 1, firstOffSeen: nowMs };
+                                efDebounceMap.set(fanKeyUpper, entry);
+                            } else {
+                                if (entry.lastUpdate !== lastUpdate) {
+                                    entry.distinctCount = (entry.distinctCount || 1) + 1;
+                                    entry.lastUpdate = lastUpdate;
+                                }
+                            }
+                            if (entry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
+                                isConfirmed = true;
+                            }
+                        } else {
+                            /* Fallback path: time-based confirmation (20s) when last_update is null or empty */
+                            if (!entry) {
+                                entry = { lastUpdate: "", distinctCount: 1, firstOffSeen: nowMs };
+                                efDebounceMap.set(fanKeyUpper, entry);
+                            } else if (!entry.firstOffSeen) {
+                                entry.firstOffSeen = nowMs;
+                            }
+                            const elapsedSec = (nowMs - entry.firstOffSeen) / 1000;
+                            if (elapsedSec >= EF_OFF_CONFIRM_SECONDS) {
+                                isConfirmed = true;
+                            }
                         }
 
-                        if (entry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
+                        if (isConfirmed) {
                             /* Track first seen for synthetic row display (C3) */
                             if (!liveEfFirstSeenMap.has(fanKeyUpper)) {
                                 const now = new Date();
