@@ -3042,142 +3042,165 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
     const currentDbEfNames = new Set();
     const newSyntheticLiveRows = [];
 
-    /* 1. Evaluate DB alarms (S1, S3) */
-    if (dbSuccess) {
-        (Array.isArray(alarmsList) ? alarmsList : []).forEach(alarm => {
-            if (alarm.status !== "ACTIVE") {
-                return;
-            }
-            /* WARNING (amber) must NEVER make sound */
-            if (alarm.event_class !== "ALARM") {
-                return;
-            }
-
-            const equipName = String(alarm.equipment || "").trim();
-            const isEf = /^EF\s+\d+$/i.test(equipName) || alarm.equip_type === "EF" || alarm.source === "EF_POLLER";
-            if (isEf) {
-                currentDbEfNames.add(equipName.toUpperCase());
-            }
-
-            /* S1: check if unit is definitively OFF */
-            if (checkUnitIsDefinitivelyOff(alarm)) {
-                return;
-            }
-
-            /* PM CHECK: If EF unit has active Preventive Maintenance, suppress sound trigger */
-            const isPmActive = isEf && (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", equipName);
-            alarm.is_pm = isPmActive;
-            if (isPmActive) {
-                return; /* Muted from sound triggers */
-            }
-
-            const triggerKey = "ALARM:" + alarm.id;
-            currentDbKeys.add(triggerKey);
-        });
-
-        /* C2: Prune acknowledged ALARM keys only when api_alarm.php succeeded */
-        acknowledgedAlarmKeys.forEach(k => {
-            if (k.startsWith("ALARM:") && !currentDbKeys.has(k)) {
-                acknowledgedAlarmKeys.delete(k);
-            }
-        });
-
-        lastDbAlarmKeys = currentDbKeys;
-        lastDbAlarmEfNames = currentDbEfNames;
-    }
-
-    /* 2. Evaluate Live Exhaust Fans (S2, E1, E2, C1, S3) */
-    if (efSuccess) {
-        const allLiveFans = (Array.isArray(liveEfList) ? liveEfList : [])
-            .concat(Array.isArray(liveG8List) ? liveG8List : []);
-
-        allLiveFans.forEach(fan => {
-            if (!fan) return;
-            const fanName = (fan.name || ("EF " + fan.id)).trim();
-            const fanKeyUpper = fanName.toUpperCase();
-            const status = getEfStatus(fan);
-            const lastUpdate = fan.last_update || "";
-
-            if (status === "off") {
-                /* C1: Distinct poller readings debounce */
-                let entry = efDebounceMap.get(fanKeyUpper);
-                if (!entry) {
-                    entry = { lastUpdate: lastUpdate, distinctCount: 1 };
-                    efDebounceMap.set(fanKeyUpper, entry);
-                } else if (entry.lastUpdate !== lastUpdate) {
-                    entry.distinctCount += 1;
-                    entry.lastUpdate = lastUpdate;
-                }
-
-                if (entry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
-                    /* Track first seen for synthetic row display (C3) */
-                    if (!liveEfFirstSeenMap.has(fanKeyUpper)) {
-                        const now = new Date();
-                        const hh = String(now.getHours()).padStart(2, '0');
-                        const mm = String(now.getMinutes()).padStart(2, '0');
-                        liveEfFirstSeenMap.set(fanKeyUpper, hh + ":" + mm);
+    try {
+        /* 1. Evaluate DB alarms (S1, S3) */
+        if (dbSuccess) {
+            (Array.isArray(alarmsList) ? alarmsList : []).forEach(alarm => {
+                if (!alarm) return;
+                try {
+                    if (alarm.status !== "ACTIVE") {
+                        return;
+                    }
+                    /* WARNING (amber) must NEVER make sound */
+                    if (alarm.event_class !== "ALARM") {
+                        return;
                     }
 
-                    /* S3 de-duplication: if EF_POLLER already wrote an ACTIVE ALARM row, don't double trigger */
-                    if (!lastDbAlarmEfNames.has(fanKeyUpper)) {
-                        const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
-                        const efTriggerKey = "EFOFF:" + fanKeyUpper;
-                        if (!isPmActive) {
-                            currentEfKeys.add(efTriggerKey);
+                    const equipName = String(alarm.equipment || "").trim();
+                    const isEf = /^EF\s+\d+$/i.test(equipName) || alarm.equip_type === "EF" || alarm.source === "EF_POLLER";
+                    if (isEf) {
+                        currentDbEfNames.add(equipName.toUpperCase());
+                    }
+
+                    /* S1: check if unit is definitively OFF */
+                    if (checkUnitIsDefinitivelyOff(alarm)) {
+                        return;
+                    }
+
+                    /* PM CHECK: If EF unit has active Preventive Maintenance, suppress sound trigger */
+                    const isPmActive = isEf && (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", equipName);
+                    alarm.is_pm = isPmActive;
+                    if (isPmActive) {
+                        return; /* Muted from sound triggers */
+                    }
+
+                    const triggerKey = "ALARM:" + alarm.id;
+                    currentDbKeys.add(triggerKey);
+                } catch (rowErr) {
+                    /* Fail-safe per row: log error and force alarm sound trigger so failure is never silenced */
+                    console.error("Error evaluating DB alarm row:", alarm, rowErr);
+                    if (alarm.id !== undefined && alarm.id !== null) {
+                        currentDbKeys.add("ALARM:" + alarm.id);
+                    } else if (alarm.equipment) {
+                        currentDbKeys.add("ALARM:ERR_" + String(alarm.equipment).trim().toUpperCase());
+                    }
+                }
+            });
+
+            /* C2: Prune acknowledged ALARM keys only when api_alarm.php succeeded */
+            acknowledgedAlarmKeys.forEach(k => {
+                if (k.startsWith("ALARM:") && !currentDbKeys.has(k)) {
+                    acknowledgedAlarmKeys.delete(k);
+                }
+            });
+
+            lastDbAlarmKeys = currentDbKeys;
+            lastDbAlarmEfNames = currentDbEfNames;
+        }
+
+        /* 2. Evaluate Live Exhaust Fans (S2, E1, E2, C1, S3) */
+        if (efSuccess) {
+            const allLiveFans = (Array.isArray(liveEfList) ? liveEfList : [])
+                .concat(Array.isArray(liveG8List) ? liveG8List : []);
+
+            allLiveFans.forEach(fan => {
+                if (!fan) return;
+                try {
+                    const fanName = (fan.name || ("EF " + fan.id)).trim();
+                    const fanKeyUpper = fanName.toUpperCase();
+                    const status = getEfStatus(fan);
+                    const lastUpdate = fan.last_update || "";
+
+                    if (status === "off") {
+                        /* C1: Distinct poller readings debounce */
+                        let entry = efDebounceMap.get(fanKeyUpper);
+                        if (!entry) {
+                            entry = { lastUpdate: lastUpdate, distinctCount: 1 };
+                            efDebounceMap.set(fanKeyUpper, entry);
+                        } else if (entry.lastUpdate !== lastUpdate) {
+                            entry.distinctCount += 1;
+                            entry.lastUpdate = lastUpdate;
                         }
 
-                        /* Prepare synthetic LIVE row for ALARM tab (E4, C3) */
-                        newSyntheticLiveRows.push({
-                            id: "LIVE:" + fanKeyUpper.replace(/^EF\s+/i, ""),
-                            event_class: "ALARM",
-                            source: "LIVE",
-                            equip_type: "EF",
-                            equipment: fanName,
-                            point_id: null,
-                            ef_point_id: fan.id || null,
-                            panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
-                            metric: "STATUS",
-                            description: "Exhaust Fan stopped (live status OFF)",
-                            status: "ACTIVE",
-                            value: 0,
-                            limit_min: null,
-                            limit_max: null,
-                            raised_at: null, /* C3: Show '—' */
-                            first_seen: liveEfFirstSeenMap.get(fanKeyUpper) || "--",
-                            cleared_at: null,
-                            is_pm: isPmActive,
-                            is_synthetic: true
-                        });
+                        if (entry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
+                            /* Track first seen for synthetic row display (C3) */
+                            if (!liveEfFirstSeenMap.has(fanKeyUpper)) {
+                                const now = new Date();
+                                const hh = String(now.getHours()).padStart(2, '0');
+                                const mm = String(now.getMinutes()).padStart(2, '0');
+                                liveEfFirstSeenMap.set(fanKeyUpper, hh + ":" + mm);
+                            }
+
+                            /* S3 de-duplication: if EF_POLLER already wrote an ACTIVE ALARM row, don't double trigger */
+                            if (!lastDbAlarmEfNames.has(fanKeyUpper)) {
+                                const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                                const efTriggerKey = "EFOFF:" + fanKeyUpper;
+                                if (!isPmActive) {
+                                    currentEfKeys.add(efTriggerKey);
+                                }
+
+                                /* Prepare synthetic LIVE row for ALARM tab (E4, C3) */
+                                newSyntheticLiveRows.push({
+                                    id: "LIVE:" + fanKeyUpper.replace(/^EF\s+/i, ""),
+                                    event_class: "ALARM",
+                                    source: "LIVE",
+                                    equip_type: "EF",
+                                    equipment: fanName,
+                                    point_id: null,
+                                    ef_point_id: fan.id || null,
+                                    panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
+                                    metric: "STATUS",
+                                    description: "Exhaust Fan stopped (live status OFF)",
+                                    status: "ACTIVE",
+                                    value: 0,
+                                    limit_min: null,
+                                    limit_max: null,
+                                    raised_at: null, /* C3: Show '—' */
+                                    first_seen: liveEfFirstSeenMap.get(fanKeyUpper) || "--",
+                                    cleared_at: null,
+                                    is_pm: isPmActive,
+                                    is_synthetic: true
+                                });
+                            }
+                        }
+                    } else if (status === "run") {
+                        /* Running resets debounce counter and first seen */
+                        efDebounceMap.delete(fanKeyUpper);
+                        liveEfFirstSeenMap.delete(fanKeyUpper);
                     }
+                    /* status === 'unknown' (null/undefined) is never a trigger */
+                } catch (fanErr) {
+                    /* Fail-safe per fan: log error and force sound trigger so fan fault is not hidden */
+                    console.error("Error evaluating live EF item:", fan, fanErr);
+                    const fanId = fan.name || fan.id || "UNKNOWN";
+                    currentEfKeys.add("EFOFF:" + String(fanId).trim().toUpperCase());
                 }
-            } else if (status === "run") {
-                /* Running resets debounce counter and first seen */
-                efDebounceMap.delete(fanKeyUpper);
-                liveEfFirstSeenMap.delete(fanKeyUpper);
-            }
-            /* status === 'unknown' (null/undefined) is never a trigger */
-        });
+            });
 
-        /* C2: Prune acknowledged EFOFF keys only when api_ef.php succeeded */
-        acknowledgedAlarmKeys.forEach(k => {
-            if (k.startsWith("EFOFF:") && !currentEfKeys.has(k)) {
-                acknowledgedAlarmKeys.delete(k);
-            }
-        });
+            /* C2: Prune acknowledged EFOFF keys only when api_ef.php succeeded */
+            acknowledgedAlarmKeys.forEach(k => {
+                if (k.startsWith("EFOFF:") && !currentEfKeys.has(k)) {
+                    acknowledgedAlarmKeys.delete(k);
+                }
+            });
 
-        lastEfOffKeys = currentEfKeys;
-        syntheticLiveEfAlarms = newSyntheticLiveRows;
+            lastEfOffKeys = currentEfKeys;
+            syntheticLiveEfAlarms = newSyntheticLiveRows;
+        }
+
+        /* Merge active trigger keys, retaining prior keys for whichever source failed */
+        const mergedTriggerKeys = new Set();
+        lastDbAlarmKeys.forEach(k => mergedTriggerKeys.add(k));
+        lastEfOffKeys.forEach(k => mergedTriggerKeys.add(k));
+
+        activeAlarmTriggerKeys = mergedTriggerKeys;
+        writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+    } catch (outerErr) {
+        console.error("Unexpected error in evaluateAlarmTriggers:", outerErr);
+    } finally {
+        /* Always update widget / send PLAY_ALARM / STOP_ALARM even if errors occurred */
+        updateGlobalAlarmWidget();
     }
-
-    /* Merge active trigger keys, retaining prior keys for whichever source failed */
-    const mergedTriggerKeys = new Set();
-    lastDbAlarmKeys.forEach(k => mergedTriggerKeys.add(k));
-    lastEfOffKeys.forEach(k => mergedTriggerKeys.add(k));
-
-    activeAlarmTriggerKeys = mergedTriggerKeys;
-    writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
-
-    updateGlobalAlarmWidget();
 }
 
 function formatAlarmTime(value) {
