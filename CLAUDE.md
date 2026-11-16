@@ -127,6 +127,13 @@ Konstanta: `ACTLOG_REFRESH_INTERVAL_MS`, `ENERGY_REFRESH_INTERVAL_MS`,
 6. Jangan menaruh kredensial, isi `config.php`, token, atau IP internal di
    dokumen yang bisa di-push.
 
+## Aturan keamanan database (wajib)
+- DILARANG menjalankan GRANT, REVOKE, CREATE USER, ALTER USER, atau mengubah hak akses MariaDB dengan cara apa pun.
+- DILARANG membaca atau memakai kredensial root, .env.poller, atau environment layanan (NSSM) untuk menembus batas hak akun aplikasi.
+- Bila perintah ditolak karena hak akses (permission denied / access denied), BERHENTI. Jangan cari jalan lain. Tulis SQL yang dibutuhkan ke berkas di folder SQL/ dan minta pengguna menjalankannya di phpMyAdmin.
+- Akun aplikasi web (hvac_web) harus tetap hanya-baca pada tabel telemetri dan alarm, kecuali unit_notes dan unit_maintenance.
+- Data uji selalu berprefiks "TEST " dan dihapus sendiri setelah selesai; verifikasi dengan SELECT bahwa tidak ada baris TEST aktif tersisa.
+
 ## Verifikasi WAJIB
 
 `php -l` hanya memeriksa PHP — **tidak** menangkap error JavaScript. Dulu satu
