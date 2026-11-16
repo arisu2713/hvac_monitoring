@@ -8,6 +8,7 @@
  *   List active maintenance entries or fetch specific unit maintenance.
  *   Optional query params:
  *     ?active=1               (only unexpired active maintenance)
+ *     ?history_hours=24       (1-168: active maintenance OR started/ended/expires in range)
  *     ?equip_type=EXHAUST_FAN (whitelist validated)
  *     ?unit_name=EF+1         (specific unit query)
  *   Returns maintenance list with server-calculated remaining_seconds.
@@ -131,6 +132,20 @@ try {
         $equipType = isset($_GET['equip_type']) ? trim((string)$_GET['equip_type']) : '';
         $unitName = isset($_GET['unit_name']) ? trim((string)$_GET['unit_name']) : '';
 
+        $historyHours = null;
+        if (isset($_GET['history_hours'])) {
+            $rawHistoryHours = $_GET['history_hours'];
+            if (!is_numeric($rawHistoryHours) || (int)$rawHistoryHours < 1 || (int)$rawHistoryHours > 168) {
+                http_response_code(400);
+                echo json_encode([
+                    'success' => false,
+                    'error'   => 'Invalid history_hours: must be an integer between 1 and 168'
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $historyHours = (int)$rawHistoryHours;
+        }
+
         $sql = "
             SELECT
                 id,
@@ -150,7 +165,17 @@ try {
         ";
         $params = [];
 
-        if ($activeOnly) {
+        if ($historyHours !== null) {
+            $sql .= " AND (
+                (active = 1 AND expires_at > NOW())
+                OR started_at >= (NOW() - INTERVAL :history_hours_start HOUR)
+                OR ended_at >= (NOW() - INTERVAL :history_hours_end HOUR)
+                OR expires_at >= (NOW() - INTERVAL :history_hours_exp HOUR)
+            )";
+            $params['history_hours_start'] = $historyHours;
+            $params['history_hours_end']   = $historyHours;
+            $params['history_hours_exp']   = $historyHours;
+        } elseif ($activeOnly) {
             $sql .= " AND active = 1 AND expires_at > NOW()";
         }
 
