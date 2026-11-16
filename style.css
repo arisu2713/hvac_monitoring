@@ -2073,6 +2073,65 @@ html:has(.alarm-page) .alarm-page {
     text-align: center;
 }
 
+/*
+ * Preventive Maintenance (PM) suppression banner on Alarm page.
+ * Neutral tone following hvac-design: no red, no amber.
+ */
+.alarm-pm-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+}
+
+.alarm-pm-banner-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: #adbac7;
+    letter-spacing: .2px;
+}
+
+.alarm-pm-banner-btn {
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #c9d1d9;
+    background: #21262d;
+    border: 1px solid #363b42;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.alarm-pm-banner-btn:hover {
+    background: #30363d;
+    border-color: #8b949e;
+    color: #f0f6fc;
+}
+
+/*
+ * Suppressed PM alarm rows shown via 'Tampilkan'.
+ * Latar redup (dimmed), non-interactive (tombol/suara tidak aktif).
+ */
+.alarm-row.alarm-row-pm-suppressed {
+    opacity: 0.55;
+    background: #121518 !important;
+    border-color: #21262d !important;
+    pointer-events: none;
+}
+
+.alarm-row.alarm-row-pm-suppressed .alarm-badge-pm {
+    background: #21262d;
+    color: #adbac7;
+    border-color: #363b42;
+}
+
 /* ---------- Large wall display ---------- */
 
 @media (min-width: 1600px) {
@@ -2167,6 +2226,16 @@ html:has(.alarm-page) .alarm-page {
 
     .alarm-stat-value {
         font-size: 24px;
+    }
+
+    .alarm-pm-banner {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .alarm-pm-banner-btn {
+        align-self: flex-start;
     }
 }
 
