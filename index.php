@@ -11526,21 +11526,30 @@ function buildMainDesktopDashboard(d) {
         avgDaily = Math.round(sum / dailyHistory.length);
     }
 
-    // Dynamic bar height calculation across the 7 days
+    // Dynamic bar height — zero-based scale: height = value / peak * 100
+    // This gives proportional heights: a day at 96% of peak shows as 96% tall,
+    // not 38% (the old min-max formula with a forced 38% floor was misleading).
     const kwhValues = dailyHistory.map(item => item.kwh);
-    const minKwh = Math.min(...kwhValues);
-    const maxKwh = Math.max(...kwhValues);
-    const range = (maxKwh - minKwh) || 1;
+    const maxKwh = Math.max(...kwhValues) || 1;
 
     let barsHtml = '';
     dailyHistory.forEach(item => {
-        const heightPct = Math.round(38 + ((item.kwh - minKwh) / range) * 56);
-        const isPeak = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
-        const barClass = 'daily-bar' + (item.is_latest ? ' is-latest' : '') + (isPeak ? ' is-peak' : '');
-        const dateNum = item.date ? item.date.split('-')[2] : '';
+        const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
+        // 2 % minimum so a very-low bar is still visible; 0 kWh = hairline "no data"
+        const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
+        const isZero    = item.kwh === 0;
+        const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
+        const barClass  = 'daily-bar'
+            + (item.is_latest ? ' is-latest' : '')
+            + (isPeak         ? ' is-peak'   : '')
+            + (isZero         ? ' is-zero'   : '');
+        const dateNum  = item.date ? item.date.split('-')[2] : '';
+        const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
 
         barsHtml += `
-            <div class="daily-col ${item.is_latest ? 'is-latest' : ''}" title="${item.label}: ${Number(item.kwh).toLocaleString()} kWh">
+            <div class="daily-col ${item.is_latest ? 'is-latest' : ''}"
+                 title="${titleTxt}"
+                 aria-label="${titleTxt}">
                 <div class="daily-bar-track">
                     <div class="${barClass}" style="height: ${heightPct}%;"></div>
                 </div>
@@ -12078,21 +12087,28 @@ function buildMainMobileDashboard(d) {
         avgDaily = Math.round(sum / dailyHistory.length);
     }
 
-    // Dynamic bar height calculation across the 7 days
+    // Dynamic bar height — zero-based scale: height = value / peak * 100
+    // Mobile mirror of the desktop fix above.
     const kwhValues = dailyHistory.map(item => item.kwh);
-    const minKwh = Math.min(...kwhValues);
-    const maxKwh = Math.max(...kwhValues);
-    const range = (maxKwh - minKwh) || 1;
+    const maxKwh = Math.max(...kwhValues) || 1;
 
     let barsHtml = '';
     dailyHistory.forEach(item => {
-        const heightPct = Math.round(38 + ((item.kwh - minKwh) / range) * 56);
-        const isPeak = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
-        const barClass = 'mob-daily-bar' + (item.is_latest ? ' is-latest' : '') + (isPeak ? ' is-peak' : '');
-        const dateNum = item.date ? item.date.split('-')[2] : '';
+        const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
+        const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
+        const isZero    = item.kwh === 0;
+        const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
+        const barClass  = 'mob-daily-bar'
+            + (item.is_latest ? ' is-latest' : '')
+            + (isPeak         ? ' is-peak'   : '')
+            + (isZero         ? ' is-zero'   : '');
+        const dateNum  = item.date ? item.date.split('-')[2] : '';
+        const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
 
         barsHtml += `
-            <div class="mob-daily-col ${item.is_latest ? 'is-latest' : ''}" title="${item.label}: ${Number(item.kwh).toLocaleString()} kWh">
+            <div class="mob-daily-col ${item.is_latest ? 'is-latest' : ''}"
+                 title="${titleTxt}"
+                 aria-label="${titleTxt}">
                 <div class="mob-daily-bar-track">
                     <div class="${barClass}" style="height: ${heightPct}%;"></div>
                 </div>
