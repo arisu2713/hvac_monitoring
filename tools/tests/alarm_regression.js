@@ -2,9 +2,12 @@
 /**
  * tools/tests/alarm_regression.js
  *
- * Automated regression test suite for Alarm & Warning system (Phase 2 safety fixes).
+ * Automated regression test suite for Alarm & Warning system:
+ * - Phase 2 Safety Fixes (Items 0 to 5)
+ * - Phase 2 PM Alarm Suppression for Exhaust Fans (Cases 8 to 17)
+ *
  * Uses headless Chromium (via pre-installed Playwright) with in-memory page mocks.
- * Zero database writes.
+ * Zero database writes for these regression assertions.
  */
 
 const fs = require('fs');
@@ -115,8 +118,23 @@ async function runRegressionSuite() {
                 liveEfFirstSeenMap.clear();
                 initialAlarmEvaluationDone = true;
                 pendingEarlyAckUntil = 0;
+
+                // PM State reset
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                pmHistoryList = [];
+                pmHistoryServerTime = '2026-11-16 12:00:00';
+                alarmPmFilterShowHidden = false;
+                currentEquipment = 'ALARM';
+                if (typeof maintenanceByUnit !== 'undefined') {
+                    maintenanceByUnit.clear();
+                }
             });
         };
+
+        // =========================================================================
+        // ORIGINAL 10 TESTS (Phase 2 Safety Fixes & Baseline Invariants)
+        // =========================================================================
 
         // 1. ALARM DB pada AHU RUN dengan PM termuat
         {
@@ -283,12 +301,10 @@ async function runRegressionSuite() {
         {
             await resetState();
             const res = await page.evaluate(() => {
-                // Set active unacknowledged alarm
                 activeAlarmTriggerKeys.add('ALARM:555');
                 updateGlobalAlarmWidget();
                 const msgBeforePagehide = window.__webviewMessages[window.__webviewMessages.length - 1];
 
-                // Dispatch pagehide
                 window.dispatchEvent(new Event('pagehide'));
                 const msgAfterPagehide = window.__webviewMessages[window.__webviewMessages.length - 1];
 
@@ -306,11 +322,9 @@ async function runRegressionSuite() {
                 initialAlarmEvaluationDone = false;
                 pendingEarlyAckUntil = 0;
 
-                // Wrapper sends early ACK before first eval
                 window.chrome.webview._dispatchMessage('ACK_FROM_C#');
                 const pendingRecorded = pendingEarlyAckUntil > 0;
 
-                // First eval runs with active alarm
                 const alarms = [{
                     id: 201,
                     equipment: 'AHU 01',
@@ -342,11 +356,9 @@ async function runRegressionSuite() {
                 initialAlarmEvaluationDone = true;
                 pendingEarlyAckUntil = 0;
 
-                // ACK arrives when no alarms active
                 window.chrome.webview._dispatchMessage('ACK_FROM_C#');
                 const pendingHeld = pendingEarlyAckUntil > 0;
 
-                // 5 seconds later, new alarm arrives
                 const alarms = [{
                     id: 202,
                     equipment: 'AHU 01',
@@ -378,13 +390,10 @@ async function runRegressionSuite() {
                 initialAlarmEvaluationDone = false;
                 pendingEarlyAckUntil = 0;
 
-                // Wrapper sends early ACK
                 window.chrome.webview._dispatchMessage('ACK_FROM_C#');
 
-                // Simulate 16 seconds pass (expired)
                 pendingEarlyAckUntil = Date.now() - 1000;
 
-                // First eval runs now
                 const alarms = [{
                     id: 203,
                     equipment: 'AHU 01',
@@ -442,6 +451,450 @@ async function runRegressionSuite() {
 
             const passed = res.unackCount === 0 && res.lastMsg === 'STOP_ALARM' && res.isBlinking === false;
             results.push({ name: '7. WARNING tidak pernah bunyi (amber warning tidak pernah memicu alarm sound)', passed, details: res });
+        }
+
+        // =========================================================================
+        // NEW 10 TESTS: Phase 2 PM Alarm Suppression for Exhaust Fans (Koreksi A - E)
+        // =========================================================================
+
+        // 8. ACTIVE tersembunyi saat PM aktif (Koreksi A)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 501,
+                        equipment: 'EF 01',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'ACTIVE',
+                        description: 'Exhaust Fan stopped'
+                    }]
+                };
+
+                renderAlarm();
+
+                const activeRows = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+                const suppressedCount = banner ? banner.textContent : '';
+
+                return {
+                    activeRowsCount: activeRows.length,
+                    bannerText: suppressedCount,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.activeRowsCount === 0 && res.hasBanner && res.bannerText.includes('1 alarm EF disembunyikan');
+            results.push({ name: '8. ACTIVE tersembunyi saat PM aktif (Koreksi A)', passed, details: res });
+        }
+
+        // 9. ACTIVE muncul lagi setelah PM berakhir saat kipas masih OFF (Koreksi A)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                // Step A: Fan has active PM
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 501,
+                        equipment: 'EF 01',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'ACTIVE',
+                        description: 'Exhaust Fan stopped'
+                    }]
+                };
+                renderAlarm();
+                const beforeCount = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)').length;
+
+                // Step B: PM ends while fan is still OFF (active DB alarm unchanged)
+                maintenanceByUnit.clear();
+                evaluateAlarmTriggers(allData.ALARM.alarms, [], [], true, true);
+                renderAlarm();
+
+                const afterRows = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)');
+                const afterCount = afterRows.length;
+                const renderedIdCell = afterRows[0] ? afterRows[0].querySelector('.alarm-cell-id').textContent : '';
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+
+                return {
+                    beforeCount,
+                    afterCount,
+                    renderedId: renderedIdCell,
+                    lastMsg
+                };
+            });
+
+            const passed = res.beforeCount === 0 && res.afterCount === 1 && String(res.renderedId) === '501' && res.lastMsg === 'PLAY_ALARM';
+            results.push({ name: '9. ACTIVE muncul lagi setelah PM berakhir saat kipas masih OFF (baris DB lama, suara bunyi)', passed, details: res });
+        }
+
+        // 10. CLEARED di dalam jendela tersembunyi (Koreksi B)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                pmHistoryList = [{
+                    equip_type: 'EXHAUST_FAN',
+                    unit_name: 'EF 02',
+                    started_at: '2026-11-16 08:00:00',
+                    ended_at: '2026-11-16 12:00:00'
+                }];
+
+                // Cleared alarm strictly within 08:00 and 12:00
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 601,
+                        equipment: 'EF 02',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'CLEARED',
+                        raised_at: '2026-11-16 08:30:00',
+                        cleared_at: '2026-11-16 09:30:00',
+                        description: 'EF 02 Cleared'
+                    }]
+                };
+
+                renderAlarm();
+
+                const clearedRows = document.querySelectorAll('.alarm-section-critical .alarm-group:not(.alarm-group-active) .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+
+                return {
+                    clearedCount: clearedRows.length,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.clearedCount === 0 && res.hasBanner;
+            results.push({ name: '10. CLEARED di dalam jendela tersembunyi (Koreksi B)', passed, details: res });
+        }
+
+        // 11. CLEARED di luar jendela tampil (Koreksi B)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                pmHistoryList = [{
+                    equip_type: 'EXHAUST_FAN',
+                    unit_name: 'EF 02',
+                    started_at: '2026-11-16 08:00:00',
+                    ended_at: '2026-11-16 12:00:00'
+                }];
+
+                // Cleared alarm strictly before window (06:00 to 07:00)
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 602,
+                        equipment: 'EF 02',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'CLEARED',
+                        raised_at: '2026-11-16 06:00:00',
+                        cleared_at: '2026-11-16 07:00:00',
+                        description: 'EF 02 Morning Cleared'
+                    }]
+                };
+
+                renderAlarm();
+
+                const clearedRows = document.querySelectorAll('.alarm-section-critical .alarm-group:not(.alarm-group-active) .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+
+                return {
+                    clearedCount: clearedRows.length,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.clearedCount === 1 && !res.hasBanner;
+            results.push({ name: '11. CLEARED di luar jendela tampil (Koreksi B)', passed, details: res });
+        }
+
+        // 12. Alarm melingkupi jendela (spans window) tersembunyi (Koreksi B)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                pmHistoryList = [{
+                    equip_type: 'EXHAUST_FAN',
+                    unit_name: 'EF 02',
+                    started_at: '2026-11-16 08:00:00',
+                    ended_at: '2026-11-16 12:00:00'
+                }];
+
+                // Raised before window (07:00), cleared after window (13:00) -> spans entire PM window
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 603,
+                        equipment: 'EF 02',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'CLEARED',
+                        raised_at: '2026-11-16 07:00:00',
+                        cleared_at: '2026-11-16 13:00:00',
+                        description: 'EF 02 Spanning Alarm'
+                    }]
+                };
+
+                renderAlarm();
+
+                const clearedRows = document.querySelectorAll('.alarm-section-critical .alarm-group:not(.alarm-group-active) .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+
+                return {
+                    clearedCount: clearedRows.length,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.clearedCount === 0 && res.hasBanner;
+            results.push({ name: '12. Alarm melingkupi seluruh jendela (spans window) tersembunyi (Koreksi B)', passed, details: res });
+        }
+
+        // 13. Fail-safe fetch gagal: tampilkan semua alarm tanpa sembunyi (Koreksi E)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                // Active PM entry exists, but history fetch failed (fail-safe trigger)
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = false; // simulated failure
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 701,
+                        equipment: 'EF 01',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'ACTIVE',
+                        description: 'EF 01 Fail-Safe Test'
+                    }]
+                };
+
+                renderAlarm();
+
+                const activeRows = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+
+                return {
+                    activeCount: activeRows.length,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.activeCount === 1 && !res.hasBanner;
+            results.push({ name: '13. Fail-safe: fetch gagal -> tampilkan semua alarm tanpa sembunyi (Koreksi E)', passed, details: res });
+        }
+
+        // 14. Non-EF tidak tersaring (Koreksi C)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+                // Configure maintenance for AHU 01
+                const k = maintenanceKey('AHU', 'AHU 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.AHU = [{ name: 'AHU 01', status: 1, run_status: 1, run: 1, hz: 50 }];
+                lastAhuFetchTime = Date.now();
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 801,
+                        equipment: 'AHU 01',
+                        equip_type: 'AHU',
+                        event_class: 'ALARM',
+                        status: 'ACTIVE',
+                        description: 'AHU 01 Trip'
+                    }]
+                };
+
+                renderAlarm();
+
+                const activeRows = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)');
+                const banner = document.querySelector('.alarm-pm-banner');
+
+                return {
+                    activeCount: activeRows.length,
+                    hasBanner: !!banner
+                };
+            });
+
+            const passed = res.activeCount === 1 && !res.hasBanner;
+            results.push({ name: '14. Non-EF (AHU/Chiller/Room) tidak pernah tersaring (Koreksi C)', passed, details: res });
+        }
+
+        // 15. Kunci pencocokan: nama peralatan, bukan nomor source (Koreksi C)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                // PM exists for "EF 53", but the alarm equipment is "EF 01" (source says "EF #53")
+                pmHistoryList = [{
+                    equip_type: 'EXHAUST_FAN',
+                    unit_name: 'EF 53',
+                    started_at: '2026-11-16 08:00:00',
+                    ended_at: '2026-11-16 12:00:00'
+                }];
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [{
+                        id: 901,
+                        equipment: 'EF 01',
+                        source: 'EF #53',
+                        equip_type: 'EF',
+                        event_class: 'ALARM',
+                        status: 'CLEARED',
+                        raised_at: '2026-11-16 08:30:00',
+                        cleared_at: '2026-11-16 09:30:00'
+                    }]
+                };
+
+                renderAlarm();
+                const clearedRowsMismatch = document.querySelectorAll('.alarm-section-critical .alarm-group:not(.alarm-group-active) .alarm-row:not(.alarm-thead)').length;
+
+                // Now test with matching PM unit_name: "EF 01"
+                pmHistoryList = [{
+                    equip_type: 'EXHAUST_FAN',
+                    unit_name: 'EF 01',
+                    started_at: '2026-11-16 08:00:00',
+                    ended_at: '2026-11-16 12:00:00'
+                }];
+
+                renderAlarm();
+                const clearedRowsMatch = document.querySelectorAll('.alarm-section-critical .alarm-group:not(.alarm-group-active) .alarm-row:not(.alarm-thead)').length;
+
+                return {
+                    clearedRowsMismatch,
+                    clearedRowsMatch
+                };
+            });
+
+            const passed = res.clearedRowsMismatch === 1 && res.clearedRowsMatch === 0;
+            results.push({ name: '15. Kunci pencocokan: nama peralatan, bukan nomor source (Koreksi C)', passed, details: res });
+        }
+
+        // 16. Hitungan dashboard sesuai daftar yang tampil (Koreksi D)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                // EF 01 is under active PM
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.AHU = [{ name: 'AHU 01', status: 1, run_status: 1, run: 1, hz: 50 }];
+                lastAhuFetchTime = Date.now();
+
+                // 2 Active alarms: AHU 01 (unsuppressed) and EF 01 (suppressed)
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [
+                        { id: 1001, equipment: 'AHU 01', equip_type: 'AHU', event_class: 'ALARM', status: 'ACTIVE' },
+                        { id: 1002, equipment: 'EF 01', equip_type: 'EF', event_class: 'ALARM', status: 'ACTIVE' }
+                    ]
+                };
+
+                renderAlarm();
+
+                const countsActiveAlarm = allData.ALARM.counts ? allData.ALARM.counts.active_alarm : null;
+                const headerText = document.getElementById('unitCount') ? document.getElementById('unitCount').textContent : '';
+                const summaryValue = document.querySelector('.alarm-stat-alarm .alarm-stat-value').textContent;
+
+                return {
+                    countsActiveAlarm,
+                    headerText,
+                    summaryValue
+                };
+            });
+
+            const passed = res.countsActiveAlarm === 1 && res.headerText === '1 active' && res.summaryValue === '1';
+            results.push({ name: '16. Hitungan dashboard (allData.ALARM.counts & UI summary) sesuai daftar tampil (Koreksi D)', passed, details: res });
+        }
+
+        // 17. Banner dan toggle Tampilkan/Sembunyikan (Tahap 2 & 3)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 01');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                allData.AHU = [{ name: 'AHU 01', status: 1, run_status: 1, run: 1, hz: 50 }];
+                lastAhuFetchTime = Date.now();
+
+                allData.ALARM = {
+                    window_hours: 24,
+                    alarms: [
+                        { id: 1101, equipment: 'AHU 01', equip_type: 'AHU', event_class: 'ALARM', status: 'ACTIVE' },
+                        { id: 1102, equipment: 'EF 01', equip_type: 'EF', event_class: 'ALARM', status: 'ACTIVE' }
+                    ]
+                };
+
+                // Initial render: hidden
+                renderAlarm();
+                const bannerBtn1 = document.querySelector('.alarm-pm-banner-btn');
+                const btnText1 = bannerBtn1 ? bannerBtn1.textContent : '';
+                const rowsCount1 = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)').length;
+
+                // Click toggle to show hidden
+                bannerBtn1.click();
+                const bannerBtn2 = document.querySelector('.alarm-pm-banner-btn');
+                const btnText2 = bannerBtn2 ? bannerBtn2.textContent : '';
+                const rowsCount2 = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)').length;
+                const suppressedRow = document.querySelector('.alarm-row.alarm-row-pm-suppressed');
+                const hasPmBadge = suppressedRow ? !!suppressedRow.querySelector('.alarm-badge-pm') : false;
+
+                // Click toggle to hide again
+                bannerBtn2.click();
+                const rowsCount3 = document.querySelectorAll('.alarm-group-critical.alarm-group-active .alarm-row:not(.alarm-thead)').length;
+
+                return {
+                    btnText1,
+                    rowsCount1,
+                    btnText2,
+                    rowsCount2,
+                    hasSuppressedClass: !!suppressedRow,
+                    hasPmBadge,
+                    rowsCount3
+                };
+            });
+
+            const passed = res.btnText1 === 'Tampilkan' && res.rowsCount1 === 1 &&
+                           res.btnText2 === 'Sembunyikan' && res.rowsCount2 === 2 &&
+                           res.hasSuppressedClass && res.hasPmBadge &&
+                           res.rowsCount3 === 1;
+            results.push({ name: '17. Banner toggle Tampilkan/Sembunyikan & gaya baris PM redup (Tahap 2 & 3)', passed, details: res });
         }
 
         await browser.close();
