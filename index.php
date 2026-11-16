@@ -3050,6 +3050,92 @@ let lastDbAlarmKeys = new Set();
 let lastEfOffKeys = new Set();
 let lastDbAlarmEfNames = new Set();
 
+let pmHistoryFetchSuccess = false;
+let pmHistoryList = [];
+let pmHistoryServerTime = null;
+let alarmPmFilterShowHidden = false;
+
+function normalizeSqlDatetime(val) {
+    if (!val) return "";
+    return String(val).replace("T", " ").slice(0, 19);
+}
+
+function isAlarmSuppressedByPm(alarm, pmList) {
+    /* Fail-safe (Koreksi E): if active PM or history PM fetch failed, show all alarms */
+    if (!maintenanceFetchSuccess || !pmHistoryFetchSuccess) {
+        return false;
+    }
+    if (!alarm) {
+        return false;
+    }
+
+    const equipName = String(alarm.equipment || "").trim();
+    /* Only Exhaust Fans (Koreksi C): AHU, Chiller, Room must NEVER be filtered */
+    if (/^(AHU|CHILLER|CT|CCP|CHWP|ROOM)\b/i.test(equipName)) {
+        return false;
+    }
+    const isEf = (alarm.equip_type === "EXHAUST_FAN" || alarm.equip_type === "EF" || alarm.source === "EF_POLLER" || alarm.source === "LIVE" || /^EF\s+\d+$/i.test(equipName));
+    if (!isEf) {
+        return false;
+    }
+
+    const targetKey = typeof maintenanceKey === "function"
+        ? maintenanceKey("EXHAUST_FAN", equipName)
+        : ("EXHAUST_FAN:" + equipName.toUpperCase());
+
+    /* Koreksi A: ACTIVE alarms hidden ONLY when fan has active PM RIGHT NOW */
+    if (alarm.status === "ACTIVE") {
+        return (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", equipName);
+    }
+
+    /* Koreksi B: CLEARED alarms hidden when alarm time overlaps PM window */
+    const alarmStart = normalizeSqlDatetime(alarm.raised_at);
+    const alarmEnd = normalizeSqlDatetime(alarm.cleared_at);
+    if (!alarmStart || !alarmEnd) {
+        return false;
+    }
+
+    const list = Array.isArray(pmList) ? pmList : pmHistoryList;
+    const nowStr = normalizeSqlDatetime(pmHistoryServerTime || (allData.ALARM && allData.ALARM.server_time) || "");
+
+    const relevantPms = list.filter(pm => {
+        if (!pm) return false;
+        const pKey = typeof maintenanceKey === "function"
+            ? maintenanceKey(pm.equip_type || "EXHAUST_FAN", pm.unit_name)
+            : ("EXHAUST_FAN:" + String(pm.unit_name || "").trim().toUpperCase());
+        return pKey === targetKey;
+    });
+
+    for (const pm of relevantPms) {
+        const winStart = normalizeSqlDatetime(pm.started_at);
+        if (!winStart) continue;
+
+        let winEnd = "";
+        if (pm.ended_at) {
+            winEnd = normalizeSqlDatetime(pm.ended_at);
+        } else {
+            const exp = normalizeSqlDatetime(pm.expires_at);
+            if (exp && nowStr) {
+                winEnd = exp < nowStr ? exp : nowStr;
+            } else {
+                winEnd = exp || nowStr;
+            }
+        }
+        if (!winEnd) continue;
+
+        /* Overlap: raised in window, cleared in window, or alarm spans window */
+        const raisedInWindow = alarmStart >= winStart && alarmStart <= winEnd;
+        const clearedInWindow = alarmEnd >= winStart && alarmEnd <= winEnd;
+        const spansWindow = alarmStart <= winStart && alarmEnd >= winEnd;
+
+        if (raisedInWindow || clearedInWindow || spansWindow) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, efSuccess) {
     const currentDbKeys = new Set();
     const currentEfKeys = new Set();
@@ -3336,7 +3422,8 @@ function createAlarmRow(alarm) {
     row.className = "alarm-row "
         + (isActive ? "alarm-row-active" : "alarm-row-cleared")
         + " alarm-row-class-" + String(alarm.event_class).toLowerCase()
-        + (alarm.is_synthetic ? " alarm-row-synthetic" : "");
+        + (alarm.is_synthetic ? " alarm-row-synthetic" : "")
+        + (alarm.is_pm_suppressed ? " alarm-row-pm-suppressed" : "");
 
     const category = document.createElement("div");
     category.className = "alarm-cell";
@@ -3348,11 +3435,13 @@ function createAlarmRow(alarm) {
     badge.textContent = alarm.event_class;
     category.appendChild(badge);
 
-    if (alarm.is_pm) {
+    if (alarm.is_pm || alarm.is_pm_suppressed) {
         const pmBadge = document.createElement("span");
         pmBadge.className = "alarm-badge alarm-badge-pm";
         pmBadge.textContent = "PM";
-        pmBadge.title = "Preventive Maintenance aktif (alarm OFF dibisukan)";
+        pmBadge.title = alarm.is_pm_suppressed
+            ? "Preventive Maintenance (alarm disembunyikan)"
+            : "Preventive Maintenance aktif (alarm OFF dibisukan)";
         category.appendChild(pmBadge);
     }
 
@@ -3483,6 +3572,18 @@ function renderAlarm() {
         row => !dbActiveEfNames.has(String(row.equipment || "").trim().toUpperCase())
     );
 
+    /* Mark PM suppression on all candidate items */
+    let pmSuppressedCount = 0;
+    const allCandidateItems = syntheticRows.concat(rawAlarms);
+    allCandidateItems.forEach(item => {
+        if (isAlarmSuppressedByPm(item, pmHistoryList)) {
+            item.is_pm_suppressed = true;
+            pmSuppressedCount++;
+        } else {
+            item.is_pm_suppressed = false;
+        }
+    });
+
     /*
      * Partition into ALARMS and WARNINGS:
      * - Active ALARMS: syntheticRows + dbActiveAlarms (event_class === "ALARM").
@@ -3492,15 +3593,30 @@ function renderAlarm() {
      * - Cleared ALARMS: dbClearedAlarms (event_class === "ALARM").
      * - Cleared WARNINGS: dbClearedAlarms (event_class === "WARNING").
      */
-    const activeAlarmItems = syntheticRows.concat(dbActiveAlarms.filter(a => a.event_class === "ALARM"));
-    const activeWarningItems = dbActiveAlarms.filter(a => a.event_class === "WARNING" && !checkUnitIsDefinitivelyOff(a));
-    const clearedAlarmItems = dbClearedAlarms.filter(a => a.event_class === "ALARM");
-    const clearedWarningItems = dbClearedAlarms.filter(a => a.event_class === "WARNING");
+    let activeAlarmItems = syntheticRows.concat(dbActiveAlarms.filter(a => a.event_class === "ALARM"));
+    let activeWarningItems = dbActiveAlarms.filter(a => a.event_class === "WARNING" && !checkUnitIsDefinitivelyOff(a));
+    let clearedAlarmItems = dbClearedAlarms.filter(a => a.event_class === "ALARM");
+    let clearedWarningItems = dbClearedAlarms.filter(a => a.event_class === "WARNING");
 
-    /* Recompute counts from displayed data (requirement 3) */
+    /* Filter by PM suppression unless user toggled to show hidden PM alarms */
+    if (!alarmPmFilterShowHidden) {
+        activeAlarmItems = activeAlarmItems.filter(a => !a.is_pm_suppressed);
+        activeWarningItems = activeWarningItems.filter(a => !a.is_pm_suppressed);
+        clearedAlarmItems = clearedAlarmItems.filter(a => !a.is_pm_suppressed);
+        clearedWarningItems = clearedWarningItems.filter(a => !a.is_pm_suppressed);
+    }
+
+    /* Recompute counts from displayed data (requirement D) */
     const activeAlarmTotal = activeAlarmItems.length;
     const activeWarningTotal = activeWarningItems.length;
     const activeTotal = activeAlarmTotal + activeWarningTotal;
+
+    if (data) {
+        if (!data.counts) data.counts = {};
+        data.counts.active_alarm = activeAlarmTotal;
+        data.counts.active_warning = activeWarningTotal;
+        data.counts.active_total = activeTotal;
+    }
 
     /*
      * The window actually applied by the API, not the one the page asked for:
@@ -3567,6 +3683,32 @@ function renderAlarm() {
         banner.className = "alarm-notice alarm-source-notice";
         banner.textContent = sourceMessage;
         page.appendChild(banner);
+    }
+
+    /*
+     * PM suppression banner (Koreksi D / Tahap 2).
+     */
+    if (pmSuppressedCount > 0) {
+        const pmBanner = document.createElement("div");
+        pmBanner.className = "alarm-pm-banner";
+
+        const pmBannerText = document.createElement("span");
+        pmBannerText.className = "alarm-pm-banner-text";
+        pmBannerText.textContent = pmSuppressedCount + " alarm EF disembunyikan karena PM";
+
+        const pmToggleBtn = document.createElement("button");
+        pmToggleBtn.type = "button";
+        pmToggleBtn.className = "alarm-pm-banner-btn";
+        pmToggleBtn.textContent = alarmPmFilterShowHidden ? "Sembunyikan" : "Tampilkan";
+        pmToggleBtn.setAttribute("aria-expanded", String(alarmPmFilterShowHidden));
+        pmToggleBtn.addEventListener("click", () => {
+            alarmPmFilterShowHidden = !alarmPmFilterShowHidden;
+            renderAlarm();
+        });
+
+        pmBanner.appendChild(pmBannerText);
+        pmBanner.appendChild(pmToggleBtn);
+        page.appendChild(pmBanner);
     }
 
     /* ---- SECTION 1: CRITICAL ALARMS ---- */
@@ -3715,9 +3857,9 @@ async function loadAlarmData() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), ALARM_FETCH_TIMEOUT_MS);
 
-    let alarmResult, efResult, maintResult;
+    let alarmResult, efResult, maintResult, maintHistoryResult;
     try {
-        [alarmResult, efResult, maintResult] = await Promise.allSettled([
+        [alarmResult, efResult, maintResult, maintHistoryResult] = await Promise.allSettled([
             fetch(
                 ALARM_API_URL + "?hours=" + encodeURIComponent(alarmWindowHours)
                     + "&t=" + Date.now(),
@@ -3745,6 +3887,15 @@ async function loadAlarmData() {
                 const json = await r.json();
                 if (!json.success) throw new Error("Maintenance API returned success=false");
                 return json;
+            }),
+            fetch(
+                (typeof MAINTENANCE_API_URL !== "undefined" ? MAINTENANCE_API_URL : "api_maintenance.php") + "?history_hours=24&t=" + Date.now(),
+                { cache: "no-store", signal: controller.signal }
+            ).then(async r => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const json = await r.json();
+                if (!json.success) throw new Error("Maintenance history API returned success=false");
+                return json;
             })
         ]);
     } finally {
@@ -3754,7 +3905,7 @@ async function loadAlarmData() {
     const dbSuccess = alarmResult.status === "fulfilled";
     const efSuccess = efResult.status === "fulfilled";
 
-    /* Update Preventive Maintenance (PM) state */
+    /* Update Preventive Maintenance (PM) active state (powers sound triggers and isUnitInMaintenance) */
     const maintSuccess = maintResult && maintResult.status === "fulfilled" && maintResult.value;
     if (maintSuccess) {
         maintenanceFetchSuccess = true;
@@ -3774,6 +3925,18 @@ async function loadAlarmData() {
     } else {
         /* Fail-safe: if maintenance status failed to load or timed out, alarms sound normally */
         maintenanceFetchSuccess = false;
+    }
+
+    /* Update Preventive Maintenance (PM) history state (powers alarm list suppression) */
+    const historySuccess = maintHistoryResult && maintHistoryResult.status === "fulfilled" && maintHistoryResult.value;
+    if (historySuccess) {
+        pmHistoryFetchSuccess = true;
+        pmHistoryList = Array.isArray(maintHistoryResult.value.maintenance) ? maintHistoryResult.value.maintenance : [];
+        pmHistoryServerTime = maintHistoryResult.value.server_time || null;
+    } else {
+        pmHistoryFetchSuccess = false;
+        pmHistoryList = [];
+        pmHistoryServerTime = null;
     }
 
     if (!dbSuccess && !efSuccess) {
@@ -3872,6 +4035,18 @@ async function loadAlarmData() {
 
     /* Evaluate triggers per S1, S2, S3, C1, C2, C5, C7, E1, E2 */
     evaluateAlarmTriggers(dbAlarms, liveEfPanel, liveEfG8, dbSuccess, efSuccess);
+
+    /* Recompute unsuppressed alarm counts for allData.ALARM.counts (Koreksi D) */
+    if (allData.ALARM) {
+        if (!allData.ALARM.counts) allData.ALARM.counts = {};
+        const unsuppressedActiveAlarms = dbAlarms.filter(a => a.status === "ACTIVE" && a.event_class === "ALARM" && !isAlarmSuppressedByPm(a, pmHistoryList));
+        const unsuppressedSynthetic = (Array.isArray(syntheticLiveEfAlarms) ? syntheticLiveEfAlarms : []).filter(r => !isAlarmSuppressedByPm(r, pmHistoryList));
+        const unsuppressedActiveWarnings = dbAlarms.filter(a => a.status === "ACTIVE" && a.event_class === "WARNING" && !checkUnitIsDefinitivelyOff(a) && !isAlarmSuppressedByPm(a, pmHistoryList));
+
+        allData.ALARM.counts.active_alarm = unsuppressedActiveAlarms.length + unsuppressedSynthetic.length;
+        allData.ALARM.counts.active_warning = unsuppressedActiveWarnings.length;
+        allData.ALARM.counts.active_total = allData.ALARM.counts.active_alarm + allData.ALARM.counts.active_warning;
+    }
 
     if (currentEquipment === "ALARM") {
         renderAlarm();
