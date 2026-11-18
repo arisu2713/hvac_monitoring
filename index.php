@@ -10541,24 +10541,26 @@ function buildMainDesktopDashboard(d) {
     const ahuCard = document.createElement("div");
     ahuCard.className = "scard";
     ahuCard.onclick = () => navigateTo("AHU", "");
-    const ahuTotal = d.ahuUnits.length || 97;
-    const ahuGPct = Math.round((d.ahuCounts.normal / ahuTotal) * 100);
-    const ahuYPct = Math.round((d.ahuCounts.warning / ahuTotal) * 100);
-    const ahuRPct = Math.round((d.ahuCounts.critical / ahuTotal) * 100);
+    const ahuLoaded = !!d.sourceStatus?.AHU;
+    const ahuTotal = ahuLoaded ? d.ahuUnits.length : "-";
+    const ahuOn = ahuLoaded ? d.ahuOps.on : "-";
+    const ahuGPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.normal / ahuTotal) * 100) : 0;
+    const ahuYPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.warning / ahuTotal) * 100) : 0;
+    const ahuRPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.critical / ahuTotal) * 100) : 0;
     ahuCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Air handling unit (AHU)</span>
-            <span class="scard-badge">${ahuTotal} units</span>
+            <span class="scard-badge">${ahuLoaded ? ahuTotal + ' units' : '-'}</span>
         </div>
-        <div class="scard-num">${d.ahuOps.on} <span class="scard-total">/ ${ahuTotal}</span></div>
-        <div class="scard-sub">Avg ${d.ahuAvgTemp} °C · target 20–25 °C</div>
+        <div class="scard-num">${ahuOn} <span class="scard-total">/ ${ahuTotal}</span></div>
+        <div class="scard-sub">Avg ${d.ahuAvgTemp !== "-" ? d.ahuAvgTemp + " °C" : "-"} · target 20–25 °C</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${ahuGPct}%"></div>
             <div class="bar-y" style="width:${ahuYPct}%"></div>
             <div class="bar-r" style="width:${ahuRPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${d.ahuCounts.warning > 0 ? `<span class="warn-tag">${d.ahuCounts.warning} warning</span>` : `<span class="ok-tag">All healthy</span>`} · <span class="stop-tag">${d.ahuOps.off} standby</span>
+            ${ahuLoaded ? (d.ahuCounts.warning > 0 ? `<span class="warn-tag">${d.ahuCounts.warning} warning</span>` : `<span class="ok-tag">All healthy</span>`) + ` · <span class="stop-tag">${d.ahuOps.off} standby</span>` : '-'}
         </div>
     `;
     grid1.appendChild(ahuCard);
@@ -10567,17 +10569,19 @@ function buildMainDesktopDashboard(d) {
     const efCard = document.createElement("div");
     efCard.className = "scard";
     efCard.onclick = () => navigateTo("EXHAUST_FAN", "");
-    const efTotal = d.efTotal.length || 59;
-    const efGPct = Math.round((d.efRun / efTotal) * 100);
+    const efLoaded = !!d.sourceStatus?.EF;
+    const efTotal = efLoaded ? d.efTotal.length : "-";
+    const efRun = efLoaded ? d.efRun : "-";
+    const efGPct = (efLoaded && efTotal > 0) ? Math.round((d.efRun / efTotal) * 100) : 0;
     efCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Exhaust fan (EF)</span>
-            <span class="scard-badge">${efTotal} fans</span>
+            <span class="scard-badge">${efLoaded ? efTotal + ' fans' : '-'}</span>
         </div>
-        <div class="scard-num">${d.efRun} <span class="scard-total">/ ${efTotal}</span></div>
+        <div class="scard-num">${efRun} <span class="scard-total">/ ${efTotal}</span></div>
         <div class="scard-sub">All panels monitored via Modbus</div>
         <div class="bar-wrap"><div class="bar-g" style="width:${efGPct}%"></div></div>
-        <div class="scard-footer"><span class="ok-tag">All healthy</span> · ${d.efOff} scheduled standby</div>
+        <div class="scard-footer">${efLoaded ? `<span class="ok-tag">All healthy</span> · ${d.efOff} scheduled standby` : '-'}</div>
     `;
     grid1.appendChild(efCard);
 
@@ -10585,19 +10589,23 @@ function buildMainDesktopDashboard(d) {
     const g8Card = document.createElement("div");
     g8Card.className = "scard";
     g8Card.onclick = () => navigateTo("AHU_G8", "");
-    const g8Norm = 8 - (d.g8Counts.warning + d.g8Counts.critical);
-    const g8GPct = Math.round((g8Norm / 8) * 100);
-    const g8YPct = Math.round((d.g8Counts.warning / 8) * 100);
-    const g8RPct = Math.round((d.g8Counts.critical / 8) * 100);
-    const g8WarnText = d.g8Warnings.length > 0
-        ? `<span class="warn-tag">${d.g8Counts.warning} warning</span> · ${escapeHtml(d.g8Warnings[0].name)} ${escapeHtml(d.g8Warnings[0].reason)}`
-        : `<span class="ok-tag">All healthy</span> · normal`;
+    const g8Loaded = !!d.sourceStatus?.G8;
+    const g8Total = g8Loaded ? 8 : "-";
+    const g8Norm = g8Loaded ? (8 - (d.g8Counts.warning + d.g8Counts.critical)) : "-";
+    const g8GPct = g8Loaded ? Math.round((g8Norm / 8) * 100) : 0;
+    const g8YPct = g8Loaded ? Math.round((d.g8Counts.warning / 8) * 100) : 0;
+    const g8RPct = g8Loaded ? Math.round((d.g8Counts.critical / 8) * 100) : 0;
+    const g8WarnText = g8Loaded
+        ? (d.g8Warnings.length > 0
+            ? `<span class="warn-tag">${d.g8Counts.warning} warning</span> · ${escapeHtml(d.g8Warnings[0].name)} ${escapeHtml(d.g8Warnings[0].reason)}`
+            : `<span class="ok-tag">All healthy</span> · normal`)
+        : '-';
     g8Card.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">AHU / EF G8 building</span>
-            <span class="scard-badge">8 units</span>
+            <span class="scard-badge">${g8Loaded ? '8 units' : '-'}</span>
         </div>
-        <div class="scard-num">${g8Norm} <span class="scard-total">/ 8</span></div>
+        <div class="scard-num">${g8Norm} <span class="scard-total">/ ${g8Total}</span></div>
         <div class="scard-sub">AHU 94–97 + EF 58–61</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${g8GPct}%"></div>
@@ -10622,19 +10630,21 @@ function buildMainDesktopDashboard(d) {
     const chillerCard = document.createElement("div");
     chillerCard.className = "scard";
     chillerCard.onclick = () => navigateTo("CHILLER");
-    const chillTotal = d.chillers.length || 9;
-    const cNorm = d.hscCat.CHILLER.norm;
-    const cWarn = d.hscCat.CHILLER.warn;
-    const cCrit = d.hscCat.CHILLER.crit;
-    const cGPct = Math.round((cNorm / chillTotal) * 100);
-    const cYPct = Math.round((cWarn / chillTotal) * 100);
-    const cRPct = Math.round((cCrit / chillTotal) * 100);
+    const chillLoaded = !!d.sourceStatus?.CHILLER;
+    const chillTotal = chillLoaded ? d.chillers.length : "-";
+    const cNorm = chillLoaded ? d.hscCat.CHILLER.norm : "-";
+    const cWarn = chillLoaded ? d.hscCat.CHILLER.warn : 0;
+    const cCrit = chillLoaded ? d.hscCat.CHILLER.crit : 0;
+    const cOn = chillLoaded ? d.hscCat.CHILLER.on : "-";
+    const cGPct = (chillLoaded && chillTotal > 0) ? Math.round((cNorm / chillTotal) * 100) : 0;
+    const cYPct = (chillLoaded && chillTotal > 0) ? Math.round((cWarn / chillTotal) * 100) : 0;
+    const cRPct = (chillLoaded && chillTotal > 0) ? Math.round((cCrit / chillTotal) * 100) : 0;
     chillerCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Chiller plant</span>
-            <span class="scard-badge">${chillTotal} units</span>
+            <span class="scard-badge">${chillLoaded ? chillTotal + ' units' : '-'}</span>
         </div>
-        <div class="scard-num">${d.hscCat.CHILLER.on} <span class="scard-total">/ ${chillTotal}</span></div>
+        <div class="scard-num">${cOn} <span class="scard-total">/ ${chillTotal}</span></div>
         <div class="scard-sub">CE ≤ 32.0 °C · EL ≤ 12.0 °C</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${cGPct}%"></div>
@@ -10642,7 +10652,7 @@ function buildMainDesktopDashboard(d) {
             <div class="bar-r" style="width:${cRPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${cWarn > 0 ? `<span class="warn-tag">${cWarn} warning</span>` : `<span class="ok-tag">All normal</span>`} · <span class="stop-tag">${d.hscCat.CHILLER.off} stopped</span>
+            ${chillLoaded ? (cWarn > 0 ? `<span class="warn-tag">${cWarn} warning</span>` : `<span class="ok-tag">All normal</span>`) + ` · <span class="stop-tag">${d.hscCat.CHILLER.off} stopped</span>` : '-'}
         </div>
     `;
     grid2.appendChild(chillerCard);
@@ -10651,24 +10661,26 @@ function buildMainDesktopDashboard(d) {
     const ctCard = document.createElement("div");
     ctCard.className = "scard";
     ctCard.onclick = () => navigateTo("CT");
-    const ctTotal = d.cts.length || 22;
-    const ctNorm = d.hscCat.CT.norm;
-    const ctWarn = d.hscCat.CT.warn;
-    const ctGPct = Math.round((ctNorm / ctTotal) * 100);
-    const ctYPct = Math.round((ctWarn / ctTotal) * 100);
+    const ctLoaded = !!d.sourceStatus?.CT;
+    const ctTotal = ctLoaded ? d.cts.length : "-";
+    const ctNorm = ctLoaded ? d.hscCat.CT.norm : "-";
+    const ctWarn = ctLoaded ? d.hscCat.CT.warn : 0;
+    const ctOn = ctLoaded ? d.hscCat.CT.on : "-";
+    const ctGPct = (ctLoaded && ctTotal > 0) ? Math.round((ctNorm / ctTotal) * 100) : 0;
+    const ctYPct = (ctLoaded && ctTotal > 0) ? Math.round((ctWarn / ctTotal) * 100) : 0;
     ctCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Cooling tower (CT)</span>
-            <span class="scard-badge">${ctTotal} cells</span>
+            <span class="scard-badge">${ctLoaded ? ctTotal + ' cells' : '-'}</span>
         </div>
-        <div class="scard-num">${d.hscCat.CT.on} <span class="scard-total">/ ${ctTotal}</span></div>
-        <div class="scard-sub">Avg ret ${d.ctAvgTemp} °C · limit ≤ 32.0 °C</div>
+        <div class="scard-num">${ctOn} <span class="scard-total">/ ${ctTotal}</span></div>
+        <div class="scard-sub">Avg ret ${d.ctAvgTemp !== "-" ? d.ctAvgTemp + " °C" : "-"} · limit ≤ 32.0 °C</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${ctGPct}%"></div>
             <div class="bar-y" style="width:${ctYPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${ctWarn > 0 ? `<span class="warn-tag">${ctWarn} warning</span> · ret temp above threshold` : `<span class="ok-tag">All normal</span> · within limits`}
+            ${ctLoaded ? (ctWarn > 0 ? `<span class="warn-tag">${ctWarn} warning</span> · ret temp above threshold` : `<span class="ok-tag">All normal</span> · within limits`) : '-'}
         </div>
     `;
     grid2.appendChild(ctCard);
@@ -10677,16 +10689,18 @@ function buildMainDesktopDashboard(d) {
     const ccpCard = document.createElement("div");
     ccpCard.className = "scard";
     ccpCard.onclick = () => navigateTo("CCP");
-    const ccpTotal = d.ccpCount || 9;
+    const ccpLoaded = !!d.sourceStatus?.CCP;
+    const ccpTotal = ccpLoaded ? d.ccpCount : "-";
+    const ccpOn = ccpLoaded ? d.hscCat.CCP.on : "-";
     ccpCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Condenser pump (CCP)</span>
-            <span class="scard-badge">${ccpTotal} pumps</span>
+            <span class="scard-badge">${ccpLoaded ? ccpTotal + ' pumps' : '-'}</span>
         </div>
-        <div class="scard-num">${d.hscCat.CCP.on} <span class="scard-total">/ ${ccpTotal}</span></div>
+        <div class="scard-num">${ccpOn} <span class="scard-total">/ ${ccpTotal}</span></div>
         <div class="scard-sub">Speed ~50.0 Hz · current 15–19 A</div>
-        <div class="bar-wrap"><div class="bar-g" style="width:100%"></div></div>
-        <div class="scard-footer"><span class="ok-tag">All normal</span> · ${d.hscCat.CCP.off} standby rotation</div>
+        <div class="bar-wrap"><div class="bar-g" style="width:${ccpLoaded ? 100 : 0}%"></div></div>
+        <div class="scard-footer">${ccpLoaded ? `<span class="ok-tag">All normal</span> · ${d.hscCat.CCP.off} standby rotation` : '-'}</div>
     `;
     grid2.appendChild(ccpCard);
     sysCol.appendChild(grid2);
@@ -10704,20 +10718,23 @@ function buildMainDesktopDashboard(d) {
     const roomCard = document.createElement("div");
     roomCard.className = "scard";
     roomCard.onclick = () => navigateTo("ROOM_TEMP_RH", "");
-    const roomTotal = d.rooms.length || 10;
-    const roomNorm = roomTotal - d.roomTotalWarn;
-    const rGPct = Math.round((roomNorm / roomTotal) * 100);
-    const rYPct = Math.round((d.roomTotalWarn / roomTotal) * 100);
-    const roomFooter = d.roomTotalWarn > 0
-        ? `<span class="warn-tag">${d.roomTotalWarn} ${d.roomRhWarn > 0 ? 'RH ' : ''}warning</span> · all temp normal`
-        : `<span class="ok-tag">All normal</span> · compliant`;
+    const roomLoaded = !!d.sourceStatus?.ROOM_TEMP_RH;
+    const roomTotal = roomLoaded ? d.rooms.length : "-";
+    const roomNorm = roomLoaded ? Math.max(0, d.rooms.length - d.roomTotalWarn) : "-";
+    const rGPct = (roomLoaded && roomTotal > 0) ? Math.round((roomNorm / roomTotal) * 100) : 0;
+    const rYPct = (roomLoaded && roomTotal > 0) ? Math.round((d.roomTotalWarn / roomTotal) * 100) : 0;
+    const roomFooter = roomLoaded
+        ? (d.roomTotalWarn > 0
+            ? `<span class="warn-tag">${d.roomTotalWarn} ${d.roomRhWarn > 0 ? 'RH ' : ''}warning</span> · all temp normal`
+            : `<span class="ok-tag">All normal</span> · compliant`)
+        : '-';
     roomCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Room temp &amp; RH</span>
-            <span class="scard-badge">${roomTotal} rooms</span>
+            <span class="scard-badge">${roomLoaded ? roomTotal + ' rooms' : '-'}</span>
         </div>
         <div class="scard-num">${roomNorm} <span class="scard-total">/ ${roomTotal}</span></div>
-        <div class="scard-sub">Avg ${d.roomAvgTemp} °C · ${d.roomAvgRh}% RH</div>
+        <div class="scard-sub">Avg ${d.roomAvgTemp !== "-" ? d.roomAvgTemp + " °C" : "-"} · ${d.roomAvgRh !== "-" ? d.roomAvgRh + "% RH" : "-"}</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${rGPct}%"></div>
             <div class="bar-y" style="width:${rYPct}%"></div>
@@ -10730,18 +10747,20 @@ function buildMainDesktopDashboard(d) {
     const alarmCard = document.createElement("div");
     alarmCard.className = "scard";
     alarmCard.onclick = () => navigateTo("ALARM", "");
-    const isAlarmCrit = d.activeAlarms > 0;
+    const alarmLoaded = !!d.sourceStatus?.ALARM;
+    const alarmTotal = alarmLoaded ? d.activeTotal : "-";
+    const isAlarmCrit = alarmLoaded && d.activeAlarms > 0;
     alarmCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Global alarm system</span>
-            <span class="scard-badge">${d.activeTotal} active</span>
+            <span class="scard-badge">${alarmLoaded ? alarmTotal + ' active' : '-'}</span>
         </div>
         <div class="scard-num" style="color:${isAlarmCrit ? '#ef4444' : '#f59e0b'}">
-            ${d.activeTotal} <span class="scard-total" style="color:var(--text-secondary,#8b98a8);font-size:14px;font-weight:400">${isAlarmCrit ? 'alarms' : 'warnings'}</span>
+            ${alarmTotal} <span class="scard-total" style="color:var(--text-secondary,#8b98a8);font-size:14px;font-weight:400">${alarmLoaded ? (isAlarmCrit ? 'alarms' : 'warnings') : 'events'}</span>
         </div>
-        <div class="scard-sub">${d.totalEvents.toLocaleString()} logged · lifecycle engine active</div>
-        <div class="bar-wrap"><div class="${isAlarmCrit ? 'bar-r' : 'bar-y'}" style="width:100%"></div></div>
-        <div class="scard-footer">2 new in 24 h · ${d.activeAlarms === 0 ? 'no alarm state' : d.activeAlarms + ' critical alarms'}</div>
+        <div class="scard-sub">${alarmLoaded && typeof d.totalEvents === 'number' ? d.totalEvents.toLocaleString() + ' logged · lifecycle engine active' : '-'}</div>
+        <div class="bar-wrap"><div class="${isAlarmCrit ? 'bar-r' : 'bar-y'}" style="width:${alarmLoaded ? 100 : 0}%"></div></div>
+        <div class="scard-footer">${alarmLoaded ? ('2 new in 24 h · ' + (d.activeAlarms === 0 ? 'no alarm state' : d.activeAlarms + ' critical alarms')) : '-'}</div>
     `;
     grid3.appendChild(alarmCard);
 
@@ -10749,15 +10768,17 @@ function buildMainDesktopDashboard(d) {
     const chwpCard = document.createElement("div");
     chwpCard.className = "scard";
     chwpCard.onclick = () => navigateTo("CHWP");
-    const chwpTotal = d.chwpCount || 9;
+    const chwpLoaded = !!d.sourceStatus?.CHWP;
+    const chwpTotal = chwpLoaded ? d.chwpCount : "-";
+    const chwpOn = chwpLoaded ? d.hscCat.CHWP.on : "-";
     chwpCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Chilled water pump (CHWP)</span>
-            <span class="scard-badge">${chwpTotal} pumps</span>
+            <span class="scard-badge">${chwpLoaded ? chwpTotal + ' pumps' : '-'}</span>
         </div>
-        <div class="scard-num">${d.hscCat.CHWP.on} <span class="scard-total">/ ${chwpTotal}</span></div>
+        <div class="scard-num">${chwpOn} <span class="scard-total">/ ${chwpTotal}</span></div>
         <div class="scard-sub">Speed 48–50 Hz · current 14–17.5 A</div>
-        <div class="bar-wrap"><div class="bar-g" style="width:100%"></div></div>
+        <div class="bar-wrap"><div class="bar-g" style="width:${chwpLoaded ? 100 : 0}%"></div></div>
         <div class="scard-footer"><span class="ok-tag">All normal</span> · ${d.hscCat.CHWP.off} standby</div>
     `;
     grid3.appendChild(chwpCard);
@@ -10831,26 +10852,19 @@ function buildMainDesktopDashboard(d) {
     const energyCard = document.createElement("div");
     energyCard.className = "energy-card";
 
+    const energyLoaded = !!d.sourceStatus?.ENERGY_SUMMARY;
     const enSummary = d.energyData || {};
-    const reportKwhNum = d.reportKwh != null ? Math.round(d.reportKwh) : (enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
-    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '--';
+    const reportKwhNum = (energyLoaded && d.reportKwh != null) ? Math.round(d.reportKwh) : (energyLoaded && enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
+    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '-';
     const isDown = d.diffKwh != null ? d.diffKwh <= 0 : false;
     const pct = d.pctChange != null ? Math.abs(d.pctChange).toFixed(1) : null;
     const pctSign = isDown ? '▼ -' : '▲ +';
     const pctClass = isDown ? 'is-down' : 'is-up';
 
-    /* Daily history from API summary or authentic plant 7-day fallback */
+    /* Daily history from API summary; no fabricated fallback */
     const dailyHistory = (Array.isArray(enSummary.daily_history) && enSummary.daily_history.length > 0)
         ? enSummary.daily_history
-        : [
-            { date: '2026-10-21', label: '21 Oct', short_day: 'Wed', kwh: 8891, is_latest: false },
-            { date: '2026-10-22', label: '22 Oct', short_day: 'Thu', kwh: 8886, is_latest: false },
-            { date: '2026-10-23', label: '23 Oct', short_day: 'Fri', kwh: 8904, is_latest: false },
-            { date: '2026-10-24', label: '24 Oct', short_day: 'Sat', kwh: 8873, is_latest: false },
-            { date: '2026-10-25', label: '25 Oct', short_day: 'Sun', kwh: 8868, is_latest: false },
-            { date: '2026-10-26', label: '26 Oct', short_day: 'Mon', kwh: 8841, is_latest: false },
-            { date: '2026-10-27', label: '27 Oct', short_day: 'Tue', kwh: 8832, is_latest: true }
-        ];
+        : [];
 
     let peakDay = enSummary.peak_day;
     if (!peakDay && dailyHistory.length > 0) {
@@ -10872,33 +10886,37 @@ function buildMainDesktopDashboard(d) {
     const maxKwh = Math.max(...kwhValues) || 1;
 
     let barsHtml = '';
-    dailyHistory.forEach(item => {
-        const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
-        // 2 % minimum so a very-low bar is still visible; 0 kWh = hairline "no data"
-        const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
-        const isZero    = item.kwh === 0;
-        const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
-        const barClass  = 'daily-bar'
-            + (item.is_latest ? ' is-latest' : '')
-            + (isPeak         ? ' is-peak'   : '')
-            + (isZero         ? ' is-zero'   : '');
-        const dateNum  = item.date ? item.date.split('-')[2] : '';
-        const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
+    if (dailyHistory.length === 0) {
+        barsHtml = '<div style="padding:24px 10px;text-align:center;color:#8b98a8;font-size:12px;width:100%;">No energy history data available</div>';
+    } else {
+        dailyHistory.forEach(item => {
+            const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
+            // 2 % minimum so a very-low bar is still visible; 0 kWh = hairline "no data"
+            const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
+            const isZero    = item.kwh === 0;
+            const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
+            const barClass  = 'daily-bar'
+                + (item.is_latest ? ' is-latest' : '')
+                + (isPeak         ? ' is-peak'   : '')
+                + (isZero         ? ' is-zero'   : '');
+            const dateNum  = item.date ? item.date.split('-')[2] : '';
+            const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
 
-        barsHtml += `
-            <div class="daily-col ${item.is_latest ? 'is-latest' : ''}"
-                 title="${titleTxt}"
-                 aria-label="${titleTxt}">
-                <div class="daily-bar-track">
-                    <div class="${barClass}" style="height: ${heightPct}%;"></div>
+            barsHtml += `
+                <div class="daily-col ${item.is_latest ? 'is-latest' : ''}"
+                     title="${titleTxt}"
+                     aria-label="${titleTxt}">
+                    <div class="daily-bar-track">
+                        <div class="${barClass}" style="height: ${heightPct}%;"></div>
+                    </div>
+                    <div class="daily-label">
+                        <span class="daily-short">${item.short_day || ''}</span>
+                        <span class="daily-date">${dateNum}</span>
+                    </div>
                 </div>
-                <div class="daily-label">
-                    <span class="daily-short">${item.short_day || ''}</span>
-                    <span class="daily-date">${dateNum}</span>
-                </div>
-            </div>
-        `;
-    });
+            `;
+        });
+    }
 
     const shortDate = value => value ? value.slice(5).replace('-', '/') : '';
     const reportDateLabel = shortDate(enSummary.report_date);
@@ -10936,11 +10954,11 @@ function buildMainDesktopDashboard(d) {
         <div class="energy-stats">
             <div class="stat-box">
                 <span class="stat-box-lbl">Peak day</span>
-                <span class="stat-box-val"><b>${peakDay ? Number(Math.round(peakDay.kwh)).toLocaleString() : '--'} kWh</b> <span class="stat-box-sub">${peakDay ? peakDay.label : ''}</span></span>
+                <span class="stat-box-val"><b>${peakDay ? Number(Math.round(peakDay.kwh)).toLocaleString() + ' kWh' : '-'}</b> <span class="stat-box-sub">${peakDay ? peakDay.label : ''}</span></span>
             </div>
             <div class="stat-box">
                 <span class="stat-box-lbl">Daily average</span>
-                <span class="stat-box-val"><b>${avgDaily ? Number(Math.round(avgDaily)).toLocaleString() : '--'} kWh</b> <span class="stat-box-sub">/ day</span></span>
+                <span class="stat-box-val"><b>${avgDaily ? Number(Math.round(avgDaily)).toLocaleString() + ' kWh' : '-'}</b> <span class="stat-box-sub">${avgDaily ? '/ day' : ''}</span></span>
             </div>
         </div>
     `;
@@ -11104,21 +11122,28 @@ function buildMainMobileDashboard(d) {
     sysGrid.className = "mob-systems-grid";
 
     // 1. Chiller (Modbus)
-    const chillTotal = (d.chillers && d.chillers.length) ? d.chillers.length : 9;
-    const chillNorm = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.norm : chillTotal;
-    const chillWarn = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.warn : 0;
-    const chillCrit = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.crit : 0;
-    const chillOn = (d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.on : 0;
-    const chillNormPct = Math.min(100, Math.round((chillNorm / chillTotal) * 100));
-    const chillWarnPct = Math.min(100 - chillNormPct, Math.round(((chillWarn + chillCrit) / chillTotal) * 100));
-    const chillSub = chillCrit > 0
-        ? `${chillCrit} critical`
-        : (chillWarn > 0 ? `${chillWarn} warning` : `${chillOn} running · CE/EL normal`);
+    const chillLoaded = !!d.sourceStatus?.CHILLER;
+    const chillTotal = chillLoaded ? (d.chillers && d.chillers.length ? d.chillers.length : 0) : "-";
+    const chillNorm = chillLoaded ? ((d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.norm : 0) : "-";
+    const chillWarn = chillLoaded ? ((d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.warn : 0) : 0;
+    const chillCrit = chillLoaded ? ((d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.crit : 0) : 0;
+    const chillOn = chillLoaded ? ((d.hscCat && d.hscCat.CHILLER) ? d.hscCat.CHILLER.on : 0) : "-";
+    const chillNormPct = (chillLoaded && chillTotal > 0) ? Math.min(100, Math.round((chillNorm / chillTotal) * 100)) : 0;
+    const chillWarnPct = (chillLoaded && chillTotal > 0) ? Math.min(100 - chillNormPct, Math.round(((chillWarn + chillCrit) / chillTotal) * 100)) : 0;
+    const chillSub = chillLoaded
+        ? (chillCrit > 0
+            ? `${chillCrit} critical`
+            : (chillWarn > 0 ? `${chillWarn} warning` : `${chillOn} running · CE/EL normal`))
+        : "-";
     const catStat = key => {
+        const isLoaded = !!d.sourceStatus?.[key];
+        if (!isLoaded) {
+            return { total: "-", norm: "-", crit: 0, warn: 0, normPct: 0, warnPct: 0, sub: "-" };
+        }
         const c = (d.hscCat && d.hscCat[key]) ? d.hscCat[key] : { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 };
         const total = c.total || 0;
         const bad = c.warn + c.crit;
-        const normPct = total > 0 ? Math.min(100, Math.round((c.norm / total) * 100)) : 100;
+        const normPct = total > 0 ? Math.min(100, Math.round((c.norm / total) * 100)) : 0;
         const warnPct = total > 0 ? Math.min(100 - normPct, Math.round((bad / total) * 100)) : 0;
         const sub = c.crit > 0
             ? `${c.crit} critical`
@@ -11152,60 +11177,72 @@ function buildMainMobileDashboard(d) {
     const chwpSub = chwpStat.sub;
 
     // 3. AHU
-    const ahuTotal = d.ahuUnits.length || 97;
-    const ahuNorm = d.ahuCounts.normal;
-    const ahuWarn = d.ahuCounts.warning;
-    const ahuCrit = d.ahuCounts.critical;
-    const ahuNormPct = Math.min(100, Math.round((ahuNorm / ahuTotal) * 100));
-    const ahuWarnPct = Math.min(100 - ahuNormPct, Math.round((ahuWarn / ahuTotal) * 100));
-    const ahuSub = ahuCrit > 0 ? `${ahuCrit} critical` : (ahuWarn > 0 ? `${ahuWarn} warning` : 'All normal');
+    const ahuLoaded = !!d.sourceStatus?.AHU;
+    const ahuTotal = ahuLoaded ? d.ahuUnits.length : "-";
+    const ahuNorm = ahuLoaded ? d.ahuCounts.normal : "-";
+    const ahuWarn = ahuLoaded ? d.ahuCounts.warning : 0;
+    const ahuCrit = ahuLoaded ? d.ahuCounts.critical : 0;
+    const ahuNormPct = (ahuLoaded && ahuTotal > 0) ? Math.min(100, Math.round((ahuNorm / ahuTotal) * 100)) : 0;
+    const ahuWarnPct = (ahuLoaded && ahuTotal > 0) ? Math.min(100 - ahuNormPct, Math.round((ahuWarn / ahuTotal) * 100)) : 0;
+    const ahuSub = ahuLoaded
+        ? (ahuCrit > 0 ? `${ahuCrit} critical` : (ahuWarn > 0 ? `${ahuWarn} warning` : 'All normal'))
+        : "-";
 
     // 4. Exhaust Fan
-    const efTot = d.efTotal.length || 59;
-    const efRun = d.efRun;
-    const efOff = d.efOff;
-    const efRunPct = Math.min(100, Math.round((efRun / efTot) * 100));
-    const efOffPct = Math.min(100 - efRunPct, Math.round((efOff / efTot) * 100));
-    const efSub = efOff > 0 ? `${efOff} stopped` : 'All running';
+    const efLoaded = !!d.sourceStatus?.EF;
+    const efTot = efLoaded ? d.efTotal.length : "-";
+    const efRun = efLoaded ? d.efRun : "-";
+    const efOff = efLoaded ? d.efOff : 0;
+    const efRunPct = (efLoaded && efTot > 0) ? Math.min(100, Math.round((efRun / efTot) * 100)) : 0;
+    const efOffPct = (efLoaded && efTot > 0) ? Math.min(100 - efRunPct, Math.round((efOff / efTot) * 100)) : 0;
+    const efSub = efLoaded ? (efOff > 0 ? `${efOff} stopped` : 'All running') : "-";
 
     // 5. AHU / EF G8
-    const g8Tot = 8;
-    const g8Norm = d.g8Counts.normal;
-    const g8Warn = d.g8Counts.warning;
-    const g8NormPct = Math.min(100, Math.round((g8Norm / g8Tot) * 100));
-    const g8WarnPct = Math.min(100 - g8NormPct, Math.round((g8Warn / g8Tot) * 100));
-    const g8Sub = g8Warn > 0 ? `${g8Warn} warning` : 'All normal';
+    const g8Loaded = !!d.sourceStatus?.G8;
+    const g8Tot = g8Loaded ? 8 : "-";
+    const g8Norm = g8Loaded ? d.g8Counts.normal : "-";
+    const g8Warn = g8Loaded ? d.g8Counts.warning : 0;
+    const g8NormPct = g8Loaded ? Math.min(100, Math.round((g8Norm / 8) * 100)) : 0;
+    const g8WarnPct = g8Loaded ? Math.min(100 - g8NormPct, Math.round((g8Warn / 8) * 100)) : 0;
+    const g8Sub = g8Loaded ? (g8Warn > 0 ? `${g8Warn} warning` : 'All normal') : "-";
 
     // 6. Room temp and RH
-    const roomTotal = (d.rooms && d.rooms.length) ? d.rooms.length : 10;
+    const roomLoaded = !!d.sourceStatus?.ROOM_TEMP_RH;
+    const roomTotal = roomLoaded ? (d.rooms && d.rooms.length ? d.rooms.length : 0) : "-";
     let sumT = 0, countT = 0, sumRh = 0, countRh = 0;
     (d.rooms || []).forEach(r => {
         if (typeof r.temp === 'number') { sumT += r.temp; countT++; }
         if (typeof r.rh === 'number') { sumRh += r.rh; countRh++; }
     });
-    const avgT = countT > 0 ? (sumT / countT).toFixed(1) : '28.4';
-    const avgRh = countRh > 0 ? Math.round(sumRh / countRh) : '58';
-    const roomWarn = typeof d.roomTotalWarn === 'number' ? d.roomTotalWarn : 0;
-    const roomNorm = Math.max(0, roomTotal - roomWarn);
-    const roomNormPct = roomTotal > 0 ? Math.round((roomNorm / roomTotal) * 100) : 100;
-    const roomWarnPct = 100 - roomNormPct;
-    const roomSub = roomWarn > 0
-        ? `${roomWarn} warning &middot; Avg ${avgT} &deg;C`
-        : `Avg ${avgT} &deg;C &middot; ${avgRh}% RH`;
+    const avgT = (roomLoaded && countT > 0) ? (sumT / countT).toFixed(1) : "-";
+    const avgRh = (roomLoaded && countRh > 0) ? Math.round(sumRh / countRh) : "-";
+    const roomWarn = (roomLoaded && typeof d.roomTotalWarn === 'number') ? d.roomTotalWarn : 0;
+    const roomNorm = roomLoaded ? Math.max(0, (d.rooms ? d.rooms.length : 0) - roomWarn) : "-";
+    const roomNormPct = (roomLoaded && roomTotal > 0) ? Math.round((roomNorm / roomTotal) * 100) : 0;
+    const roomWarnPct = (roomLoaded && roomTotal > 0) ? (100 - roomNormPct) : 0;
+    const roomSub = roomLoaded
+        ? (roomWarn > 0
+            ? `${roomWarn} warning &middot; Avg ${avgT} &deg;C`
+            : `Avg ${avgT !== '-' ? avgT + ' &deg;C' : '-'} &middot; ${avgRh !== '-' ? avgRh + '% RH' : '-'}`)
+        : "-";
 
     // 7. Alarm System
-    const alarmActive = typeof d.activeAlarms === 'number' ? d.activeAlarms : 0;
-    const alarmWarn = typeof d.activeWarnings === 'number' ? d.activeWarnings : 0;
-    const alarmTotal = typeof d.activeTotal === 'number' ? d.activeTotal : (alarmActive + alarmWarn);
-    const alarmSub = alarmTotal === 0
-        ? 'All healthy · no alarms'
-        : (alarmActive > 0 ? `${alarmActive} critical alarm${alarmActive > 1 ? 's' : ''}` : `${alarmWarn} warning${alarmWarn > 1 ? 's' : ''}`);
-    const alarmBarClass = alarmActive > 0 ? 'is-red' : (alarmWarn > 0 ? 'is-amber' : 'is-green');
+    const alarmLoaded = !!d.sourceStatus?.ALARM;
+    const alarmActive = (alarmLoaded && typeof d.activeAlarms === 'number') ? d.activeAlarms : 0;
+    const alarmWarn = (alarmLoaded && typeof d.activeWarnings === 'number') ? d.activeWarnings : 0;
+    const alarmTotal = alarmLoaded ? (typeof d.activeTotal === 'number' ? d.activeTotal : (alarmActive + alarmWarn)) : "-";
+    const alarmSub = alarmLoaded
+        ? (alarmTotal === 0
+            ? 'All healthy · no alarms'
+            : (alarmActive > 0 ? `${alarmActive} critical alarm${alarmActive > 1 ? 's' : ''}` : `${alarmWarn} warning${alarmWarn > 1 ? 's' : ''}`))
+        : "-";
+    const alarmBarClass = alarmLoaded ? (alarmActive > 0 ? 'is-red' : (alarmWarn > 0 ? 'is-amber' : 'is-green')) : '';
 
     // 8. Energy Overview
-    const enKwhVal = d.reportKwh != null ? Math.round(d.reportKwh).toLocaleString() : '--';
+    const energyLoaded = !!d.sourceStatus?.ENERGY_SUMMARY;
+    const enKwhVal = (energyLoaded && d.reportKwh != null) ? Math.round(d.reportKwh).toLocaleString() : '-';
     const enTrendSign = (d.diffKwh != null && d.diffKwh <= 0) ? '▼ -' : '▲ +';
-    const enTrendText = (d.pctChange != null && d.diffKwh != null)
+    const enTrendText = (energyLoaded && d.pctChange != null && d.diffKwh != null)
         ? `${enTrendSign}${Math.abs(d.pctChange).toFixed(1)}% vs prev day`
         : 'Daily tracking';
 
@@ -11366,32 +11403,17 @@ function buildMainMobileDashboard(d) {
     energyCard.className = "mob-energy-card";
 
     const enSummary = d.energyData || {};
-
-    /*
-     * The card reports the last COMPLETED day (H-1), not today: api_energy.php
-     * withholds the row for today because its usage figure is a single frozen
-     * delta that never grows during the day. No fabricated fallback here - a
-     * missing figure prints "--" rather than a plausible-looking number.
-     */
-    const reportKwhNum = d.reportKwh != null ? Math.round(d.reportKwh) : (enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
-    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '--';
+    const reportKwhNum = (energyLoaded && d.reportKwh != null) ? Math.round(d.reportKwh) : (energyLoaded && enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
+    const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '-';
     const isDown = d.diffKwh != null ? d.diffKwh <= 0 : false;
     const pct = d.pctChange != null ? Math.abs(d.pctChange).toFixed(1) : null;
     const pctSign = isDown ? '▼ -' : '▲ +';
     const pctClass = isDown ? 'is-down' : 'is-up';
 
-    /* Daily history from API summary or authentic plant 7-day fallback */
+    /* Daily history from API summary; no fabricated fallback */
     const dailyHistory = (Array.isArray(enSummary.daily_history) && enSummary.daily_history.length > 0)
         ? enSummary.daily_history
-        : [
-            { date: '2026-10-21', label: '21 Oct', short_day: 'Wed', kwh: 8891, is_latest: false },
-            { date: '2026-10-22', label: '22 Oct', short_day: 'Thu', kwh: 8886, is_latest: false },
-            { date: '2026-10-23', label: '23 Oct', short_day: 'Fri', kwh: 8904, is_latest: false },
-            { date: '2026-10-24', label: '24 Oct', short_day: 'Sat', kwh: 8873, is_latest: false },
-            { date: '2026-10-25', label: '25 Oct', short_day: 'Sun', kwh: 8868, is_latest: false },
-            { date: '2026-10-26', label: '26 Oct', short_day: 'Mon', kwh: 8841, is_latest: false },
-            { date: '2026-10-27', label: '27 Oct', short_day: 'Tue', kwh: 8832, is_latest: true }
-        ];
+        : [];
 
     let peakDay = enSummary.peak_day;
     if (!peakDay && dailyHistory.length > 0) {
@@ -11412,32 +11434,36 @@ function buildMainMobileDashboard(d) {
     const maxKwh = Math.max(...kwhValues) || 1;
 
     let barsHtml = '';
-    dailyHistory.forEach(item => {
-        const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
-        const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
-        const isZero    = item.kwh === 0;
-        const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
-        const barClass  = 'mob-daily-bar'
-            + (item.is_latest ? ' is-latest' : '')
-            + (isPeak         ? ' is-peak'   : '')
-            + (isZero         ? ' is-zero'   : '');
-        const dateNum  = item.date ? item.date.split('-')[2] : '';
-        const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
+    if (dailyHistory.length === 0) {
+        barsHtml = '<div style="padding:24px 10px;text-align:center;color:#8b98a8;font-size:12px;width:100%;">No energy history data available</div>';
+    } else {
+        dailyHistory.forEach(item => {
+            const rawPct  = item.kwh > 0 ? (item.kwh / maxKwh) * 100 : 0;
+            const heightPct = item.kwh > 0 ? Math.max(2, Math.round(rawPct)) : 2;
+            const isZero    = item.kwh === 0;
+            const isPeak    = peakDay && (item.date === peakDay.date || item.kwh === peakDay.kwh);
+            const barClass  = 'mob-daily-bar'
+                + (item.is_latest ? ' is-latest' : '')
+                + (isPeak         ? ' is-peak'   : '')
+                + (isZero         ? ' is-zero'   : '');
+            const dateNum  = item.date ? item.date.split('-')[2] : '';
+            const titleTxt = `${item.label}: ${item.kwh > 0 ? Number(item.kwh).toLocaleString() + ' kWh' : 'No data'}`;
 
-        barsHtml += `
-            <div class="mob-daily-col ${item.is_latest ? 'is-latest' : ''}"
-                 title="${titleTxt}"
-                 aria-label="${titleTxt}">
-                <div class="mob-daily-bar-track">
-                    <div class="${barClass}" style="height: ${heightPct}%;"></div>
+            barsHtml += `
+                <div class="mob-daily-col ${item.is_latest ? 'is-latest' : ''}"
+                     title="${titleTxt}"
+                     aria-label="${titleTxt}">
+                    <div class="mob-daily-bar-track">
+                        <div class="${barClass}" style="height: ${heightPct}%;"></div>
+                    </div>
+                    <div class="mob-daily-label">
+                        <span class="mob-daily-short">${item.short_day || ''}</span>
+                        <span class="mob-daily-date">${dateNum}</span>
+                    </div>
                 </div>
-                <div class="mob-daily-label">
-                    <span class="mob-daily-short">${item.short_day || ''}</span>
-                    <span class="mob-daily-date">${dateNum}</span>
-                </div>
-            </div>
-        `;
-    });
+            `;
+        });
+    }
 
     /* MM/DD, matching the date format already used under the headline. */
     const shortDate = value => value ? value.slice(5).replace('-', '/') : '';
@@ -11473,11 +11499,11 @@ function buildMainMobileDashboard(d) {
         <div class="mob-energy-stats">
             <div class="mob-energy-stat-box">
                 <span class="mob-stat-box-lbl">Peak day</span>
-                <span class="mob-stat-box-val"><b>${peakDay ? Number(Math.round(peakDay.kwh)).toLocaleString() : '--'} kWh</b> <span class="mob-stat-box-sub">${peakDay ? peakDay.label : ''}</span></span>
+                <span class="mob-stat-box-val"><b>${peakDay ? Number(Math.round(peakDay.kwh)).toLocaleString() + ' kWh' : '-'}</b> <span class="mob-stat-box-sub">${peakDay ? peakDay.label : ''}</span></span>
             </div>
             <div class="mob-energy-stat-box">
                 <span class="mob-stat-box-lbl">Daily average</span>
-                <span class="mob-stat-box-val"><b>${avgDaily ? Number(Math.round(avgDaily)).toLocaleString() : '--'} kWh</b> <span class="mob-stat-box-sub">/ day</span></span>
+                <span class="mob-stat-box-val"><b>${avgDaily ? Number(Math.round(avgDaily)).toLocaleString() + ' kWh' : '-'}</b> <span class="mob-stat-box-sub">${avgDaily ? '/ day' : ''}</span></span>
             </div>
         </div>
     `;
@@ -11713,15 +11739,18 @@ function renderMainDashboard() {
     });
 
     // --- ALARM Aggregation ---
+    const src = allData.sourceStatus || {};
+    const anyEquipLoaded = !!(src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP || src.EF || src.G8);
+
     const alarmData = allData.ALARM || {};
     const alarmCounts = alarmData.counts || {};
-    const activeAlarms = Number(alarmCounts.active_alarm || 0);
-    const activeWarnings = Number(alarmCounts.active_warning || 0);
-    const activeTotal = Number(alarmCounts.active_total || 0);
-    const totalEvents = Number(alarmData.total_events || 0);
+    const activeAlarms = src.ALARM ? Number(alarmCounts.active_alarm || 0) : "-";
+    const activeWarnings = src.ALARM ? Number(alarmCounts.active_warning || 0) : "-";
+    const activeTotal = src.ALARM ? Number(alarmCounts.active_total || 0) : "-";
+    const totalEvents = src.ALARM ? Number(alarmData.total_events || 0) : "-";
 
     // --- ENERGY Aggregation (last completed day; see api_energy.php?summary=1) ---
-    const energyData = allData.ENERGY_SUMMARY || null;
+    const energyData = src.ENERGY_SUMMARY ? allData.ENERGY_SUMMARY : null;
     const reportKwh = energyData?.report_kwh ?? null;
     const prevKwh = energyData?.prev_kwh ?? null;
     const diffKwh = reportKwh != null && prevKwh != null ? Math.round((reportKwh - prevKwh) * 10) / 10 : null;
@@ -11729,12 +11758,22 @@ function renderMainDashboard() {
 
     // --- OVERALL SYSTEM TOTALS ---
     // Physical equipment units: AHU (97) + HVAC SC (49) + EF (59) = 205 (No double counting G8!)
-    const totalEquip = ahuUnits.length + hvacUnits.length + efTotal.length;
-    const totalCritical = ahuCounts.critical + hscCounts.critical;
-    const totalWarning = ahuCounts.warning + hscCounts.warning;
-    const totalNormal = ahuCounts.normal + hscCounts.normal + efRun + efOff;
+    const totalEquip = anyEquipLoaded
+        ? ((src.AHU ? ahuUnits.length : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hvacUnits.length : 0) + (src.EF ? efTotal.length : 0))
+        : "-";
+    const totalCritical = (src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP)
+        ? ((src.AHU ? ahuCounts.critical : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.critical : 0))
+        : "-";
+    const totalWarning = (src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP)
+        ? ((src.AHU ? ahuCounts.warning : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.warning : 0))
+        : "-";
+    const totalNormal = anyEquipLoaded
+        ? ((src.AHU ? ahuCounts.normal : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.normal : 0) + (src.EF ? (efRun + efOff) : 0))
+        : "-";
 
-    const totalStopped = ahuOps.off + hscOps.off + efOff;
+    const totalStopped = anyEquipLoaded
+        ? ((src.AHU ? ahuOps.off : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscOps.off : 0) + (src.EF ? efOff : 0))
+        : "-";
 
     // --- SORT ISSUES ---
     issues.sort((a, b) => {
@@ -11753,7 +11792,7 @@ function renderMainDashboard() {
             ahuTempCount++;
         }
     });
-    const ahuAvgTemp = ahuTempCount > 0 ? (ahuSumTemp / ahuTempCount).toFixed(1) : "22.8";
+    const ahuAvgTemp = (src.AHU && ahuTempCount > 0) ? (ahuSumTemp / ahuTempCount).toFixed(1) : "-";
 
     let ctSumTemp = 0;
     let ctTempCount = 0;
@@ -11763,7 +11802,7 @@ function renderMainDashboard() {
             ctTempCount++;
         }
     });
-    const ctAvgTemp = ctTempCount > 0 ? (ctSumTemp / ctTempCount).toFixed(1) : "30.8";
+    const ctAvgTemp = (src.CT && ctTempCount > 0) ? (ctSumTemp / ctTempCount).toFixed(1) : "-";
 
     let roomSumTemp = 0;
     let roomTempCount = 0;
@@ -11779,10 +11818,11 @@ function renderMainDashboard() {
             roomRhCount++;
         }
     });
-    const roomAvgTemp = roomTempCount > 0 ? (roomSumTemp / roomTempCount).toFixed(1) : "22.4";
-    const roomAvgRh = roomRhCount > 0 ? Math.round(roomSumRh / roomRhCount) : 58;
+    const roomAvgTemp = (src.ROOM_TEMP_RH && roomTempCount > 0) ? (roomSumTemp / roomTempCount).toFixed(1) : "-";
+    const roomAvgRh = (src.ROOM_TEMP_RH && roomRhCount > 0) ? Math.round(roomSumRh / roomRhCount) : "-";
 
     const page = buildMainDesktopDashboard({
+        sourceStatus: src,
         totalEquip,
         totalCritical,
         totalWarning,
@@ -11825,6 +11865,7 @@ function renderMainDashboard() {
 
     // 3. Build Mobile Overview Dashboard (matching mobile executive mockup)
     const mobilePage = buildMainMobileDashboard({
+        sourceStatus: src,
         totalEquip,
         totalCritical,
         totalWarning,
@@ -12022,25 +12063,58 @@ async function loadData() {
                 fetch("api_energy.php?summary=1&t=" + Date.now(), { cache: "no-store" }).then(r => r.ok ? r.json() : null)
             ]);
 
+            allData.sourceStatus = allData.sourceStatus || {};
+
             if (ahuRes.status === "fulfilled" && ahuRes.value?.success) {
                 allData.AHU = ahuRes.value.equipment?.AHU || [];
+                allData.sourceStatus.AHU = true;
                 lastAhuFetchTime = Date.now();
+            } else {
+                allData.sourceStatus.AHU = false;
             }
+
             if (hvacRes.status === "fulfilled" && hvacRes.value?.success) {
                 Object.assign(allData, hvacRes.value.equipment || {});
+                allData.sourceStatus.CHILLER = Array.isArray(hvacRes.value.equipment?.CHILLER);
+                allData.sourceStatus.CT = Array.isArray(hvacRes.value.equipment?.CT);
+                allData.sourceStatus.CCP = Array.isArray(hvacRes.value.equipment?.CCP);
+                allData.sourceStatus.CHWP = Array.isArray(hvacRes.value.equipment?.CHWP);
                 lastHvacScFetchTime = Date.now();
+            } else {
+                allData.sourceStatus.CHILLER = false;
+                allData.sourceStatus.CT = false;
+                allData.sourceStatus.CCP = false;
+                allData.sourceStatus.CHWP = false;
             }
+
             if (roomRes.status === "fulfilled" && roomRes.value?.success) {
                 allData.ROOM_TEMP_RH = roomRes.value.equipment?.ROOM_TEMP_RH || [];
+                allData.sourceStatus.ROOM_TEMP_RH = true;
+            } else {
+                allData.sourceStatus.ROOM_TEMP_RH = false;
             }
+
             if (efRes.status === "fulfilled" && efRes.value?.success) {
                 Object.assign(allData, efRes.value.equipment || {});
+                allData.sourceStatus.EF = Array.isArray(efRes.value.equipment?.EXHAUST_FAN);
+                allData.sourceStatus.G8 = Array.isArray(efRes.value.equipment?.EXHAUST_FAN_G8);
+            } else {
+                allData.sourceStatus.EF = false;
+                allData.sourceStatus.G8 = false;
             }
+
             if (alarmRes.status === "fulfilled" && alarmRes.value?.success) {
                 allData.ALARM = alarmRes.value;
+                allData.sourceStatus.ALARM = true;
+            } else {
+                allData.sourceStatus.ALARM = false;
             }
+
             if (energyRes.status === "fulfilled" && energyRes.value?.success) {
                 allData.ENERGY_SUMMARY = energyRes.value.summary || null;
+                allData.sourceStatus.ENERGY_SUMMARY = true;
+            } else {
+                allData.sourceStatus.ENERGY_SUMMARY = false;
             }
 
             const anySuccess = [ahuRes, hvacRes, roomRes, efRes, alarmRes].some(r => r.status === "fulfilled" && r.value?.success);
