@@ -10465,17 +10465,28 @@ function buildMainDesktopDashboard(d) {
     const timeStr = String(now.getHours()).padStart(2, '0') + ":" + String(now.getMinutes()).padStart(2, '0');
 
     // 1. Status Banner
+    const src = d.sourceStatus || {};
+    const anyEquipLoaded = !!(src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP || src.EF || src.G8);
+    const allEquipFailed = !anyEquipLoaded;
+    const isPartial = anyEquipLoaded && (!src.AHU || !src.CHILLER || !src.CT || !src.CCP || !src.CHWP || !src.EF || !src.G8 || !src.ALARM);
+
     const isCrit = d.totalCritical > 0;
     const isWarn = !isCrit && d.totalWarning > 0;
-    const bannerClass = isCrit ? "is-crit" : (isWarn ? "is-warn" : "is-normal");
-    const bannerTitle = isCrit
-        ? "Operating with critical issues"
-        : (isWarn ? "Operating with warnings" : "All systems operational");
-    const bannerSub = isCrit
-        ? `${d.totalCritical} critical alert(s) across systems — immediate action required.`
-        : (isWarn
-            ? `No critical issue. ${d.totalWarning} warnings active across all systems — no immediate action required.`
-            : `No critical issue or warning. All ${d.totalEquip} units operating within normal target ranges.`);
+    const bannerClass = allEquipFailed
+        ? "is-empty"
+        : (isCrit ? "is-crit" : (isWarn ? "is-warn" : "is-normal"));
+    const bannerTitle = allEquipFailed
+        ? "Telemetry data unavailable"
+        : (isCrit
+            ? "Operating with critical issues"
+            : (isWarn ? "Operating with warnings" : "All systems operational"));
+    const bannerSub = allEquipFailed
+        ? "Could not retrieve system telemetry."
+        : (isCrit
+            ? `${d.totalCritical} critical alert(s) across systems — immediate action required.${isPartial ? ' (partial data)' : ''}`
+            : (isWarn
+                ? `No critical issue. ${d.totalWarning} warnings active across all systems — no immediate action required.${isPartial ? ' (partial data)' : ''}`
+                : `No critical issue or warning. All ${d.totalEquip} units operating within normal target ranges.${isPartial ? ' (partial data)' : ''}`));
 
     const banner = document.createElement("div");
     banner.className = "status-banner " + bannerClass;
@@ -10547,20 +10558,22 @@ function buildMainDesktopDashboard(d) {
     const ahuGPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.normal / ahuTotal) * 100) : 0;
     const ahuYPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.warning / ahuTotal) * 100) : 0;
     const ahuRPct = (ahuLoaded && ahuTotal > 0) ? Math.round((d.ahuCounts.critical / ahuTotal) * 100) : 0;
+    const ahuSample = (d.ahuUnits || []).find(u => u.temp_min != null && u.temp_max != null);
+    const ahuTarget = ahuSample ? `target ${ahuSample.temp_min}–${ahuSample.temp_max} °C` : "";
     ahuCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Air handling unit (AHU)</span>
             <span class="scard-badge">${ahuLoaded ? ahuTotal + ' units' : '-'}</span>
         </div>
         <div class="scard-num">${ahuOn} <span class="scard-total">/ ${ahuTotal}</span></div>
-        <div class="scard-sub">Avg ${d.ahuAvgTemp !== "-" ? d.ahuAvgTemp + " °C" : "-"} · target 20–25 °C</div>
+        <div class="scard-sub">Avg ${d.ahuAvgTemp !== "-" ? d.ahuAvgTemp + " °C" : "-"}${ahuTarget ? ' · ' + ahuTarget : ''}</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${ahuGPct}%"></div>
             <div class="bar-y" style="width:${ahuYPct}%"></div>
             <div class="bar-r" style="width:${ahuRPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${ahuLoaded ? (d.ahuCounts.warning > 0 ? `<span class="warn-tag">${d.ahuCounts.warning} warning</span>` : `<span class="ok-tag">All healthy</span>`) + ` · <span class="stop-tag">${d.ahuOps.off} standby</span>` : '-'}
+            ${ahuLoaded ? (d.ahuCounts.warning > 0 ? `<span class="warn-tag">${d.ahuCounts.warning} warning</span>` : (d.ahuCounts.critical > 0 ? `<span class="crit-tag">${d.ahuCounts.critical} critical</span>` : `<span class="ok-tag">All healthy</span>`)) + ` · <span class="stop-tag">${d.ahuOps.off} standby</span>` : '-'}
         </div>
     `;
     grid1.appendChild(ahuCard);
@@ -10639,20 +10652,22 @@ function buildMainDesktopDashboard(d) {
     const cGPct = (chillLoaded && chillTotal > 0) ? Math.round((cNorm / chillTotal) * 100) : 0;
     const cYPct = (chillLoaded && chillTotal > 0) ? Math.round((cWarn / chillTotal) * 100) : 0;
     const cRPct = (chillLoaded && chillTotal > 0) ? Math.round((cCrit / chillTotal) * 100) : 0;
+    const chillSample = (d.chillers || []).find(c => c.cond_entering_temp_max != null || c.evap_leaving_temp_max != null);
+    const chillLimitText = chillSample ? `CE ≤ ${(chillSample.cond_entering_temp_max || 32.0).toFixed(1)} °C · EL ≤ ${(chillSample.evap_leaving_temp_max || 12.0).toFixed(1)} °C` : "";
     chillerCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Chiller plant</span>
             <span class="scard-badge">${chillLoaded ? chillTotal + ' units' : '-'}</span>
         </div>
         <div class="scard-num">${cOn} <span class="scard-total">/ ${chillTotal}</span></div>
-        <div class="scard-sub">CE ≤ 32.0 °C · EL ≤ 12.0 °C</div>
+        <div class="scard-sub">${chillLoaded ? (chillLimitText || "CE/EL within bounds") : "-"}</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${cGPct}%"></div>
             <div class="bar-y" style="width:${cYPct}%"></div>
             <div class="bar-r" style="width:${cRPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${chillLoaded ? (cWarn > 0 ? `<span class="warn-tag">${cWarn} warning</span>` : `<span class="ok-tag">All normal</span>`) + ` · <span class="stop-tag">${d.hscCat.CHILLER.off} stopped</span>` : '-'}
+            ${chillLoaded ? (cWarn > 0 ? `<span class="warn-tag">${cWarn} warning</span>` : (cCrit > 0 ? `<span class="crit-tag">${cCrit} critical</span>` : `<span class="ok-tag">All normal</span>`)) + ` · <span class="stop-tag">${d.hscCat.CHILLER.off} stopped</span>` : '-'}
         </div>
     `;
     grid2.appendChild(chillerCard);
@@ -10665,22 +10680,25 @@ function buildMainDesktopDashboard(d) {
     const ctTotal = ctLoaded ? d.cts.length : "-";
     const ctNorm = ctLoaded ? d.hscCat.CT.norm : "-";
     const ctWarn = ctLoaded ? d.hscCat.CT.warn : 0;
+    const ctCrit = ctLoaded ? d.hscCat.CT.crit : 0;
     const ctOn = ctLoaded ? d.hscCat.CT.on : "-";
     const ctGPct = (ctLoaded && ctTotal > 0) ? Math.round((ctNorm / ctTotal) * 100) : 0;
     const ctYPct = (ctLoaded && ctTotal > 0) ? Math.round((ctWarn / ctTotal) * 100) : 0;
+    const ctSample = (d.cts || []).find(c => c.return_temp_max != null);
+    const ctLimitText = ctSample ? `limit ≤ ${ctSample.return_temp_max.toFixed(1)} °C` : "";
     ctCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Cooling tower (CT)</span>
             <span class="scard-badge">${ctLoaded ? ctTotal + ' cells' : '-'}</span>
         </div>
         <div class="scard-num">${ctOn} <span class="scard-total">/ ${ctTotal}</span></div>
-        <div class="scard-sub">Avg ret ${d.ctAvgTemp !== "-" ? d.ctAvgTemp + " °C" : "-"} · limit ≤ 32.0 °C</div>
+        <div class="scard-sub">Avg ret ${d.ctAvgTemp !== "-" ? d.ctAvgTemp + " °C" : "-"}${ctLimitText ? ' · ' + ctLimitText : ''}</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${ctGPct}%"></div>
             <div class="bar-y" style="width:${ctYPct}%"></div>
         </div>
         <div class="scard-footer">
-            ${ctLoaded ? (ctWarn > 0 ? `<span class="warn-tag">${ctWarn} warning</span> · ret temp above threshold` : `<span class="ok-tag">All normal</span> · within limits`) : '-'}
+            ${ctLoaded ? (ctWarn > 0 ? `<span class="warn-tag">${ctWarn} warning</span> · ret temp above threshold` : (ctCrit > 0 ? `<span class="crit-tag">${ctCrit} critical</span>` : `<span class="ok-tag">All normal</span> · within limits`)) : '-'}
         </div>
     `;
     grid2.appendChild(ctCard);
@@ -10691,16 +10709,29 @@ function buildMainDesktopDashboard(d) {
     ccpCard.onclick = () => navigateTo("CCP");
     const ccpLoaded = !!d.sourceStatus?.CCP;
     const ccpTotal = ccpLoaded ? d.ccpCount : "-";
+    const ccpCrit = ccpLoaded ? (d.ccpCrit || 0) : 0;
+    const ccpWarn = ccpLoaded ? (d.ccpWarn || 0) : 0;
+    const ccpNorm = ccpLoaded ? Math.max(0, d.ccpCount - (ccpCrit + ccpWarn)) : "-";
     const ccpOn = ccpLoaded ? d.hscCat.CCP.on : "-";
+    const ccpGPct = (ccpLoaded && d.ccpCount > 0) ? Math.round((ccpNorm / d.ccpCount) * 100) : 0;
+    const ccpYPct = (ccpLoaded && d.ccpCount > 0) ? Math.round((ccpWarn / d.ccpCount) * 100) : 0;
+    const ccpRPct = (ccpLoaded && d.ccpCount > 0) ? Math.round((ccpCrit / d.ccpCount) * 100) : 0;
+    const ccpSub = (ccpLoaded && d.ccpAvgHz != null && d.ccpAvgA != null)
+        ? `Avg ${d.ccpAvgHz} Hz · current ${d.ccpAvgA} A`
+        : (ccpLoaded && d.ccpAvgHz != null ? `Avg ${d.ccpAvgHz} Hz` : (ccpLoaded && d.ccpAvgA != null ? `Avg current ${d.ccpAvgA} A` : "-"));
     ccpCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Condenser pump (CCP)</span>
             <span class="scard-badge">${ccpLoaded ? ccpTotal + ' pumps' : '-'}</span>
         </div>
         <div class="scard-num">${ccpOn} <span class="scard-total">/ ${ccpTotal}</span></div>
-        <div class="scard-sub">Speed ~50.0 Hz · current 15–19 A</div>
-        <div class="bar-wrap"><div class="bar-g" style="width:${ccpLoaded ? 100 : 0}%"></div></div>
-        <div class="scard-footer">${ccpLoaded ? `<span class="ok-tag">All normal</span> · ${d.hscCat.CCP.off} standby rotation` : '-'}</div>
+        <div class="scard-sub">${ccpSub}</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${ccpGPct}%"></div>
+            <div class="bar-y" style="width:${ccpYPct}%"></div>
+            <div class="bar-r" style="width:${ccpRPct}%"></div>
+        </div>
+        <div class="scard-footer">${ccpLoaded ? (ccpCrit > 0 ? `<span class="crit-tag">${ccpCrit} alarm</span>` : (ccpWarn > 0 ? `<span class="warn-tag">${ccpWarn} warning</span>` : `<span class="ok-tag">All normal</span>`)) + ` · ${d.hscCat.CCP.off} standby rotation` : '-'}</div>
     `;
     grid2.appendChild(ccpCard);
     sysCol.appendChild(grid2);
@@ -10723,6 +10754,8 @@ function buildMainDesktopDashboard(d) {
     const roomNorm = roomLoaded ? Math.max(0, d.rooms.length - d.roomTotalWarn) : "-";
     const rGPct = (roomLoaded && roomTotal > 0) ? Math.round((roomNorm / roomTotal) * 100) : 0;
     const rYPct = (roomLoaded && roomTotal > 0) ? Math.round((d.roomTotalWarn / roomTotal) * 100) : 0;
+    const roomSample = (d.rooms || []).find(r => r.temp_max != null || r.rh_max != null);
+    const roomLimits = roomSample ? `limit ≤ ${roomSample.temp_max || 30} °C, ≤ ${roomSample.rh_max || 65}% RH` : "";
     const roomFooter = roomLoaded
         ? (d.roomTotalWarn > 0
             ? `<span class="warn-tag">${d.roomTotalWarn} ${d.roomRhWarn > 0 ? 'RH ' : ''}warning</span> · all temp normal`
@@ -10734,7 +10767,7 @@ function buildMainDesktopDashboard(d) {
             <span class="scard-badge">${roomLoaded ? roomTotal + ' rooms' : '-'}</span>
         </div>
         <div class="scard-num">${roomNorm} <span class="scard-total">/ ${roomTotal}</span></div>
-        <div class="scard-sub">Avg ${d.roomAvgTemp !== "-" ? d.roomAvgTemp + " °C" : "-"} · ${d.roomAvgRh !== "-" ? d.roomAvgRh + "% RH" : "-"}</div>
+        <div class="scard-sub">Avg ${d.roomAvgTemp !== "-" ? d.roomAvgTemp + " °C" : "-"} · ${d.roomAvgRh !== "-" ? d.roomAvgRh + "% RH" : "-"}${roomLimits ? ' (' + roomLimits + ')' : ''}</div>
         <div class="bar-wrap">
             <div class="bar-g" style="width:${rGPct}%"></div>
             <div class="bar-y" style="width:${rYPct}%"></div>
@@ -10760,7 +10793,7 @@ function buildMainDesktopDashboard(d) {
         </div>
         <div class="scard-sub">${alarmLoaded && typeof d.totalEvents === 'number' ? d.totalEvents.toLocaleString() + ' logged · lifecycle engine active' : '-'}</div>
         <div class="bar-wrap"><div class="${isAlarmCrit ? 'bar-r' : 'bar-y'}" style="width:${alarmLoaded ? 100 : 0}%"></div></div>
-        <div class="scard-footer">${alarmLoaded ? ('2 new in 24 h · ' + (d.activeAlarms === 0 ? 'no alarm state' : d.activeAlarms + ' critical alarms')) : '-'}</div>
+        <div class="scard-footer">${alarmLoaded ? (d.newIn24h + ' new in 24 h · ' + (d.activeAlarms === 0 ? 'no alarm state' : d.activeAlarms + ' critical alarms')) : '-'}</div>
     `;
     grid3.appendChild(alarmCard);
 
@@ -10770,16 +10803,29 @@ function buildMainDesktopDashboard(d) {
     chwpCard.onclick = () => navigateTo("CHWP");
     const chwpLoaded = !!d.sourceStatus?.CHWP;
     const chwpTotal = chwpLoaded ? d.chwpCount : "-";
+    const chwpCrit = chwpLoaded ? (d.chwpCrit || 0) : 0;
+    const chwpWarn = chwpLoaded ? (d.chwpWarn || 0) : 0;
+    const chwpNorm = chwpLoaded ? Math.max(0, d.chwpCount - (chwpCrit + chwpWarn)) : "-";
     const chwpOn = chwpLoaded ? d.hscCat.CHWP.on : "-";
+    const chwpGPct = (chwpLoaded && d.chwpCount > 0) ? Math.round((chwpNorm / d.chwpCount) * 100) : 0;
+    const chwpYPct = (chwpLoaded && d.chwpCount > 0) ? Math.round((chwpWarn / d.chwpCount) * 100) : 0;
+    const chwpRPct = (chwpLoaded && d.chwpCount > 0) ? Math.round((chwpCrit / d.chwpCount) * 100) : 0;
+    const chwpSub = (chwpLoaded && d.chwpAvgHz != null && d.chwpAvgA != null)
+        ? `Avg ${d.chwpAvgHz} Hz · current ${d.chwpAvgA} A`
+        : (chwpLoaded && d.chwpAvgHz != null ? `Avg ${d.chwpAvgHz} Hz` : (chwpLoaded && d.chwpAvgA != null ? `Avg current ${d.chwpAvgA} A` : "-"));
     chwpCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Chilled water pump (CHWP)</span>
             <span class="scard-badge">${chwpLoaded ? chwpTotal + ' pumps' : '-'}</span>
         </div>
         <div class="scard-num">${chwpOn} <span class="scard-total">/ ${chwpTotal}</span></div>
-        <div class="scard-sub">Speed 48–50 Hz · current 14–17.5 A</div>
-        <div class="bar-wrap"><div class="bar-g" style="width:${chwpLoaded ? 100 : 0}%"></div></div>
-        <div class="scard-footer"><span class="ok-tag">All normal</span> · ${d.hscCat.CHWP.off} standby</div>
+        <div class="scard-sub">${chwpSub}</div>
+        <div class="bar-wrap">
+            <div class="bar-g" style="width:${chwpGPct}%"></div>
+            <div class="bar-y" style="width:${chwpYPct}%"></div>
+            <div class="bar-r" style="width:${chwpRPct}%"></div>
+        </div>
+        <div class="scard-footer">${chwpLoaded ? (chwpCrit > 0 ? `<span class="crit-tag">${chwpCrit} alarm</span>` : (chwpWarn > 0 ? `<span class="warn-tag">${chwpWarn} warning</span>` : `<span class="ok-tag">All normal</span>`)) + ` · ${d.hscCat.CHWP.off} standby` : '-'}</div>
     `;
     grid3.appendChild(chwpCard);
     sysCol.appendChild(grid3);
@@ -10813,7 +10859,7 @@ function buildMainDesktopDashboard(d) {
                 </div>
             `;
         }).join("")
-        : `<div style="padding:16px 14px;color:#8b98a8;text-align:center;font-size:12px;">✓ All systems healthy with no active warnings.</div>`;
+        : `<div style="padding:16px 14px;color:#8b98a8;text-align:center;font-size:12px;">${anyEquipLoaded ? '✓ All systems healthy with no active warnings.' : 'No issue data available'}</div>`;
 
     attnCard.innerHTML = `
         <div class="attn-head">
@@ -11008,18 +11054,33 @@ function buildMainMobileDashboard(d) {
     wrap.appendChild(head);
 
     // 2. Hero Status Banner
+    const src = d.sourceStatus || {};
+    const anyEquipLoaded = !!(src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP || src.EF || src.G8);
+    const allEquipFailed = !anyEquipLoaded;
+    const isPartial = anyEquipLoaded && (!src.AHU || !src.CHILLER || !src.CT || !src.CCP || !src.CHWP || !src.EF || !src.G8 || !src.ALARM);
+
     const totalWarn = d.totalWarning;
     const totalCrit = d.totalCritical;
     const hasCrit = totalCrit > 0;
-    const hasWarn = totalWarn > 0;
-    const bannerState = hasCrit ? 'is-crit' : (hasWarn ? 'is-warn' : 'is-norm');
-    const bannerIcon = hasCrit ? '✕' : (hasWarn ? '⚠' : '✓');
-    const bannerTitle = hasCrit 
-        ? 'Operating with critical issues' 
-        : (hasWarn ? 'Operating with warnings' : 'All systems normal');
-    const bannerSubtitle = hasCrit 
-        ? `${totalCrit} critical unit${totalCrit > 1 ? 's' : ''} require immediate attention.`
-        : (hasWarn ? `No critical issue. ${totalWarn} units need a look.` : `All ${d.totalEquip} monitored units operating within limits.`);
+    const hasWarn = !hasCrit && totalWarn > 0;
+    const bannerState = allEquipFailed
+        ? 'is-empty'
+        : (hasCrit ? 'is-crit' : (hasWarn ? 'is-warn' : 'is-norm'));
+    const bannerIcon = allEquipFailed
+        ? '—'
+        : (hasCrit ? '✕' : (hasWarn ? '⚠' : '✓'));
+    const bannerTitle = allEquipFailed
+        ? 'Telemetry data unavailable'
+        : (hasCrit 
+            ? 'Operating with critical issues' 
+            : (hasWarn ? 'Operating with warnings' : 'All systems normal'));
+    const bannerSubtitle = allEquipFailed
+        ? 'Could not retrieve system telemetry.'
+        : (hasCrit 
+            ? `${totalCrit} critical unit${totalCrit > 1 ? 's' : ''} require immediate attention.${isPartial ? ' (partial data)' : ''}`
+            : (hasWarn
+                ? `No critical issue. ${totalWarn} units need a look.${isPartial ? ' (partial data)' : ''}`
+                : `All ${d.totalEquip} monitored units operating within limits.${isPartial ? ' (partial data)' : ''}`));
 
     const banner = document.createElement("div");
     banner.className = `mob-hero-banner ${bannerState}`;
@@ -11073,8 +11134,8 @@ function buildMainMobileDashboard(d) {
     if (displayIssues.length === 0) {
         issuesCard.innerHTML = `
             <div class="mob-issue-item mob-empty-clean">
-                <span style="color: #4ade80; font-size: 14px; font-weight: bold;">✓</span>
-                <span style="color: #8b98a8; font-size: 12px;">All units healthy &middot; No active warnings or alarms.</span>
+                <span style="color: ${anyEquipLoaded ? '#4ade80' : '#8b98a8'}; font-size: 14px; font-weight: bold;">${anyEquipLoaded ? '✓' : '—'}</span>
+                <span style="color: #8b98a8; font-size: 12px;">${anyEquipLoaded ? 'All units healthy · No active warnings or alarms.' : 'No issue data available'}</span>
             </div>
         `;
     } else {
@@ -11160,21 +11221,35 @@ function buildMainMobileDashboard(d) {
     const ctWarnPct = ctStat.warnPct;
     const ctSub = ctStat.sub;
 
-    const ccpStat = catStat("CCP");
-    const ccpTotal = ccpStat.total;
-    const ccpNorm = ccpStat.norm;
-    const ccpCrit = ccpStat.crit;
-    const ccpNormPct = ccpStat.normPct;
-    const ccpWarnPct = ccpStat.warnPct;
-    const ccpSub = ccpStat.sub;
+    const ccpLoaded = !!d.sourceStatus?.CCP;
+    const ccpTotal = ccpLoaded ? d.ccpCount : "-";
+    const ccpCrit = ccpLoaded ? (d.ccpCrit || 0) : 0;
+    const ccpWarn = ccpLoaded ? (d.ccpWarn || 0) : 0;
+    const ccpNorm = ccpLoaded ? Math.max(0, d.ccpCount - (ccpCrit + ccpWarn)) : "-";
+    const ccpNormPct = (ccpLoaded && d.ccpCount > 0) ? Math.round((ccpNorm / d.ccpCount) * 100) : 0;
+    const ccpWarnPct = (ccpLoaded && d.ccpCount > 0) ? Math.round(((ccpWarn + ccpCrit) / d.ccpCount) * 100) : 0;
+    const ccpSub = ccpLoaded
+        ? (ccpCrit > 0
+            ? `${ccpCrit} critical`
+            : (ccpWarn > 0
+                ? `${ccpWarn} warning`
+                : (d.hscCat?.CCP?.on > 0 ? `All normal · ${d.hscCat.CCP.on} running` : 'All normal')))
+        : "-";
 
-    const chwpStat = catStat("CHWP");
-    const chwpTotal = chwpStat.total;
-    const chwpNorm = chwpStat.norm;
-    const chwpCrit = chwpStat.crit;
-    const chwpNormPct = chwpStat.normPct;
-    const chwpWarnPct = chwpStat.warnPct;
-    const chwpSub = chwpStat.sub;
+    const chwpLoaded = !!d.sourceStatus?.CHWP;
+    const chwpTotal = chwpLoaded ? d.chwpCount : "-";
+    const chwpCrit = chwpLoaded ? (d.chwpCrit || 0) : 0;
+    const chwpWarn = chwpLoaded ? (d.chwpWarn || 0) : 0;
+    const chwpNorm = chwpLoaded ? Math.max(0, d.chwpCount - (chwpCrit + chwpWarn)) : "-";
+    const chwpNormPct = (chwpLoaded && d.chwpCount > 0) ? Math.round((chwpNorm / d.chwpCount) * 100) : 0;
+    const chwpWarnPct = (chwpLoaded && d.chwpCount > 0) ? Math.round(((chwpWarn + chwpCrit) / d.chwpCount) * 100) : 0;
+    const chwpSub = chwpLoaded
+        ? (chwpCrit > 0
+            ? `${chwpCrit} critical`
+            : (chwpWarn > 0
+                ? `${chwpWarn} warning`
+                : (d.hscCat?.CHWP?.on > 0 ? `All normal · ${d.hscCat.CHWP.on} running` : 'All normal')))
+        : "-";
 
     // 3. AHU
     const ahuLoaded = !!d.sourceStatus?.AHU;
@@ -11232,9 +11307,7 @@ function buildMainMobileDashboard(d) {
     const alarmWarn = (alarmLoaded && typeof d.activeWarnings === 'number') ? d.activeWarnings : 0;
     const alarmTotal = alarmLoaded ? (typeof d.activeTotal === 'number' ? d.activeTotal : (alarmActive + alarmWarn)) : "-";
     const alarmSub = alarmLoaded
-        ? (alarmTotal === 0
-            ? 'All healthy · no alarms'
-            : (alarmActive > 0 ? `${alarmActive} critical alarm${alarmActive > 1 ? 's' : ''}` : `${alarmWarn} warning${alarmWarn > 1 ? 's' : ''}`))
+        ? `${d.newIn24h} new in 24 h &middot; ${alarmActive === 0 ? 'no alarms' : alarmActive + ' critical'}`
         : "-";
     const alarmBarClass = alarmLoaded ? (alarmActive > 0 ? 'is-red' : (alarmWarn > 0 ? 'is-amber' : 'is-green')) : '';
 
@@ -11821,6 +11894,52 @@ function renderMainDashboard() {
     const roomAvgTemp = (src.ROOM_TEMP_RH && roomTempCount > 0) ? (roomSumTemp / roomTempCount).toFixed(1) : "-";
     const roomAvgRh = (src.ROOM_TEMP_RH && roomRhCount > 0) ? Math.round(roomSumRh / roomRhCount) : "-";
 
+    // --- REAL 24H ALARM COUNT (matching Alarm tab with PM suppression) ---
+    let newIn24h = "-";
+    if (src.ALARM) {
+        const rawAlarms = Array.isArray(allData.ALARM?.alarms) ? allData.ALARM.alarms : [];
+        const nowMs = Date.now();
+        const cutoff24h = nowMs - 24 * 3600 * 1000;
+        const recentEvents = rawAlarms.filter(a => {
+            if (!a || !a.raised_at) return false;
+            const t = new Date(String(a.raised_at).replace(' ', 'T')).getTime();
+            if (isNaN(t) || t < cutoff24h) return false;
+            if (typeof isAlarmSuppressedByPm === "function" && isAlarmSuppressedByPm(a, pmHistoryList)) {
+                return false;
+            }
+            return true;
+        });
+        newIn24h = recentEvents.length;
+    }
+
+    // --- REAL ALARM EVENTS FOR CCP & CHWP ---
+    const activeAlarmRows = (src.ALARM && Array.isArray(allData.ALARM?.alarms))
+        ? allData.ALARM.alarms.filter(a => a && a.status === 'ACTIVE' && !(typeof isAlarmSuppressedByPm === "function" && isAlarmSuppressedByPm(a, pmHistoryList)))
+        : [];
+    const ccpAlarms = activeAlarmRows.filter(a => a.equip_type === 'CCP');
+    const ccpCrit = ccpAlarms.filter(a => a.event_class === 'ALARM').length;
+    const ccpWarn = ccpAlarms.filter(a => a.event_class === 'WARNING').length;
+
+    const chwpAlarms = activeAlarmRows.filter(a => a.equip_type === 'CHWP');
+    const chwpCrit = chwpAlarms.filter(a => a.event_class === 'ALARM').length;
+    const chwpWarn = chwpAlarms.filter(a => a.event_class === 'WARNING').length;
+
+    let ccpSumHz = 0, ccpCountHz = 0, ccpSumA = 0, ccpCountA = 0;
+    (allData.CCP || []).forEach(u => {
+        if (u.frequency != null && !isNaN(u.frequency)) { ccpSumHz += Number(u.frequency); ccpCountHz++; }
+        if (u.current != null && !isNaN(u.current)) { ccpSumA += Number(u.current); ccpCountA++; }
+    });
+    const ccpAvgHz = ccpCountHz > 0 ? (ccpSumHz / ccpCountHz).toFixed(1) : null;
+    const ccpAvgA = ccpCountA > 0 ? (ccpSumA / ccpCountA).toFixed(1) : null;
+
+    let chwpSumHz = 0, chwpCountHz = 0, chwpSumA = 0, chwpCountA = 0;
+    (allData.CHWP || []).forEach(u => {
+        if (u.frequency != null && !isNaN(u.frequency)) { chwpSumHz += Number(u.frequency); chwpCountHz++; }
+        if (u.current != null && !isNaN(u.current)) { chwpSumA += Number(u.current); chwpCountA++; }
+    });
+    const chwpAvgHz = chwpCountHz > 0 ? (chwpSumHz / chwpCountHz).toFixed(1) : null;
+    const chwpAvgA = chwpCountA > 0 ? (chwpSumA / chwpCountA).toFixed(1) : null;
+
     const page = buildMainDesktopDashboard({
         sourceStatus: src,
         totalEquip,
@@ -11842,7 +11961,15 @@ function renderMainDashboard() {
         cts,
         ctAvgTemp,
         ccpCount: (allData.CCP || []).length,
+        ccpCrit,
+        ccpWarn,
+        ccpAvgHz,
+        ccpAvgA,
         chwpCount: (allData.CHWP || []).length,
+        chwpCrit,
+        chwpWarn,
+        chwpAvgHz,
+        chwpAvgA,
         rooms,
         roomTotalWarn,
         roomRhWarn,
@@ -11853,6 +11980,7 @@ function renderMainDashboard() {
         activeAlarms,
         activeWarnings,
         totalEvents,
+        newIn24h,
         issues,
         energyData,
         reportKwh,
@@ -11875,6 +12003,7 @@ function renderMainDashboard() {
         activeAlarms,
         activeWarnings,
         totalEvents,
+        newIn24h,
         issues,
         ahuCounts,
         ahuUnits,
@@ -11883,6 +12012,12 @@ function renderMainDashboard() {
         efTotal,
         g8Counts,
         hscCat,
+        ccpCount: (allData.CCP || []).length,
+        ccpCrit,
+        ccpWarn,
+        chwpCount: (allData.CHWP || []).length,
+        chwpCrit,
+        chwpWarn,
         chillers,
         rooms,
         outdoor,
