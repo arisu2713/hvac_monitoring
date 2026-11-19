@@ -3571,6 +3571,86 @@ function formatRelativeTime(raisedAt, serverTimeStr) {
     return diffDays + " d";
 }
 
+/*
+ * Telemetry Freshness & Stale Detection (Phase 2):
+ * - STALE_THRESHOLD_SECONDS = 120 (Koreksi 4: konstanta di satu tempat).
+ * - isTelemetryStale(lastUpdate, serverTime, thresholdSec, ageSeconds):
+ *   Memakai age_seconds bila ada, server_time sebagai cadangan (Koreksi 1 & 2).
+ * - updateSourceFreshness():
+ *   Menghitung sourceFreshness per sub-sumber (DAIKIN vs HNX),
+ *   tanpa mengubah arti sourceStatus.G8 (Koreksi 3).
+ */
+const STALE_THRESHOLD_SECONDS = 120;
+
+function isTelemetryStale(lastUpdate, serverTime, thresholdSec, ageSeconds) {
+    const limit = typeof thresholdSec === "number" ? thresholdSec : STALE_THRESHOLD_SECONDS;
+
+    // Koreksi 2: Pakai age_seconds bila ada (selisih zona waktu DB/PHP diatasi di backend)
+    const age = (typeof ageSeconds === "number" && !isNaN(ageSeconds))
+        ? ageSeconds
+        : (typeof lastUpdate === "object" && lastUpdate !== null && typeof lastUpdate.age_seconds === "number"
+            ? lastUpdate.age_seconds
+            : null);
+    if (age !== null) {
+        return age > limit;
+    }
+
+    const rawLu = (typeof lastUpdate === "object" && lastUpdate !== null) ? lastUpdate.last_update : lastUpdate;
+    if (!rawLu) return true;
+    const luNorm = normalizeSqlDatetime(rawLu);
+    if (!luNorm) return true;
+    const luMs = Date.parse(luNorm.replace(" ", "T"));
+    if (isNaN(luMs)) return true;
+
+    let nowMs = Date.now();
+    if (serverTime) {
+        const stNorm = normalizeSqlDatetime(serverTime);
+        const stMs = Date.parse(stNorm.replace(" ", "T"));
+        if (!isNaN(stMs)) {
+            nowMs = stMs;
+        }
+    }
+    const diffSec = (nowMs - luMs) / 1000;
+    return diffSec > limit;
+}
+
+function updateSourceFreshness() {
+    allData.sourceFreshness = allData.sourceFreshness || {};
+
+    const serverTime = allData.efServerTime || allData.ahuServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+
+    // Sub-sumber DAIKIN: AHU 96-97 & EF 58-61 (tabel daikin_current)
+    const daikinUnits = [];
+    if (Array.isArray(allData.AHU)) {
+        allData.AHU.forEach(u => {
+            if (u && (u.name === "AHU 96" || u.name === "AHU 97")) {
+                daikinUnits.push(u);
+            }
+        });
+    }
+    if (Array.isArray(allData.EXHAUST_FAN_G8)) {
+        allData.EXHAUST_FAN_G8.forEach(u => {
+            if (u) daikinUnits.push(u);
+        });
+    }
+
+    if (daikinUnits.length > 0) {
+        const allStale = daikinUnits.every(u => isTelemetryStale(u, serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds));
+        allData.sourceFreshness.DAIKIN = !allStale;
+    } else {
+        allData.sourceFreshness.DAIKIN = false;
+    }
+
+    // Sub-sumber HNX: AHU 94-95 (tabel hnx_g8_current)
+    const hnxUnits = (Array.isArray(allData.AHU) ? allData.AHU : []).filter(u => u && (u.name === "AHU 94" || u.name === "AHU 95"));
+    if (hnxUnits.length > 0) {
+        const allStale = hnxUnits.every(u => isTelemetryStale(u, allData.ahuServerTime || serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds));
+        allData.sourceFreshness.HNX = !allStale;
+    } else {
+        allData.sourceFreshness.HNX = false;
+    }
+}
+
 /**
  * Single source of truth for active alarm and warning items across
  * the Alarm page and Main Dashboard Needs Attention list.
@@ -4014,6 +4094,7 @@ async function loadAlarmData() {
     if (dbSuccess) {
         lastSuccessfulAlarmData = alarmResult.value;
         allData.ALARM = alarmResult.value;
+        allData.alarmServerTime = alarmResult.value.server_time || null;
         dbAlarms = Array.isArray(alarmResult.value.alarms) ? alarmResult.value.alarms : [];
     } else if (lastSuccessfulAlarmData) {
         dbAlarms = Array.isArray(lastSuccessfulAlarmData.alarms) ? lastSuccessfulAlarmData.alarms : [];
@@ -4023,6 +4104,7 @@ async function loadAlarmData() {
     let liveEfG8 = [];
     if (efSuccess) {
         lastSuccessfulEfData = efResult.value;
+        allData.efServerTime = efResult.value.server_time || null;
         const eq = efResult.value.equipment || {};
         liveEfPanel = Array.isArray(eq.EXHAUST_FAN) ? eq.EXHAUST_FAN : [];
         liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
@@ -4033,6 +4115,7 @@ async function loadAlarmData() {
         liveEfPanel = Array.isArray(eq.EXHAUST_FAN) ? eq.EXHAUST_FAN : [];
         liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
     }
+    updateSourceFreshness();
 
     /* S1 on-demand fetch: verify run state if an active ALARM or WARNING is on an AHU or Chiller */
     if (dbSuccess) {
@@ -12412,6 +12495,7 @@ async function loadData() {
 
             if (ahuRes.status === "fulfilled" && ahuRes.value?.success) {
                 allData.AHU = ahuRes.value.equipment?.AHU || [];
+                allData.ahuServerTime = ahuRes.value.server_time || null;
                 allData.sourceStatus.AHU = true;
                 lastAhuFetchTime = Date.now();
             } else {
@@ -12441,6 +12525,7 @@ async function loadData() {
 
             if (efRes.status === "fulfilled" && efRes.value?.success) {
                 Object.assign(allData, efRes.value.equipment || {});
+                allData.efServerTime = efRes.value.server_time || null;
                 allData.sourceStatus.EF = Array.isArray(efRes.value.equipment?.EXHAUST_FAN);
                 allData.sourceStatus.G8 = Array.isArray(efRes.value.equipment?.EXHAUST_FAN_G8);
             } else {
@@ -12450,6 +12535,7 @@ async function loadData() {
 
             if (alarmRes.status === "fulfilled" && alarmRes.value?.success) {
                 allData.ALARM = alarmRes.value;
+                allData.alarmServerTime = alarmRes.value.server_time || null;
                 allData.sourceStatus.ALARM = true;
             } else {
                 allData.sourceStatus.ALARM = false;
@@ -12464,6 +12550,8 @@ async function loadData() {
 
             const anySuccess = [ahuRes, hvacRes, roomRes, efRes, alarmRes].some(r => r.status === "fulfilled" && r.value?.success);
             setConnection(anySuccess);
+
+            updateSourceFreshness();
 
             renderMainDashboard();
 
@@ -12543,7 +12631,10 @@ async function loadData() {
 
         allData = Object.assign({}, allData, data.equipment || {});
         if (currentEquipment === "AHU" || currentEquipment === "AHU_G8") {
+            allData.ahuServerTime = data.server_time || null;
             lastAhuFetchTime = Date.now();
+        } else if (currentEquipment === "EXHAUST_FAN") {
+            allData.efServerTime = data.server_time || null;
         } else if (currentEquipment === "CHILLER") {
             lastHvacScFetchTime = Date.now();
         }
@@ -12579,8 +12670,10 @@ async function loadData() {
             }
 
             allData = Object.assign({}, allData, efData.equipment || {});
+            allData.efServerTime = efData.server_time || null;
         }
 
+        updateSourceFreshness();
         setConnection(true);
         renderEquipment();
         lastUpdate.textContent = "DB update: " + latestDbUpdate();

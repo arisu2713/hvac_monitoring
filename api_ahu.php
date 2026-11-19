@@ -171,6 +171,7 @@ try {
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
+                'age_seconds' => null,
 
                 'points' => [
                     'run'   => null,
@@ -268,7 +269,8 @@ try {
             point_name,
             value_bool,
             value_double,
-            last_update
+            last_update,
+            TIMESTAMPDIFF(SECOND, last_update, NOW()) AS age_seconds
         FROM daikin_current
         WHERE equipment_type = 'AHU'
           AND equipment_no IN ('96', '97')
@@ -287,6 +289,7 @@ try {
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
+                'age_seconds' => null,
                 'status_only' => true,
 
                 'room_temp'   => null,
@@ -358,6 +361,9 @@ try {
                 $row['last_update'] > $units[$unitName]['last_update']
             ) {
                 $units[$unitName]['last_update'] = $row['last_update'];
+                $units[$unitName]['age_seconds'] = $row['age_seconds'] !== null
+                    ? (int)$row['age_seconds']
+                    : null;
             }
         }
     }
@@ -501,7 +507,8 @@ try {
             p.point_name,
             c.value_double,
             c.value_bool,
-            c.last_update
+            c.last_update,
+            TIMESTAMPDIFF(SECOND, c.last_update, NOW()) AS age_seconds
         FROM hnx_g8_points p
         INNER JOIN hnx_g8_current c
             ON c.point_id = p.id
@@ -568,6 +575,7 @@ try {
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
+                'age_seconds' => null,
 
                 'fan1_status' => null,
                 'fan2_status' => null,
@@ -610,6 +618,9 @@ try {
                 $row['last_update'] > $units[$unitName]['last_update']
             ) {
                 $units[$unitName]['last_update'] = $row['last_update'];
+                $units[$unitName]['age_seconds'] = $row['age_seconds'] !== null
+                    ? (int)$row['age_seconds']
+                    : null;
             }
         }
 
@@ -691,6 +702,7 @@ try {
                 'temp_max'    => $tempMax,
                 'frequency'   => null,
                 'last_update' => null,
+                'age_seconds' => null,
 
                 'fan1_status' => null,
                 'fan2_status' => null,

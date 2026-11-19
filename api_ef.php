@@ -42,7 +42,8 @@ try {
             p.panel_no,
             p.ef_name AS name,
             c.status,
-            c.last_update
+            c.last_update,
+            TIMESTAMPDIFF(SECOND, c.last_update, NOW()) AS age_seconds
         FROM ef_points p
         INNER JOIN ef_current c
             ON c.ef_point_id = p.id
@@ -63,6 +64,9 @@ try {
                 ? (int)$row['status']
                 : null,
             'last_update' => $row['last_update'],
+            'age_seconds' => $row['age_seconds'] !== null
+                ? (int)$row['age_seconds']
+                : null,
         ];
     }
 
@@ -115,7 +119,8 @@ try {
             MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN value_bool END) AS value_bool,
             MAX(CASE WHEN point_name = 'FreqOUT' THEN value_double END) AS frequency,
             MAX(CASE WHEN point_name = 'MotorCurrent' THEN value_double END) AS motor_current,
-            MAX(last_update) AS last_update
+            MAX(last_update) AS last_update,
+            TIMESTAMPDIFF(SECOND, MAX(last_update), NOW()) AS age_seconds
         FROM daikin_current
         WHERE equipment_type = 'EF'
           AND equipment_no IN ('58', '59', '60', '61')
@@ -147,6 +152,9 @@ try {
                 ? (float)$row['motor_current']
                 : null,
             'last_update' => $row['last_update'],
+            'age_seconds' => $row['age_seconds'] !== null
+                ? (int)$row['age_seconds']
+                : null,
         ];
     }
 
