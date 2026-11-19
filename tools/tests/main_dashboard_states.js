@@ -254,11 +254,21 @@ async function runStatesSuite() {
                     ? document.querySelector('.mob-kpi-card.is-warn .mob-kpi-num')?.textContent.trim()
                     : document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim();
 
+                const bucketCheck = !isMobile ? (() => {
+                    const crit = Number(document.querySelector('.kpi.red .kpi-val')?.textContent.trim());
+                    const warn = Number(document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim());
+                    const norm = Number(document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim());
+                    const stop = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim());
+                    const total = Number(document.querySelectorAll('.kpi-row .kpi')[4]?.querySelector('.kpi-val')?.textContent.trim());
+                    return { crit, warn, norm, stop, total, sumEqualsTotal: (crit + warn + norm + stop) === total };
+                })() : null;
+
                 return {
                     bannerTitle,
                     hasNormClass,
                     critNum,
-                    warnNum
+                    warnNum,
+                    bucketCheck
                 };
             }, vp.name === 'mobile');
 
@@ -267,6 +277,145 @@ async function runStatesSuite() {
                 pass: (s2Check.bannerTitle.includes('All systems operational') || s2Check.bannerTitle.includes('All systems normal')) &&
                       s2Check.hasNormClass && s2Check.critNum === '0' && s2Check.warnNum === '0',
                 details: s2Check
+            });
+
+            if (vp.name === 'desktop') {
+                results.push({
+                    name: `State 2 (${vp.name}): KPI bucket sum equals total units (critical + warning + normal + stopped === total)`,
+                    pass: s2Check.bucketCheck && s2Check.bucketCheck.sumEqualsTotal,
+                    details: s2Check.bucketCheck
+                });
+            }
+
+            // ==========================================
+            // STATE 2b: EF OFF WITHOUT PM (CRITICAL)
+            // ==========================================
+            const efOffNoPmCheck = await page.evaluate((isMobile) => {
+                maintenanceFetchSuccess = true;
+                maintenanceByUnit.clear();
+                allData.EXHAUST_FAN = [{ name: "EF 01", status: 0 }];
+                renderMainDashboard();
+
+                const banner = isMobile ? document.querySelector('.mob-hero-banner') : document.querySelector('.status-banner');
+                const bannerTitle = banner ? banner.querySelector(isMobile ? '.mob-hero-title' : '.banner-title')?.textContent : '';
+                const critNum = isMobile
+                    ? document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim()
+                    : document.querySelector('.kpi.red .kpi-val')?.textContent.trim();
+                const attnText = isMobile
+                    ? (document.querySelector('.mob-card-list')?.textContent || '')
+                    : (document.querySelector('.attn-list')?.textContent || '');
+
+                const bucketCheck = !isMobile ? (() => {
+                    const crit = Number(document.querySelector('.kpi.red .kpi-val')?.textContent.trim());
+                    const warn = Number(document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim());
+                    const norm = Number(document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim());
+                    const stop = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim());
+                    const total = Number(document.querySelectorAll('.kpi-row .kpi')[4]?.querySelector('.kpi-val')?.textContent.trim());
+                    return { crit, warn, norm, stop, total, sumEqualsTotal: (crit + warn + norm + stop) === total };
+                })() : null;
+
+                return {
+                    bannerTitle,
+                    critNum,
+                    inAttention: attnText.includes('EF 01'),
+                    bucketCheck
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 2b (${vp.name}): EF OFF without PM raises critical, turns banner red, and enters Needs attention`,
+                pass: efOffNoPmCheck.bannerTitle.includes('critical') && efOffNoPmCheck.critNum === '1' && efOffNoPmCheck.inAttention &&
+                      (vp.name === 'mobile' || (efOffNoPmCheck.bucketCheck && efOffNoPmCheck.bucketCheck.sumEqualsTotal)),
+                details: efOffNoPmCheck
+            });
+
+            // ==========================================
+            // STATE 2c: EF OFF WITH ACTIVE PM (STOPPED/MAINTENANCE, NOT CRITICAL)
+            // ==========================================
+            const efOffWithPmCheck = await page.evaluate((isMobile) => {
+                maintenanceFetchSuccess = true;
+                maintenanceByUnit.clear();
+                maintenanceByUnit.set("EXHAUST_FAN:EF 01", {
+                    equip_type: "EXHAUST_FAN",
+                    unit_name: "EF 01",
+                    active: 1,
+                    is_active: 1,
+                    remaining_seconds: 3600,
+                    fetched_at: Date.now()
+                });
+                renderMainDashboard();
+
+                const banner = isMobile ? document.querySelector('.mob-hero-banner') : document.querySelector('.status-banner');
+                const bannerTitle = banner ? banner.querySelector(isMobile ? '.mob-hero-title' : '.banner-title')?.textContent : '';
+                const critNum = isMobile
+                    ? document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim()
+                    : document.querySelector('.kpi.red .kpi-val')?.textContent.trim();
+                const stopNum = isMobile
+                    ? document.querySelectorAll('.mob-kpi-card')[2]?.querySelector('.mob-kpi-num')?.textContent.trim()
+                    : document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim();
+                const attnText = isMobile
+                    ? (document.querySelector('.mob-card-list')?.textContent || '')
+                    : (document.querySelector('.attn-list')?.textContent || '');
+
+                const bucketCheck = !isMobile ? (() => {
+                    const crit = Number(document.querySelector('.kpi.red .kpi-val')?.textContent.trim());
+                    const warn = Number(document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim());
+                    const norm = Number(document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim());
+                    const stop = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim());
+                    const total = Number(document.querySelectorAll('.kpi-row .kpi')[4]?.querySelector('.kpi-val')?.textContent.trim());
+                    return { crit, warn, norm, stop, total, sumEqualsTotal: (crit + warn + norm + stop) === total };
+                })() : null;
+
+                return {
+                    bannerTitle,
+                    critNum,
+                    stopNum,
+                    inAttention: attnText.includes('EF 01'),
+                    bucketCheck
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 2c (${vp.name}): EF OFF with active PM counts as stopped/maintenance, not critical, and not in Needs attention`,
+                pass: !efOffWithPmCheck.bannerTitle.includes('critical') && efOffWithPmCheck.critNum === '0' && efOffWithPmCheck.stopNum === '1' && !efOffWithPmCheck.inAttention &&
+                      (vp.name === 'mobile' || (efOffWithPmCheck.bucketCheck && efOffWithPmCheck.bucketCheck.sumEqualsTotal)),
+                details: efOffWithPmCheck
+            });
+
+            // ==========================================
+            // STATE 2d: PM FAIL-SAFE (PM FETCH FAILED -> TREAT EF OFF AS CRITICAL)
+            // ==========================================
+            const efPmFailSafeCheck = await page.evaluate((isMobile) => {
+                maintenanceFetchSuccess = false; // PM failed to load
+                renderMainDashboard();
+
+                const banner = isMobile ? document.querySelector('.mob-hero-banner') : document.querySelector('.status-banner');
+                const bannerTitle = banner ? banner.querySelector(isMobile ? '.mob-hero-title' : '.banner-title')?.textContent : '';
+                const critNum = isMobile
+                    ? document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim()
+                    : document.querySelector('.kpi.red .kpi-val')?.textContent.trim();
+                const attnText = isMobile
+                    ? (document.querySelector('.mob-card-list')?.textContent || '')
+                    : (document.querySelector('.attn-list')?.textContent || '');
+
+                return {
+                    bannerTitle,
+                    critNum,
+                    inAttention: attnText.includes('EF 01')
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 2d (${vp.name}): PM fetch failure fail-safe treats EF OFF as critical`,
+                pass: efPmFailSafeCheck.bannerTitle.includes('critical') && efPmFailSafeCheck.critNum === '1' && efPmFailSafeCheck.inAttention,
+                details: efPmFailSafeCheck
+            });
+
+            // Reset EF to running for State 3
+            await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                maintenanceByUnit.clear();
+                allData.EXHAUST_FAN = [{ name: "EF 01", status: 1 }];
             });
 
             // ==========================================

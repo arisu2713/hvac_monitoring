@@ -10586,6 +10586,11 @@ function buildMainDesktopDashboard(d) {
     const efTotal = efLoaded ? d.efTotal.length : "-";
     const efRun = efLoaded ? d.efRun : "-";
     const efGPct = (efLoaded && efTotal > 0) ? Math.round((d.efRun / efTotal) * 100) : 0;
+    const efFooter = efLoaded
+        ? ((d.efCrit || 0) > 0
+            ? `<span class="crit-tag" style="color:#ef4444">${d.efCrit} critical alert(s)</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} standby/PM` : ''}`
+            : `<span class="ok-tag">All healthy</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} scheduled standby` : ''}`)
+        : '-';
     efCard.innerHTML = `
         <div class="scard-head">
             <span class="scard-name">Exhaust fan (EF)</span>
@@ -10594,7 +10599,7 @@ function buildMainDesktopDashboard(d) {
         <div class="scard-num">${efRun} <span class="scard-total">/ ${efTotal}</span></div>
         <div class="scard-sub">All panels monitored via Modbus</div>
         <div class="bar-wrap"><div class="bar-g" style="width:${efGPct}%"></div></div>
-        <div class="scard-footer">${efLoaded ? `<span class="ok-tag">All healthy</span> · ${d.efOff} scheduled standby` : '-'}</div>
+        <div class="scard-footer">${efFooter}</div>
     `;
     grid1.appendChild(efCard);
 
@@ -11268,9 +11273,15 @@ function buildMainMobileDashboard(d) {
     const efTot = efLoaded ? d.efTotal.length : "-";
     const efRun = efLoaded ? d.efRun : "-";
     const efOff = efLoaded ? d.efOff : 0;
+    const efCrit = efLoaded ? (d.efCrit || 0) : 0;
+    const efStop = efLoaded ? (d.efStop || 0) : 0;
     const efRunPct = (efLoaded && efTot > 0) ? Math.min(100, Math.round((efRun / efTot) * 100)) : 0;
     const efOffPct = (efLoaded && efTot > 0) ? Math.min(100 - efRunPct, Math.round((efOff / efTot) * 100)) : 0;
-    const efSub = efLoaded ? (efOff > 0 ? `${efOff} stopped` : 'All running') : "-";
+    const efSub = efLoaded
+        ? (efCrit > 0
+            ? `${efCrit} critical${efStop > 0 ? ` · ${efStop} standby` : ''}`
+            : (efStop > 0 ? `${efStop} standby` : 'All running'))
+        : "-";
 
     // 5. AHU / EF G8
     const g8Loaded = !!d.sourceStatus?.G8;
@@ -11623,16 +11634,16 @@ function renderMainDashboard() {
     const issues = [];
 
     // --- AHU Aggregation ---
-    const ahuCounts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const ahuCounts = { critical: 0, warning: 0, normal: 0, stopped: 0, unknown: 0 };
     const ahuOps = { on: 0, off: 0, unknown: 0 };
 
     ahuUnits.forEach(u => {
         const band = ahuBandOf(u);
         const op = ahuRunState(u);
-        ahuCounts[band] = (ahuCounts[band] || 0) + 1;
         ahuOps[op] = (ahuOps[op] || 0) + 1;
 
         if (band === "critical") {
+            ahuCounts.critical++;
             issues.push({
                 severity: "critical",
                 equipment: u.name,
@@ -11644,7 +11655,11 @@ function renderMainDashboard() {
                 threshold: "Status 1",
                 reason: "Unit reported an active alarm state."
             });
+        } else if (op === "off") {
+            // Principle: Unit OFF does NOT generate warnings (aligned with Alarm page)
+            ahuCounts.stopped++;
         } else if (band === "warning") {
+            ahuCounts.warning++;
             const health = ahuHealth(u);
             const dev = ahuDeviation(u);
             const paramLabel = health.room ? "Room Temperature" : "Duct Temperature";
@@ -11665,17 +11680,19 @@ function renderMainDashboard() {
                 threshold: maxStr,
                 reason: reason
             });
+        } else {
+            ahuCounts.normal++;
         }
     });
 
     // --- HVAC SC Aggregation ---
-    const hscCounts = { critical: 0, warning: 0, normal: 0, unknown: 0 };
+    const hscCounts = { critical: 0, warning: 0, normal: 0, stopped: 0, unknown: 0 };
     const hscOps = { on: 0, off: 0, unknown: 0 };
     const hscCat = {
-        CHILLER: { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
-        CT:      { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
-        CCP:     { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 },
-        CHWP:    { total: 0, crit: 0, warn: 0, norm: 0, on: 0, off: 0 }
+        CHILLER: { total: 0, crit: 0, warn: 0, norm: 0, off: 0, on: 0 },
+        CT:      { total: 0, crit: 0, warn: 0, norm: 0, off: 0, on: 0 },
+        CCP:     { total: 0, crit: 0, warn: 0, norm: 0, off: 0, on: 0 },
+        CHWP:    { total: 0, crit: 0, warn: 0, norm: 0, off: 0, on: 0 }
     };
 
     hvacUnits.forEach(item => {
@@ -11685,24 +11702,20 @@ function renderMainDashboard() {
         const band = hvacScBandOf(kind, u);
         const op = hvacScRunState(u);
 
-        hscCounts[band] = (hscCounts[band] || 0) + 1;
         hscOps[op] = (hscOps[op] || 0) + 1;
 
         const catKey = prefix === "Chiller" ? "CHILLER" : prefix;
         if (hscCat[catKey]) {
             hscCat[catKey].total++;
-            if (band === "critical") hscCat[catKey].crit++;
-            else if (band === "warning") hscCat[catKey].warn++;
-            else hscCat[catKey].norm++;
-
             if (op === "on") hscCat[catKey].on++;
-            else if (op === "off") hscCat[catKey].off++;
         }
 
         const issueTarget = item.prefix === "Chiller" ? "CHILLER" : item.prefix;
         const issueSection = item.prefix === "Chiller" ? "Chiller (BACnet)" : item.prefix;
 
         if (band === "critical") {
+            hscCounts.critical++;
+            if (hscCat[catKey]) hscCat[catKey].crit++;
             issues.push({
                 severity: "critical",
                 equipment: item.label,
@@ -11714,7 +11727,13 @@ function renderMainDashboard() {
                 threshold: "Status 1",
                 reason: hvacScReason(kind, u, "critical")
             });
+        } else if (op === "off") {
+            // Principle: Unit OFF does NOT generate warnings (aligned with Alarm page)
+            hscCounts.stopped++;
+            if (hscCat[catKey]) hscCat[catKey].off++;
         } else if (band === "warning") {
+            hscCounts.warning++;
+            if (hscCat[catKey]) hscCat[catKey].warn++;
             const vList = hvacScViolations(kind, u);
             const v = vList[0];
             const reason = hvacScReason(kind, u, "warning");
@@ -11732,6 +11751,9 @@ function renderMainDashboard() {
                 threshold: threshStr,
                 reason: reason
             });
+        } else {
+            hscCounts.normal++;
+            if (hscCat[catKey]) hscCat[catKey].norm++;
         }
     });
     const chillers = Array.isArray(allData.CHILLER) ? allData.CHILLER : [];
@@ -11759,12 +11781,18 @@ function renderMainDashboard() {
     });
     G8_EF_NAMES.forEach(name => {
         const f = efByName[name];
-        const cond = f ? g8EfCondition(f) : "unknown";
+        let cond = f ? g8EfCondition(f) : "unknown";
+        if (cond === "off") {
+            const isPm = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", name);
+            if (!isPm) {
+                cond = "critical"; // EF OFF without PM is critical
+            }
+        }
         g8Counts[cond]++;
         if (cond === "warning" || cond === "critical") {
             g8Warnings.push({
                 name: name,
-                reason: "Offline"
+                reason: cond === "critical" ? "Alarm (OFF)" : "Offline"
             });
         }
     });
@@ -11805,10 +11833,51 @@ function renderMainDashboard() {
     // --- EXHAUST FAN Aggregation ---
     let efRun = 0;
     let efOff = 0;
+    let efCrit = 0;
+    let efWarn = 0;
+    let efNorm = 0;
+    let efStop = 0;
+
     efTotal.forEach(f => {
         const s = getEfStatus(f);
-        if (s === "run") efRun++;
-        else if (s === "off") efOff++;
+        if (s === "trip") {
+            efCrit++;
+            issues.push({
+                severity: "critical",
+                equipment: f.name,
+                section: "Exhaust fan (EF)",
+                target: "EXHAUST_FAN",
+                filter: f.name,
+                param: "Trip",
+                value: "TRIP",
+                threshold: "Trip 0",
+                reason: "Exhaust Fan reported a trip fault."
+            });
+        } else if (s === "off") {
+            efOff++;
+            const isPm = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", f.name);
+            if (isPm) {
+                efStop++;
+            } else {
+                efCrit++;
+                issues.push({
+                    severity: "critical",
+                    equipment: f.name,
+                    section: "Exhaust fan (EF)",
+                    target: "EXHAUST_FAN",
+                    filter: f.name,
+                    param: "Status",
+                    value: "OFF",
+                    threshold: "Run 1",
+                    reason: "Exhaust Fan stopped without active PM."
+                });
+            }
+        } else if (s === "run") {
+            efRun++;
+            efNorm++;
+        } else {
+            efNorm++;
+        }
     });
 
     // --- ALARM Aggregation ---
@@ -11829,23 +11898,23 @@ function renderMainDashboard() {
     const diffKwh = reportKwh != null && prevKwh != null ? Math.round((reportKwh - prevKwh) * 10) / 10 : null;
     const pctChange = prevKwh > 0 && diffKwh != null ? (diffKwh / prevKwh * 100) : null;
 
-    // --- OVERALL SYSTEM TOTALS ---
+    // --- OVERALL SYSTEM TOTALS (EXCLUSIVE BUCKETING) ---
     // Physical equipment units: AHU (97) + HVAC SC (49) + EF (59) = 205 (No double counting G8!)
+    // Mathematical invariant: critical + warning + normal + stopped = totalEquip for loaded sources
     const totalEquip = anyEquipLoaded
         ? ((src.AHU ? ahuUnits.length : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hvacUnits.length : 0) + (src.EF ? efTotal.length : 0))
         : "-";
-    const totalCritical = (src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP)
-        ? ((src.AHU ? ahuCounts.critical : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.critical : 0))
+    const totalCritical = anyEquipLoaded
+        ? ((src.AHU ? (ahuCounts.critical || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.critical || 0) : 0) + (src.EF ? efCrit : 0))
         : "-";
-    const totalWarning = (src.AHU || src.CHILLER || src.CT || src.CCP || src.CHWP)
-        ? ((src.AHU ? ahuCounts.warning : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.warning : 0))
+    const totalWarning = anyEquipLoaded
+        ? ((src.AHU ? (ahuCounts.warning || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.warning || 0) : 0) + (src.EF ? efWarn : 0))
         : "-";
     const totalNormal = anyEquipLoaded
-        ? ((src.AHU ? ahuCounts.normal : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscCounts.normal : 0) + (src.EF ? (efRun + efOff) : 0))
+        ? ((src.AHU ? (ahuCounts.normal || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.normal || 0) : 0) + (src.EF ? efNorm : 0))
         : "-";
-
     const totalStopped = anyEquipLoaded
-        ? ((src.AHU ? ahuOps.off : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hscOps.off : 0) + (src.EF ? efOff : 0))
+        ? ((src.AHU ? (ahuCounts.stopped || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.stopped || 0) : 0) + (src.EF ? efStop : 0))
         : "-";
 
     // --- SORT ISSUES ---
@@ -11954,6 +12023,8 @@ function renderMainDashboard() {
         efTotal,
         efRun,
         efOff,
+        efCrit,
+        efStop,
         g8Counts,
         g8Warnings,
         chillers,
@@ -12009,6 +12080,8 @@ function renderMainDashboard() {
         ahuUnits,
         efRun,
         efOff,
+        efCrit,
+        efStop,
         efTotal,
         g8Counts,
         hscCat,
