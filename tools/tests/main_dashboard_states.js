@@ -49,8 +49,12 @@ for (const cp of chromePaths) {
 }
 
 const shotDir = 'C:\\Temp\\hvac_shots';
+const putaranBDir = path.join(shotDir, 'putaran_b');
 if (!fs.existsSync(shotDir)) {
     fs.mkdirSync(shotDir, { recursive: true });
+}
+if (!fs.existsSync(putaranBDir)) {
+    fs.mkdirSync(putaranBDir, { recursive: true });
 }
 
 const sessionFilePath = 'C:\\xampp\\tmp\\sess_antigravitytestsession';
@@ -117,6 +121,7 @@ async function runStatesSuite() {
             // ==========================================
             await page.evaluate(() => {
                 currentEquipment = "MAIN";
+                syntheticLiveEfAlarms = [];
                 allData = {
                     sourceStatus: {
                         AHU: false, CHILLER: false, CT: false, CCP: false,
@@ -140,6 +145,7 @@ async function runStatesSuite() {
 
             const shot1Path = path.join(shotDir, `state1_empty_${vp.name}_${vp.width}.png`);
             await page.screenshot({ path: shot1Path, fullPage: true });
+            await page.screenshot({ path: path.join(putaranBDir, `empty_${vp.name}_${vp.width}.png`), fullPage: true });
 
             const s1Check = await page.evaluate((isMobile) => {
                 const banner = isMobile
@@ -181,6 +187,7 @@ async function runStatesSuite() {
             // STATE 2: NORMAL COMPLETE DATA
             // ==========================================
             await page.evaluate(() => {
+                syntheticLiveEfAlarms = [];
                 allData = {
                     sourceStatus: {
                         AHU: true, CHILLER: true, CT: true, CCP: true,
@@ -238,6 +245,7 @@ async function runStatesSuite() {
 
             const shot2Path = path.join(shotDir, `state2_normal_${vp.name}_${vp.width}.png`);
             await page.screenshot({ path: shot2Path, fullPage: true });
+            await page.screenshot({ path: path.join(putaranBDir, `normal_${vp.name}_${vp.width}.png`), fullPage: true });
 
             const s2Check = await page.evaluate((isMobile) => {
                 const banner = isMobile
@@ -459,6 +467,260 @@ async function runStatesSuite() {
                 name: `State 3 (${vp.name}): Banner shows partial data note and failed card shows "-"`,
                 pass: s3Check.hasPartialNote && s3Check.ahuVal.includes('-'),
                 details: s3Check
+            });
+
+            // ==========================================
+            // STATE 4: ISSUES (PARITY, RELATIVE TIME, SORTING, EF PM/OFF, ENERGY COMPARISON)
+            // ==========================================
+            await page.evaluate(() => {
+                maintenanceFetchSuccess = true;
+                maintenanceByUnit.clear();
+                maintenanceByUnit.set("EXHAUST_FAN:EF 02", {
+                    equip_type: "EXHAUST_FAN",
+                    unit_name: "EF 02",
+                    active: 1,
+                    is_active: 1,
+                    remaining_seconds: 3600,
+                    fetched_at: Date.now()
+                });
+
+                syntheticLiveEfAlarms = [{
+                    id: "LIVE:01",
+                    event_class: "ALARM",
+                    source: "LIVE",
+                    equip_type: "EF",
+                    equipment: "EF 01",
+                    metric: "STATUS",
+                    description: "Exhaust Fan stopped (live status OFF)",
+                    status: "ACTIVE",
+                    value: 0,
+                    raised_at: null,
+                    is_pm: false,
+                    is_synthetic: true
+                }];
+
+                allData = {
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: true,
+                        ALARM: true, ENERGY_SUMMARY: true
+                    },
+                    AHU: [
+                        { name: "AHU 01", temp: 21.5, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0 },
+                        { name: "AHU 02", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0 }
+                    ],
+                    CHILLER: [
+                        { name: "CHILLER 1", run: 1, alarm: 0, cond_entering_temp: 29.5, evap_leaving_temp: 7.2, evap_leaving_temp_max: 12, cond_entering_temp_max: 32 },
+                        { name: "CHILLER 3", run: 0, alarm: 0, cond_entering_temp: 0, evap_leaving_temp: 0 }
+                    ],
+                    CT: [
+                        { name: "CT 1A", run: 1, alarm: 0, return_temp: 28.0, return_temp_max: 32.0 }
+                    ],
+                    CCP: [
+                        { name: "CCP 1", run: 1, alarm: 0, frequency: 49.8, current: 16.5 }
+                    ],
+                    CHWP: [
+                        { name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }
+                    ],
+                    EXHAUST_FAN: [
+                        { name: "EF 01", status: 0 }, // OFF without PM -> critical
+                        { name: "EF 02", status: 0 }, // OFF with PM -> suppressed/stopped
+                        { name: "EF 03", status: 1 }  // RUN normal
+                    ],
+                    EXHAUST_FAN_G8: [],
+                    ROOM_TEMP_RH: [],
+                    ALARM: {
+                        server_time: "2026-11-19 12:00:00",
+                        counts: {
+                            active_alarm: 3,
+                            active_warning: 2,
+                            active_total: 5
+                        },
+                        total_events: 150,
+                        alarms: [
+                            {
+                                id: 101,
+                                equipment: "AHU 05",
+                                equip_type: "AHU",
+                                event_class: "ALARM",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:50:00",
+                                description: "AHU 05 High Temp Alarm"
+                            },
+                            {
+                                id: 102,
+                                equipment: "CHILLER 2",
+                                equip_type: "CHILLER",
+                                event_class: "ALARM",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:58:00",
+                                description: "CHILLER 2 Water Flow Failure"
+                            },
+                            {
+                                id: 103,
+                                equipment: "AHU 08",
+                                equip_type: "AHU",
+                                event_class: "WARNING",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:59:00",
+                                description: "AHU 08 Duct Temp Warning"
+                            },
+                            {
+                                id: 104,
+                                equipment: "CT 2A",
+                                equip_type: "CT",
+                                event_class: "WARNING",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:30:00",
+                                description: "CT 2A Return Temp High"
+                            },
+                            {
+                                id: 105,
+                                equipment: "EF 02",
+                                equip_type: "EF",
+                                event_class: "ALARM",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:00:00",
+                                description: "EF 02 Fan Stopped"
+                            },
+                            {
+                                id: 106,
+                                equipment: "CHILLER 3",
+                                equip_type: "CHILLER",
+                                event_class: "WARNING",
+                                status: "ACTIVE",
+                                raised_at: "2026-11-19 11:10:00",
+                                description: "CHILLER 3 Leaving Temp High"
+                            }
+                        ]
+                    },
+                    ENERGY_SUMMARY: {
+                        report_kwh: 8500,
+                        prev_kwh: null,
+                        report_date: '2026-11-18',
+                        prev_date: null,
+                        daily_history: [
+                            { date: '2026-11-18', label: '18 Nov', short_day: 'Wed', kwh: 8500, is_latest: true }
+                        ],
+                        peak_day: { date: '2026-11-18', label: '18 Nov', kwh: 8500 },
+                        avg_daily_kwh: 8500
+                    }
+                };
+
+                renderMainDashboard();
+            });
+            await page.waitForTimeout(300);
+
+            const shot4Path = path.join(putaranBDir, `issues_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot4Path, fullPage: true });
+
+            const s4Check = await page.evaluate((isMobile) => {
+                const canonical = getActiveAlarmItems({ showHidden: false });
+                const canonicalActiveTotal = canonical.allActive.length;
+
+                // Needs Attention elements
+                let attentionItems = [];
+                if (isMobile) {
+                    const items = Array.from(document.querySelectorAll('.mob-card-list .mob-issue-item:not(.mob-empty-clean)'));
+                    attentionItems = items.map(el => {
+                        const title = el.querySelector('.mob-issue-title')?.textContent || '';
+                        const time = el.querySelector('.mob-issue-time')?.textContent || '';
+                        const isCrit = el.querySelector('.mob-issue-icon')?.classList.contains('is-crit');
+                        return { title, time, isCrit };
+                    });
+                } else {
+                    const items = Array.from(document.querySelectorAll('.attn-list .attn-item'));
+                    attentionItems = items.map(el => {
+                        const name = el.querySelector('.attn-name')?.textContent || '';
+                        const time = el.querySelector('.attn-time')?.textContent || '';
+                        const isCrit = el.querySelector('.attn-dot')?.classList.contains('r');
+                        return { name, time, isCrit };
+                    });
+                }
+
+                // Check relative time parsing
+                const serverTime = allData.ALARM.server_time;
+                const time2m = formatRelativeTime("2026-11-19 11:58:00", serverTime);
+                const time10m = formatRelativeTime("2026-11-19 11:50:00", serverTime);
+                const time1m = formatRelativeTime("2026-11-19 11:59:00", serverTime);
+                const time30m = formatRelativeTime("2026-11-19 11:30:00", serverTime);
+                const timeLive = formatRelativeTime(null, serverTime);
+
+                // Energy comparison without prev_date
+                const hasEnergyComparisonWithoutPrev = isMobile
+                    ? Boolean(document.querySelector('.mob-energy-pct'))
+                    : Boolean(document.querySelector('.energy-pct'));
+
+                // Energy comparison WITH prev_date
+                allData.ENERGY_SUMMARY.prev_kwh = 8000;
+                allData.ENERGY_SUMMARY.prev_date = '2026-11-17';
+                renderMainDashboard();
+
+                const hasEnergyComparisonWithPrev = isMobile
+                    ? Boolean(document.querySelector('.mob-energy-pct'))
+                    : Boolean(document.querySelector('.energy-pct'));
+                const energyPctText = isMobile
+                    ? (document.querySelector('.mob-energy-pct')?.textContent.trim() || '')
+                    : (document.querySelector('.energy-pct')?.textContent.trim() || '');
+
+                const hasViewAll = isMobile
+                    ? Boolean(document.querySelector('.mob-sec-link'))
+                    : Boolean(document.querySelector('#btnViewAllIssues'));
+
+                return {
+                    canonicalActiveTotal,
+                    attentionItems,
+                    time2m,
+                    time10m,
+                    time1m,
+                    time30m,
+                    timeLive,
+                    hasEnergyComparisonWithoutPrev,
+                    hasEnergyComparisonWithPrev,
+                    energyPctText,
+                    hasViewAll
+                };
+            }, vp.name === 'mobile');
+
+            // Parity: alarm engine active total equals Needs Attention count
+            results.push({
+                name: `State 4 (${vp.name}): Alarm page active total parity with Needs attention (count: ${s4Check.canonicalActiveTotal})`,
+                pass: s4Check.canonicalActiveTotal === 5 && s4Check.attentionItems.length >= 4,
+                details: { canonicalActiveTotal: s4Check.canonicalActiveTotal, attentionItemsCount: s4Check.attentionItems.length }
+            });
+
+            // Sorting: critical before warning
+            const firstWarnIndex = s4Check.attentionItems.findIndex(item => !item.isCrit);
+            const critAfterWarn = firstWarnIndex !== -1 && s4Check.attentionItems.slice(firstWarnIndex).some(item => item.isCrit);
+            results.push({
+                name: `State 4 (${vp.name}): Issues sorted critical first, then warning`,
+                pass: !critAfterWarn && firstWarnIndex > 0,
+                details: { firstWarnIndex, attentionItems: s4Check.attentionItems }
+            });
+
+            // Relative time formatted from server_time
+            results.push({
+                name: `State 4 (${vp.name}): Relative time formatted accurately from server_time`,
+                pass: s4Check.time2m === "2 m" && s4Check.time10m === "10 m" && s4Check.time1m === "1 m" && s4Check.time30m === "30 m" && s4Check.timeLive === "live",
+                details: { time2m: s4Check.time2m, time10m: s4Check.time10m, time1m: s4Check.time1m, time30m: s4Check.time30m, timeLive: s4Check.timeLive }
+            });
+
+            // Energy comparison hidden without comparison data, displayed with comparison data
+            results.push({
+                name: `State 4 (${vp.name}): Energy comparison label hidden without prev_date and displayed when comparison exists`,
+                pass: !s4Check.hasEnergyComparisonWithoutPrev && s4Check.hasEnergyComparisonWithPrev && s4Check.energyPctText.includes('11/17'),
+                details: {
+                    withoutPrev: s4Check.hasEnergyComparisonWithoutPrev,
+                    withPrev: s4Check.hasEnergyComparisonWithPrev,
+                    energyPctText: s4Check.energyPctText
+                }
+            });
+
+            // View all button present
+            results.push({
+                name: `State 4 (${vp.name}): View all link to Alarm page present`,
+                pass: s4Check.hasViewAll,
+                details: { hasViewAll: s4Check.hasViewAll }
             });
 
             await context.close();

@@ -3539,22 +3539,54 @@ function createAlarmGroup(title, alarms, isActive, unavailable, extraClass) {
     return group;
 }
 
-function renderAlarm() {
+function formatRelativeTime(raisedAt, serverTimeStr) {
+    if (!raisedAt) {
+        return "live";
+    }
+    let nowMs = Date.now();
+    if (serverTimeStr) {
+        const parsedServer = Date.parse(String(serverTimeStr).replace(" ", "T"));
+        if (!isNaN(parsedServer)) {
+            nowMs = parsedServer;
+        }
+    }
+    const raisedMs = Date.parse(String(raisedAt).replace(" ", "T"));
+    if (isNaN(raisedMs)) {
+        return "live";
+    }
+
+    const diffSec = Math.max(0, Math.floor((nowMs - raisedMs) / 1000));
+    if (diffSec < 60) {
+        return "now";
+    }
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) {
+        return diffMin + " m";
+    }
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) {
+        return diffHours + " h";
+    }
+    const diffDays = Math.floor(diffHours / 24);
+    return diffDays + " d";
+}
+
+/**
+ * Single source of truth for active alarm and warning items across
+ * the Alarm page and Main Dashboard Needs Attention list.
+ */
+function getActiveAlarmItems(options = {}) {
     const data = allData.ALARM;
-
-    /*
-     * Cleared here, not only in renderEquipment(): the background poll
-     * re-renders this page directly, and without this the list would stack
-     * a fresh copy on every cycle.
-     */
-    grid.innerHTML = "";
-
-    sectionTitle.textContent = "GLOBAL ALARM";
-    grid.classList.remove("hvac-view");
-
     if (!data || !Array.isArray(data.alarms)) {
-        unitCount.textContent = "0 active";
-        return;
+        return {
+            activeAlarms: [],
+            activeWarnings: [],
+            allActive: [],
+            clearedAlarms: [],
+            clearedWarnings: [],
+            pmSuppressedCount: 0,
+            syntheticRows: []
+        };
     }
 
     const rawAlarms = data.alarms;
@@ -3584,27 +3616,56 @@ function renderAlarm() {
         }
     });
 
-    /*
-     * Partition into ALARMS and WARNINGS:
-     * - Active ALARMS: syntheticRows + dbActiveAlarms (event_class === "ALARM").
-     *   Per requirement: ALARMs are NEVER suppressed by checkUnitIsDefinitivelyOff.
-     * - Active WARNINGS: dbActiveAlarms (event_class === "WARNING").
-     *   Per requirement: active warnings belonging to definitively OFF units ARE hidden.
-     * - Cleared ALARMS: dbClearedAlarms (event_class === "ALARM").
-     * - Cleared WARNINGS: dbClearedAlarms (event_class === "WARNING").
-     */
     let activeAlarmItems = syntheticRows.concat(dbActiveAlarms.filter(a => a.event_class === "ALARM"));
     let activeWarningItems = dbActiveAlarms.filter(a => a.event_class === "WARNING" && !checkUnitIsDefinitivelyOff(a));
     let clearedAlarmItems = dbClearedAlarms.filter(a => a.event_class === "ALARM");
     let clearedWarningItems = dbClearedAlarms.filter(a => a.event_class === "WARNING");
 
-    /* Filter by PM suppression unless user toggled to show hidden PM alarms */
-    if (!alarmPmFilterShowHidden) {
+    const showHidden = options.showHidden ?? alarmPmFilterShowHidden;
+    if (!showHidden) {
         activeAlarmItems = activeAlarmItems.filter(a => !a.is_pm_suppressed);
         activeWarningItems = activeWarningItems.filter(a => !a.is_pm_suppressed);
         clearedAlarmItems = clearedAlarmItems.filter(a => !a.is_pm_suppressed);
         clearedWarningItems = clearedWarningItems.filter(a => !a.is_pm_suppressed);
     }
+
+    return {
+        activeAlarms: activeAlarmItems,
+        activeWarnings: activeWarningItems,
+        allActive: activeAlarmItems.concat(activeWarningItems),
+        clearedAlarms: clearedAlarmItems,
+        clearedWarnings: clearedWarningItems,
+        pmSuppressedCount,
+        syntheticRows
+    };
+}
+
+function renderAlarm() {
+    const data = allData.ALARM;
+
+    /*
+     * Cleared here, not only in renderEquipment(): the background poll
+     * re-renders this page directly, and without this the list would stack
+     * a fresh copy on every cycle.
+     */
+    grid.innerHTML = "";
+
+    sectionTitle.textContent = "GLOBAL ALARM";
+    grid.classList.remove("hvac-view");
+
+    if (!data || !Array.isArray(data.alarms)) {
+        unitCount.textContent = "0 active";
+        return;
+    }
+
+    const {
+        activeAlarms: activeAlarmItems,
+        activeWarnings: activeWarningItems,
+        clearedAlarms: clearedAlarmItems,
+        clearedWarnings: clearedWarningItems,
+        pmSuppressedCount,
+        syntheticRows
+    } = getActiveAlarmItems({ showHidden: alarmPmFilterShowHidden });
 
     /* Recompute counts from displayed data (requirement D) */
     const activeAlarmTotal = activeAlarmItems.length;
@@ -10846,13 +10907,15 @@ function buildMainDesktopDashboard(d) {
     attnCard.className = "attn-card";
 
     const topIssues = d.issues.slice(0, 5);
-    const times = ["now", "5 m", "42 m", "2 h", "3 h"];
+    const serverTime = (allData.ALARM && allData.ALARM.server_time) || null;
 
     const itemsHtml = topIssues.length > 0
-        ? topIssues.map((issue, idx) => {
+        ? topIssues.map((issue) => {
             const isCrit = issue.severity === "critical";
             const dotClass = isCrit ? "r" : "y";
-            const timeTag = times[idx] || `${idx + 1} h`;
+            const timeTag = issue.raised_at
+                ? formatRelativeTime(issue.raised_at, serverTime)
+                : "live";
             return `
                 <div class="attn-item" data-target="${escapeHtml(issue.target)}" data-filter="${escapeHtml(issue.filter || '')}">
                     <div class="attn-dot ${dotClass}"></div>
@@ -10864,7 +10927,7 @@ function buildMainDesktopDashboard(d) {
                 </div>
             `;
         }).join("")
-        : `<div style="padding:16px 14px;color:#8b98a8;text-align:center;font-size:12px;">${anyEquipLoaded ? '✓ All systems healthy with no active warnings.' : 'No issue data available'}</div>`;
+        : `<div style="padding:16px 14px;color:#8b98a8;text-align:center;font-size:12px;">${anyEquipLoaded ? '✓ All systems healthy with no active warnings' : 'No issue data available'}</div>`;
 
     attnCard.innerHTML = `
         <div class="attn-head">
@@ -10889,11 +10952,7 @@ function buildMainDesktopDashboard(d) {
     const viewAllBtn = attnCard.querySelector("#btnViewAllIssues");
     if (viewAllBtn) {
         viewAllBtn.onclick = () => {
-            if (d.issues.length > 0) {
-                showAllIssuesModal(d.issues);
-            } else {
-                navigateTo("ALARM", "");
-            }
+            navigateTo("ALARM", "");
         };
     }
 
@@ -11136,20 +11195,22 @@ function buildMainMobileDashboard(d) {
     issuesCard.className = "mob-card-list";
 
     const displayIssues = (d.issues || []).slice(0, 4);
+    const serverTime = (allData.ALARM && allData.ALARM.server_time) || null;
     if (displayIssues.length === 0) {
         issuesCard.innerHTML = `
             <div class="mob-issue-item mob-empty-clean">
                 <span style="color: ${anyEquipLoaded ? '#4ade80' : '#8b98a8'}; font-size: 14px; font-weight: bold;">${anyEquipLoaded ? '✓' : '—'}</span>
-                <span style="color: #8b98a8; font-size: 12px;">${anyEquipLoaded ? 'All units healthy · No active warnings or alarms.' : 'No issue data available'}</span>
+                <span style="color: #8b98a8; font-size: 12px;">${anyEquipLoaded ? 'All systems healthy with no active warnings' : 'No issue data available'}</span>
             </div>
         `;
     } else {
-        const timeLabels = ['now', '42 m', '1 h', '2 h', '3 h'];
-        displayIssues.forEach((issue, idx) => {
+        displayIssues.forEach((issue) => {
             const isCrit = issue.severity === 'critical';
             const icon = isCrit ? '✕' : '⚠';
             const stateClass = isCrit ? 'is-crit' : 'is-warn';
-            const timeTag = timeLabels[idx] || `${idx + 1} h`;
+            const timeTag = issue.raised_at
+                ? formatRelativeTime(issue.raised_at, serverTime)
+                : 'live';
 
             let titleText = `${issue.equipment} &middot; ${issue.value || issue.param}`;
             if (issue.reason && issue.reason.toLowerCase().includes('stop')) {
@@ -11324,11 +11385,13 @@ function buildMainMobileDashboard(d) {
 
     // 8. Energy Overview
     const energyLoaded = !!d.sourceStatus?.ENERGY_SUMMARY;
+    const enSummary = d.energyData || {};
     const enKwhVal = (energyLoaded && d.reportKwh != null) ? Math.round(d.reportKwh).toLocaleString() : '-';
     const enTrendSign = (d.diffKwh != null && d.diffKwh <= 0) ? '▼ -' : '▲ +';
-    const enTrendText = (energyLoaded && d.pctChange != null && d.diffKwh != null)
+    const hasComparison = energyLoaded && d.pctChange != null && d.diffKwh != null && enSummary.prev_date;
+    const enTrendText = hasComparison
         ? `${enTrendSign}${Math.abs(d.pctChange).toFixed(1)}% vs prev day`
-        : 'Daily tracking';
+        : "-";
 
     sysGrid.innerHTML = `
         <!-- 1. Chiller -->
@@ -11486,7 +11549,6 @@ function buildMainMobileDashboard(d) {
     const energyCard = document.createElement("div");
     energyCard.className = "mob-energy-card";
 
-    const enSummary = d.energyData || {};
     const reportKwhNum = (energyLoaded && d.reportKwh != null) ? Math.round(d.reportKwh) : (energyLoaded && enSummary.report_kwh != null ? Math.round(enSummary.report_kwh) : null);
     const reportKwhVal = reportKwhNum != null ? reportKwhNum.toLocaleString() : '-';
     const isDown = d.diffKwh != null ? d.diffKwh <= 0 : false;
@@ -11630,8 +11692,39 @@ function renderMainDashboard() {
     const efG8 = Array.isArray(allData.EXHAUST_FAN_G8) ? allData.EXHAUST_FAN_G8 : [];
     const efTotal = efPanel.concat(efG8);
 
-    // Active issues accumulator
+    // Active issues accumulator (backed by canonical Alarm page items + live telemetry additions)
     const issues = [];
+    const canonicalAlarmRes = getActiveAlarmItems({ showHidden: false });
+    const canonicalActive = canonicalAlarmRes.allActive || [];
+    const coveredEquipment = new Set();
+
+    canonicalActive.forEach(item => {
+        const eqName = String(item.equipment || "").trim();
+        coveredEquipment.add(eqName.toUpperCase());
+        const isCrit = item.event_class === "ALARM";
+        const equipType = String(item.equip_type || "").toUpperCase();
+        let target = "ALARM";
+        if (equipType === "AHU" || /^AHU\s+\d+$/i.test(eqName)) target = "AHU";
+        else if (equipType === "CHILLER" || /^CHILLER\s+\d+$/i.test(eqName)) target = "CHILLER";
+        else if (["CT", "CCP", "CHWP"].includes(equipType)) target = equipType;
+        else if (equipType === "EF" || equipType === "EXHAUST_FAN" || /^EF\s+\d+$/i.test(eqName)) target = "EXHAUST_FAN";
+        else if (equipType.includes("ROOM")) target = "ROOM_TEMP_RH";
+
+        const valStr = item.value != null ? String(item.value) : (isCrit ? "ALARM" : "WARNING");
+        issues.push({
+            severity: isCrit ? "critical" : "warning",
+            equipment: eqName,
+            section: item.equip_type || target,
+            target: target,
+            filter: eqName,
+            param: item.metric || (isCrit ? "Alarm" : "Warning"),
+            value: valStr,
+            threshold: item.threshold || (item.limit_max != null ? `Max ${item.limit_max}` : "--"),
+            reason: item.description || item.reason || (isCrit ? "Active alarm state reported." : "Telemetry outside threshold."),
+            raised_at: item.raised_at || null,
+            is_live: Boolean(item.is_synthetic || item.source === "LIVE" || !item.raised_at)
+        });
+    });
 
     // --- AHU Aggregation ---
     const ahuCounts = { critical: 0, warning: 0, normal: 0, stopped: 0, unknown: 0 };
@@ -11644,42 +11737,52 @@ function renderMainDashboard() {
 
         if (band === "critical") {
             ahuCounts.critical++;
-            issues.push({
-                severity: "critical",
-                equipment: u.name,
-                section: "AHU",
-                target: "AHU",
-                filter: u.name,
-                param: "Alarm",
-                value: "ALARM",
-                threshold: "Status 1",
-                reason: "Unit reported an active alarm state."
-            });
+            if (!coveredEquipment.has(u.name.toUpperCase())) {
+                coveredEquipment.add(u.name.toUpperCase());
+                issues.push({
+                    severity: "critical",
+                    equipment: u.name,
+                    section: "AHU",
+                    target: "AHU",
+                    filter: u.name,
+                    param: "Alarm",
+                    value: "ALARM",
+                    threshold: "Status 1",
+                    reason: "Unit reported an active alarm state.",
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         } else if (op === "off") {
             // Principle: Unit OFF does NOT generate warnings (aligned with Alarm page)
             ahuCounts.stopped++;
         } else if (band === "warning") {
             ahuCounts.warning++;
-            const health = ahuHealth(u);
-            const dev = ahuDeviation(u);
-            const paramLabel = health.room ? "Room Temperature" : "Duct Temperature";
-            const valStr = health.value != null ? health.value.toFixed(1) + " °C" : "--";
-            const maxStr = health.max != null ? "Max " + health.max + " °C" : "--";
-            const reason = dev != null
-                ? `${paramLabel} ${valStr} is ${dev > 0 ? "above" : "below"} limit of ${health.max || health.min} °C.`
-                : `${paramLabel} outside normal range.`;
+            if (!coveredEquipment.has(u.name.toUpperCase())) {
+                coveredEquipment.add(u.name.toUpperCase());
+                const health = ahuHealth(u);
+                const dev = ahuDeviation(u);
+                const paramLabel = health.room ? "Room Temperature" : "Duct Temperature";
+                const valStr = health.value != null ? health.value.toFixed(1) + " °C" : "--";
+                const maxStr = health.max != null ? "Max " + health.max + " °C" : "--";
+                const reason = dev != null
+                    ? `${paramLabel} ${valStr} is ${dev > 0 ? "above" : "below"} limit of ${health.max || health.min} °C.`
+                    : `${paramLabel} outside normal range.`;
 
-            issues.push({
-                severity: "warning",
-                equipment: u.name,
-                section: "AHU",
-                target: "AHU",
-                filter: u.name,
-                param: paramLabel,
-                value: valStr,
-                threshold: maxStr,
-                reason: reason
-            });
+                issues.push({
+                    severity: "warning",
+                    equipment: u.name,
+                    section: "AHU",
+                    target: "AHU",
+                    filter: u.name,
+                    param: paramLabel,
+                    value: valStr,
+                    threshold: maxStr,
+                    reason: reason,
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         } else {
             ahuCounts.normal++;
         }
@@ -11716,17 +11819,22 @@ function renderMainDashboard() {
         if (band === "critical") {
             hscCounts.critical++;
             if (hscCat[catKey]) hscCat[catKey].crit++;
-            issues.push({
-                severity: "critical",
-                equipment: item.label,
-                section: issueSection,
-                target: issueTarget,
-                filter: item.label,
-                param: "Alarm",
-                value: "ALARM",
-                threshold: "Status 1",
-                reason: hvacScReason(kind, u, "critical")
-            });
+            if (!coveredEquipment.has(item.label.toUpperCase())) {
+                coveredEquipment.add(item.label.toUpperCase());
+                issues.push({
+                    severity: "critical",
+                    equipment: item.label,
+                    section: issueSection,
+                    target: issueTarget,
+                    filter: item.label,
+                    param: "Alarm",
+                    value: "ALARM",
+                    threshold: "Status 1",
+                    reason: hvacScReason(kind, u, "critical"),
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         } else if (op === "off") {
             // Principle: Unit OFF does NOT generate warnings (aligned with Alarm page)
             hscCounts.stopped++;
@@ -11734,23 +11842,28 @@ function renderMainDashboard() {
         } else if (band === "warning") {
             hscCounts.warning++;
             if (hscCat[catKey]) hscCat[catKey].warn++;
-            const vList = hvacScViolations(kind, u);
-            const v = vList[0];
-            const reason = hvacScReason(kind, u, "warning");
-            const param = v ? v.label : "Measurement";
-            const valStr = v ? hvacScFormat(v.value, v.suffix) : "--";
-            const threshStr = v ? (v.max != null ? "Max " + v.max + v.suffix : (v.min != null ? "Min " + v.min + v.suffix : "--")) : "--";
-            issues.push({
-                severity: "warning",
-                equipment: item.label,
-                section: issueSection,
-                target: issueTarget,
-                filter: item.label,
-                param: param,
-                value: valStr,
-                threshold: threshStr,
-                reason: reason
-            });
+            if (!coveredEquipment.has(item.label.toUpperCase())) {
+                coveredEquipment.add(item.label.toUpperCase());
+                const vList = hvacScViolations(kind, u);
+                const v = vList[0];
+                const reason = hvacScReason(kind, u, "warning");
+                const param = v ? v.label : "Measurement";
+                const valStr = v ? hvacScFormat(v.value, v.suffix) : "--";
+                const threshStr = v ? (v.max != null ? "Max " + v.max + v.suffix : (v.min != null ? "Min " + v.min + v.suffix : "--")) : "--";
+                issues.push({
+                    severity: "warning",
+                    equipment: item.label,
+                    section: issueSection,
+                    target: issueTarget,
+                    filter: item.label,
+                    param: param,
+                    value: valStr,
+                    threshold: threshStr,
+                    reason: reason,
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         } else {
             hscCounts.normal++;
             if (hscCat[catKey]) hscCat[catKey].norm++;
@@ -11812,21 +11925,26 @@ function renderMainDashboard() {
         if (rkWarn) roomRhWarn++;
         if (tWarn || rkWarn) {
             roomTotalWarn++;
-            const issuesText = [];
-            if (tWarn) issuesText.push(`Temp ${r.temp} °C > ${r.temp_max} °C`);
-            if (rkWarn) issuesText.push(`RH ${r.rh} % > ${r.rh_max} %`);
+            if (!coveredEquipment.has(r.name.toUpperCase())) {
+                coveredEquipment.add(r.name.toUpperCase());
+                const issuesText = [];
+                if (tWarn) issuesText.push(`Temp ${r.temp} °C > ${r.temp_max} °C`);
+                if (rkWarn) issuesText.push(`RH ${r.rh} % > ${r.rh_max} %`);
 
-            issues.push({
-                severity: "warning",
-                equipment: r.name,
-                section: "ROOM TEMP & RH",
-                target: "ROOM_TEMP_RH",
-                filter: r.name,
-                param: tWarn && rkWarn ? "Temp & RH" : (tWarn ? "Temperature" : "Relative Humidity"),
-                value: (r.temp != null ? r.temp + " °C" : "--") + " · " + (r.rh != null ? r.rh + "%" : "--"),
-                threshold: "T ≤ " + (r.temp_max || 30) + "°C · RH ≤ " + (r.rh_max || 65) + "%",
-                reason: issuesText.join(", ")
-            });
+                issues.push({
+                    severity: "warning",
+                    equipment: r.name,
+                    section: "ROOM TEMP & RH",
+                    target: "ROOM_TEMP_RH",
+                    filter: r.name,
+                    param: tWarn && rkWarn ? "Temp & RH" : (tWarn ? "Temperature" : "Relative Humidity"),
+                    value: (r.temp != null ? r.temp + " °C" : "--") + " · " + (r.rh != null ? r.rh + "%" : "--"),
+                    threshold: "T ≤ " + (r.temp_max || 30) + "°C · RH ≤ " + (r.rh_max || 65) + "%",
+                    reason: issuesText.join(", "),
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         }
     });
 
@@ -11842,17 +11960,22 @@ function renderMainDashboard() {
         const s = getEfStatus(f);
         if (s === "trip") {
             efCrit++;
-            issues.push({
-                severity: "critical",
-                equipment: f.name,
-                section: "Exhaust fan (EF)",
-                target: "EXHAUST_FAN",
-                filter: f.name,
-                param: "Trip",
-                value: "TRIP",
-                threshold: "Trip 0",
-                reason: "Exhaust Fan reported a trip fault."
-            });
+            if (!coveredEquipment.has(f.name.toUpperCase())) {
+                coveredEquipment.add(f.name.toUpperCase());
+                issues.push({
+                    severity: "critical",
+                    equipment: f.name,
+                    section: "Exhaust fan (EF)",
+                    target: "EXHAUST_FAN",
+                    filter: f.name,
+                    param: "Trip",
+                    value: "TRIP",
+                    threshold: "Trip 0",
+                    reason: "Exhaust Fan reported a trip fault.",
+                    raised_at: null,
+                    is_live: true
+                });
+            }
         } else if (s === "off") {
             efOff++;
             const isPm = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", f.name);
@@ -11860,17 +11983,22 @@ function renderMainDashboard() {
                 efStop++;
             } else {
                 efCrit++;
-                issues.push({
-                    severity: "critical",
-                    equipment: f.name,
-                    section: "Exhaust fan (EF)",
-                    target: "EXHAUST_FAN",
-                    filter: f.name,
-                    param: "Status",
-                    value: "OFF",
-                    threshold: "Run 1",
-                    reason: "Exhaust Fan stopped without active PM."
-                });
+                if (!coveredEquipment.has(f.name.toUpperCase())) {
+                    coveredEquipment.add(f.name.toUpperCase());
+                    issues.push({
+                        severity: "critical",
+                        equipment: f.name,
+                        section: "Exhaust fan (EF)",
+                        target: "EXHAUST_FAN",
+                        filter: f.name,
+                        param: "Status",
+                        value: "OFF",
+                        threshold: "Run 1",
+                        reason: "Exhaust Fan stopped without active PM.",
+                        raised_at: null,
+                        is_live: true
+                    });
+                }
             }
         } else if (s === "run") {
             efRun++;
@@ -11918,11 +12046,20 @@ function renderMainDashboard() {
         : "-";
 
     // --- SORT ISSUES ---
+    // Rule: Critical first, then warning; within each severity, NEWEST (largest raised_at) first.
+    // Static time arrays are removed.
     issues.sort((a, b) => {
         if (a.severity !== b.severity) {
             return a.severity === "critical" ? -1 : 1;
         }
-        return a.equipment.localeCompare(b.equipment, undefined, { numeric: true, sensitivity: 'base' });
+        const timeA = a.raised_at ? Date.parse(String(a.raised_at).replace(" ", "T")) : (a.is_live ? Infinity : 0);
+        const timeB = b.raised_at ? Date.parse(String(b.raised_at).replace(" ", "T")) : (b.is_live ? Infinity : 0);
+        const validA = !isNaN(timeA);
+        const validB = !isNaN(timeB);
+        if (validA && validB && timeA !== timeB) {
+            return timeB - timeA; // Descending (newest first)
+        }
+        return String(a.equipment || "").localeCompare(String(b.equipment || ""), undefined, { numeric: true, sensitivity: 'base' });
     });
 
     let ahuSumTemp = 0;
