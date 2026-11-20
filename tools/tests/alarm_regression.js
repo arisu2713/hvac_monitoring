@@ -116,6 +116,7 @@ async function runRegressionSuite() {
                 lastDbAlarmEfNames.clear();
                 efDebounceMap.clear();
                 liveEfFirstSeenMap.clear();
+                syntheticLiveEfAlarms = [];
                 initialAlarmEvaluationDone = true;
                 pendingEarlyAckUntil = 0;
 
@@ -895,6 +896,177 @@ async function runRegressionSuite() {
                            res.hasSuppressedClass && res.hasPmBadge &&
                            res.rowsCount3 === 1;
             results.push({ name: '17. Banner toggle Tampilkan/Sembunyikan & gaya baris PM redup (Tahap 2 & 3)', passed, details: res });
+        }
+
+        // =========================================================================
+        // TAHAP 5 TESTS: DAIKIN STALE TELEMETRY IN ALARM SYSTEM (Cases 18 to 21)
+        // =========================================================================
+
+        // 18. EF stale when RUN -> does not report normal, does not trigger alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 1,
+                    run: 1,
+                    trip: 0,
+                    last_update: '2026-11-16 18:29:12',
+                    age_seconds: 259200
+                };
+                const status = getEfStatus(fan);
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const isBlinking = document.querySelector('button[data-equipment="ALARM"]').classList.contains('tab-blinking');
+
+                return { status, unackCount, lastMsg, isBlinking };
+            });
+
+            const passed = res.status === 'unknown' && res.unackCount === 0 && res.lastMsg !== 'PLAY_ALARM' && res.isBlinking === false;
+            results.push({ name: '18. EF stale when RUN -> status unknown (not normal), does not trigger alarm', passed, details: res });
+        }
+
+        // 19. EF stale when OFF -> does not generate new synthetic alarm on fresh session
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    run: 0,
+                    trip: 0,
+                    last_update: '2026-11-16 18:29:12',
+                    age_seconds: 259200
+                };
+                const status = getEfStatus(fan);
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const hasTrigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+                const synthRows = syntheticLiveEfAlarms.filter(r => r.equipment === 'EF 58');
+
+                return { status, unackCount, lastMsg, hasTrigger, synthRowsCount: synthRows.length };
+            });
+
+            const passed = res.status === 'unknown' && res.unackCount === 0 && !res.hasTrigger && res.synthRowsCount === 0 && res.lastMsg !== 'PLAY_ALARM';
+            results.push({ name: '19. EF stale when OFF -> does not generate new synthetic alarm on fresh session', passed, details: res });
+        }
+
+        // 20. EF active alarm before becoming stale -> active alarm remains preserved (not cleared)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                // Reading 1: Fresh telemetry, EF 58 is OFF (first reading)
+                const freshFan1 = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    run: 0,
+                    trip: 0,
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [freshFan1], [], true, true);
+
+                // Reading 2: Second reading confirms OFF (debounce >= 2 distinct readings) -> triggers alarm
+                const freshFan2 = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    run: 0,
+                    trip: 0,
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                evaluateAlarmTriggers([], [freshFan2], [], true, true);
+                const tick1Trigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+                const tick1Unack = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+
+                // Reading 3: Telemetry becomes stale (poller disconnects, age_seconds: 300)
+                const staleFan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    run: 0,
+                    trip: 0,
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 300
+                };
+                evaluateAlarmTriggers([], [staleFan], [], true, true);
+                const tick2Trigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+                const tick2Unack = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const synthRows = syntheticLiveEfAlarms.filter(r => r.equipment === 'EF 58');
+
+                return { tick1Trigger, tick1Unack, tick2Trigger, tick2Unack, synthRowsCount: synthRows.length };
+            });
+
+            const passed = res.tick1Trigger && res.tick1Unack === 1 && res.tick2Trigger && res.tick2Unack === 1 && res.synthRowsCount === 1;
+            results.push({ name: '20. EF active alarm before becoming stale -> active alarm remains preserved (not cleared)', passed, details: res });
+        }
+
+        // 21. checkUnitIsDefinitivelyOff returns false (fail-safe sounds) when unit is stale
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                allData.efServerTime = '2026-11-20 12:00:00';
+                lastAhuFetchTime = Date.now();
+                lastHvacScFetchTime = Date.now();
+
+                // 1. Fresh AHU OFF -> returns true (definitively off)
+                allData.AHU = [{
+                    name: 'AHU 01',
+                    status: 0,
+                    run: 0,
+                    run_status: 0,
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                }];
+                const freshAhuOff = checkUnitIsDefinitivelyOff({ equip_type: 'AHU', equipment: 'AHU 01' });
+
+                // 2. Stale AHU OFF -> fail-safe returns false (sounds)
+                allData.AHU = [{
+                    name: 'AHU 96',
+                    status: 0,
+                    run: 0,
+                    run_status: 0,
+                    last_update: '2026-11-16 18:29:12',
+                    age_seconds: 259200
+                }];
+                const staleAhuOff = checkUnitIsDefinitivelyOff({ equip_type: 'AHU', equipment: 'AHU 96' });
+
+                // 3. Fresh Chiller OFF -> returns true
+                allData.CHILLER = [{
+                    name: 'CHILLER 1',
+                    run: 0,
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                }];
+                const freshChillerOff = checkUnitIsDefinitivelyOff({ equip_type: 'CHILLER', equipment: 'CHILLER 1' });
+
+                // 4. Stale Chiller OFF -> fail-safe returns false (sounds)
+                allData.CHILLER = [{
+                    name: 'CHILLER 1',
+                    run: 0,
+                    last_update: '2026-11-16 18:29:12',
+                    age_seconds: 259200
+                }];
+                const staleChillerOff = checkUnitIsDefinitivelyOff({ equip_type: 'CHILLER', equipment: 'CHILLER 1' });
+
+                return { freshAhuOff, staleAhuOff, freshChillerOff, staleChillerOff };
+            });
+
+            const passed = res.freshAhuOff === true && res.staleAhuOff === false &&
+                           res.freshChillerOff === true && res.staleChillerOff === false;
+            results.push({ name: '21. checkUnitIsDefinitivelyOff returns false (fail-safe sounds) when unit is stale', passed, details: res });
         }
 
         await browser.close();

@@ -723,6 +723,180 @@ async function runStatesSuite() {
                 details: { hasViewAll: s4Check.hasViewAll }
             });
 
+            // ==========================================
+            // STATE 5: DAIKIN STALE TELEMETRY (AHU 96-97 & EF 58-61)
+            // ==========================================
+            await page.evaluate(() => {
+                const staleTime = "2026-11-16 18:29:12";
+                const serverTime = "2026-11-19 18:29:12"; // 3 days later
+                const staleAge = 259200; // 3 days in seconds
+
+                allData = {
+                    ahuServerTime: serverTime,
+                    efServerTime: serverTime,
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: true,
+                        ALARM: true, ENERGY_SUMMARY: true
+                    },
+                    sourceFreshness: {
+                        DAIKIN: false,
+                        HNX: true,
+                        latestDaikinUpdate: staleTime
+                    },
+                    AHU: [
+                        { name: "AHU 01", temp: 21.5, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime, age_seconds: 5 },
+                        { name: "AHU 02", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime, age_seconds: 5 },
+                        { name: "AHU 96", temp: 21.8, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: staleTime, age_seconds: staleAge, return_air_temp: 22.1, supply_air_temp: 18.2, rh: 58.0 },
+                        { name: "AHU 97", temp: 21.9, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: staleTime, age_seconds: staleAge, return_air_temp: 22.3, supply_air_temp: 18.4, rh: 59.0 }
+                    ],
+                    CHILLER: [
+                        { name: "CHILLER 1", run: 1, alarm: 0, cond_entering_temp: 29.5, evap_leaving_temp: 7.2, evap_leaving_temp_max: 12, cond_entering_temp_max: 32 }
+                    ],
+                    CT: [
+                        { name: "CT 1A", run: 1, alarm: 0, return_temp: 28.0, return_temp_max: 32.0 }
+                    ],
+                    CCP: [
+                        { name: "CCP 1", run: 1, alarm: 0, frequency: 49.8, current: 16.5 }
+                    ],
+                    CHWP: [
+                        { name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }
+                    ],
+                    EXHAUST_FAN: [
+                        { name: "EF 01", run: 1, trip: 0, last_update: serverTime, age_seconds: 5 }
+                    ],
+                    EXHAUST_FAN_G8: [
+                        { name: "EF 58", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
+                        { name: "EF 59", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
+                        { name: "EF 60", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
+                        { name: "EF 61", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge }
+                    ],
+                    ROOM_TEMP_RH: [
+                        { name: "Room 101", type: "ROOM", temp: 23.5, rh: 55, temp_max: 30, rh_max: 65 }
+                    ],
+                    ALARM: {
+                        server_time: serverTime,
+                        counts: {
+                            active_alarm: 0,
+                            active_warning: 0,
+                            active_total: 0
+                        },
+                        total_events: 100,
+                        alarms: []
+                    },
+                    ENERGY_SUMMARY: {
+                        report_kwh: 8500,
+                        prev_kwh: null,
+                        report_date: '2026-11-18',
+                        prev_date: null,
+                        daily_history: [
+                            { date: '2026-11-18', label: '18 Nov', short_day: 'Wed', kwh: 8500, is_latest: true }
+                        ],
+                        peak_day: { date: '2026-11-18', label: '18 Nov', kwh: 8500 },
+                        avg_daily_kwh: 8500
+                    }
+                };
+
+                currentEquipment = "MAIN";
+                updateSourceFreshness();
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            // Screenshot for Main Dashboard State 5
+            const shot5Path = path.join(shotDir, `state5_stale_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot5Path, fullPage: true });
+
+            const s5Check = await page.evaluate((isMobile) => {
+                // Main Dashboard KPI counts
+                const crit = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0));
+                const warn = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-warn .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim() || 0));
+                const norm = Number(isMobile
+                    ? (document.querySelectorAll('.mob-kpi-grid .mob-kpi-card')[2]?.querySelector('.mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const stop = Number(isMobile
+                    ? (document.querySelectorAll('.mob-kpi-grid .mob-kpi-card')[3]?.querySelector('.mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                
+                // Desktop has .kpi.unknown when totalUnknown > 0
+                const unkDesktop = Number(document.querySelector('.kpi.unknown .kpi-val')?.textContent.trim() || 0);
+                const total = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-total')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi-row .kpi:last-child .kpi-val')?.textContent.trim() || 0));
+
+                const bannerSub = isMobile
+                    ? (document.querySelector('.mob-hero-sub')?.textContent.trim() || '')
+                    : (document.querySelector('.banner-sub')?.textContent.trim() || '');
+
+                const invariantHolds = !isMobile ? ((crit + warn + norm + stop + unkDesktop) === total) : true;
+
+                // Now render AHU / EF G8 page to inspect cards and banner
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+
+                const staleBanner = document.querySelector('.stale-telemetry-banner');
+                const staleBannerText = staleBanner ? staleBanner.textContent.trim() : '';
+
+                // Check AHU 96 card
+                const ahu96Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 96'));
+                const ahu96Subtext = ahu96Card?.querySelector('.g8-stale-subtext')?.textContent.trim() || '';
+                const ahu96Metrics = Array.from(ahu96Card?.querySelectorAll('.m-val') || []).map(m => m.textContent.trim());
+
+                // Check EF 58 card
+                const ef58Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 58'));
+                const ef58Subtext = ef58Card?.querySelector('.g8-stale-subtext')?.textContent.trim() || '';
+                const ef58Metrics = Array.from(ef58Card?.querySelectorAll('.m-val') || []).map(m => m.textContent.trim());
+
+                return {
+                    crit,
+                    warn,
+                    norm,
+                    stop,
+                    unkDesktop,
+                    total,
+                    invariantHolds,
+                    bannerSub,
+                    hasStaleBanner: Boolean(staleBanner),
+                    staleBannerText,
+                    ahu96Subtext,
+                    ahu96Metrics,
+                    ef58Subtext,
+                    ef58Metrics
+                };
+            }, vp.name === 'mobile');
+
+            // Invariant check on Main Dashboard
+            results.push({
+                name: `State 5 (${vp.name}): Main Dashboard KPI unknown is incremented by stale units, normal does not inflate, and invariant holds`,
+                pass: (!s5Check.invariantHolds ? false : true) &&
+                      (vp.name === 'desktop' ? s5Check.unkDesktop === 6 : true) &&
+                      s5Check.bannerSub.includes('unknown/stale'),
+                details: { crit: s5Check.crit, warn: s5Check.warn, norm: s5Check.norm, stop: s5Check.stop, unk: s5Check.unkDesktop, total: s5Check.total, bannerSub: s5Check.bannerSub }
+            });
+
+            // Card values and stale notice on AHU / EF G8
+            results.push({
+                name: `State 5 (${vp.name}): Daikin AHU 96-97 and EF 58-61 cards render "—" for values and "Data X lalu" subtext, and banner appears`,
+                pass: s5Check.hasStaleBanner &&
+                      s5Check.staleBannerText.includes('tidak diperbarui sejak') &&
+                      s5Check.ahu96Subtext.includes('Data') && s5Check.ahu96Subtext.includes('lalu') &&
+                      s5Check.ahu96Metrics.every(v => v === '—') &&
+                      s5Check.ef58Subtext.includes('Data') && s5Check.ef58Subtext.includes('lalu') &&
+                      s5Check.ef58Metrics.every(v => v === '—'),
+                details: {
+                    hasStaleBanner: s5Check.hasStaleBanner,
+                    staleBannerText: s5Check.staleBannerText,
+                    ahu96Subtext: s5Check.ahu96Subtext,
+                    ahu96Metrics: s5Check.ahu96Metrics,
+                    ef58Subtext: s5Check.ef58Subtext,
+                    ef58Metrics: s5Check.ef58Metrics
+                }
+            });
+
             await context.close();
         }
 
