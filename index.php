@@ -3141,6 +3141,8 @@ function checkUnitIsDefinitivelyOff(alarm) {
         return false;
     }
 
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+
     if (equipType === "AHU" || /^AHU\s+\d+$/i.test(equipment)) {
         /* If AHU data is missing or stale (> RUN_STATE_MAX_AGE_MS), fail-safe return false (sounds) */
         if (!allData.AHU || !allData.AHU.length || (Date.now() - lastAhuFetchTime > RUN_STATE_MAX_AGE_MS)) {
@@ -3149,6 +3151,10 @@ function checkUnitIsDefinitivelyOff(alarm) {
         const units = Array.isArray(allData.AHU) ? allData.AHU : [];
         const u = units.find(item => item && String(item.name).trim().toUpperCase() === equipment.toUpperCase());
         if (u) {
+            /* Koreksi 9: fail-safe bila data unit basi, anggap TIDAK terbukti OFF (tetap bunyikan alarm) */
+            if (isTelemetryStale(u, serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds)) {
+                return false;
+            }
             return ahuRunState(u) === "off";
         }
         /* Unit not found in allData: fail-safe return false (sounds) */
@@ -3171,6 +3177,10 @@ function checkUnitIsDefinitivelyOff(alarm) {
                 || (equipType + " " + iname).toUpperCase() === equipment.toUpperCase();
         });
         if (u) {
+            /* Koreksi 9: fail-safe bila data unit basi, anggap TIDAK terbukti OFF (tetap bunyikan alarm) */
+            if (isTelemetryStale(u, serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds)) {
+                return false;
+            }
             return g8RunState(u.run) === "off";
         }
         return false;
@@ -3342,6 +3352,50 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                 try {
                     const fanName = (fan.name || ("EF " + fan.id)).trim();
                     const fanKeyUpper = fanName.toUpperCase();
+                    const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+                    const isStale = isTelemetryStale(fan, serverTime, STALE_THRESHOLD_SECONDS, fan.age_seconds);
+                    const efTriggerKey = "EFOFF:" + fanKeyUpper;
+                    const hadActiveAlarm = lastEfOffKeys.has(efTriggerKey) || acknowledgedAlarmKeys.has(efTriggerKey);
+
+                    /*
+                     * Stale Telemetry Guard (Phase 2 Koreksi 8):
+                     * Do NOT trigger new alarms when EF data is stale.
+                     * If an alarm was ALREADY active before becoming stale, KEEP it active (never auto-clear).
+                     */
+                    if (isStale) {
+                        if (hadActiveAlarm) {
+                            currentEfKeys.add(efTriggerKey);
+                            const prevRow = syntheticLiveEfAlarms.find(r => r.equipment && r.equipment.toUpperCase() === fanKeyUpper);
+                            if (prevRow) {
+                                newSyntheticLiveRows.push(prevRow);
+                            } else {
+                                const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                                newSyntheticLiveRows.push({
+                                    id: "LIVE:" + fanKeyUpper.replace(/^EF\s+/i, ""),
+                                    event_class: "ALARM",
+                                    source: "LIVE",
+                                    equip_type: "EF",
+                                    equipment: fanName,
+                                    point_id: null,
+                                    ef_point_id: fan.id || null,
+                                    panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
+                                    metric: "STATUS",
+                                    description: "Exhaust Fan stopped (telemetry stale, alarm preserved)",
+                                    status: "ACTIVE",
+                                    value: 0,
+                                    limit_min: null,
+                                    limit_max: null,
+                                    raised_at: null,
+                                    first_seen: liveEfFirstSeenMap.get(fanKeyUpper) || "--",
+                                    cleared_at: null,
+                                    is_pm: isPmActive,
+                                    is_synthetic: true
+                                });
+                            }
+                        }
+                        return;
+                    }
+
                     const status = getEfStatus(fan);
                     const lastUpdate = fan.last_update || "";
 
