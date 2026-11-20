@@ -5494,6 +5494,9 @@ html:has(.alarm-page) .alarm-page {
     grid-template-columns: repeat(5, 1fr) !important;
     gap: 10px !important;
 }
+.kpi-row:has(.kpi.unknown) {
+    grid-template-columns: repeat(6, 1fr) !important;
+}
 .kpi {
     padding: 12px 16px;
     border-radius: 10px;

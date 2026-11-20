@@ -347,6 +347,12 @@ function latestDbUpdate() {
 }
 
 function getStatus(unit) {
+    if (!unit) return "unknown";
+    const serverTime = allData.ahuServerTime || allData.efServerTime || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
     const alarm = unit.alarm === null || unit.alarm === undefined ? null : Number(unit.alarm);
     const run = unit.run === null || unit.run === undefined ? null : Number(unit.run);
 
@@ -400,9 +406,16 @@ function applyAlarmClass(element, value, min, max) {
 }
 
 function getEfStatus(unit) {
-    const status = unit.status === null || unit.status === undefined
+    if (!unit) return "unknown";
+    const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
+    const raw = unit.status ?? unit.run ?? unit.run_state;
+    const status = raw === null || raw === undefined
         ? null
-        : Number(unit.status);
+        : Number(raw);
 
     if (status === 1) {
         return "run";
@@ -1390,6 +1403,16 @@ function g8TrippedFans(unit) {
  *    follows.
  */
 function g8AhuCondition(unit) {
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale, condition is forced to "unknown",
+     * never reported as "normal" or "off".
+     */
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
     if (ahuNum(unit.alarm) === 1) {
         return "critical";
     }
@@ -1431,6 +1454,16 @@ function g8AhuCondition(unit) {
  * against.
  */
 function g8EfCondition(unit) {
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale, condition is forced to "unknown",
+     * never reported as "normal" or "off".
+     */
+    const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
     const state = g8RunState(unit.status);
 
     if (state === "on") {
@@ -3697,11 +3730,11 @@ function isTelemetryStale(lastUpdate, serverTime, thresholdSec, ageSeconds) {
     }
 
     const rawLu = (typeof lastUpdate === "object" && lastUpdate !== null) ? lastUpdate.last_update : lastUpdate;
-    if (!rawLu) return true;
+    if (!rawLu) return false;
     const luNorm = normalizeSqlDatetime(rawLu);
-    if (!luNorm) return true;
+    if (!luNorm) return false;
     const luMs = Date.parse(luNorm.replace(" ", "T"));
-    if (isNaN(luMs)) return true;
+    if (isNaN(luMs)) return false;
 
     let nowMs = Date.now();
     if (serverTime) {
@@ -6413,6 +6446,12 @@ function ahuHealth(unit) {
  * does is what this function used to do.
  */
 function ahuBandOf(unit) {
+    if (!unit) return "unknown";
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
     if (ahuNum(unit.alarm) === 1) {
         return "critical";
     }
@@ -6441,7 +6480,13 @@ function ahuBandOf(unit) {
  * read, so this is a reachable state.
  */
 function ahuRunState(unit) {
-    const run = ahuNum(unit.run);
+    if (!unit) return "unknown";
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
+        return "unknown";
+    }
+
+    const run = ahuNum(unit.run ?? unit.run_state ?? unit.status);
 
     if (run === 1) {
         return "on";
@@ -10798,7 +10843,9 @@ function buildMainDesktopDashboard(d) {
             ? `${d.totalCritical} critical alert(s) across systems — immediate action required.${isPartial ? ' (partial data)' : ''}`
             : (isWarn
                 ? `No critical issue. ${d.totalWarning} warnings active across all systems — no immediate action required.${isPartial ? ' (partial data)' : ''}`
-                : `No critical issue or warning. All ${d.totalEquip} units operating within normal target ranges.${isPartial ? ' (partial data)' : ''}`));
+                : (d.totalUnknown > 0
+                    ? `No critical issue or warning. ${d.totalNormal} units normal, ${d.totalUnknown} unknown/stale.${isPartial ? ' (partial data)' : ''}`
+                    : `No critical issue or warning. All ${d.totalEquip} units operating within normal target ranges.${isPartial ? ' (partial data)' : ''}`)));
 
     const banner = document.createElement("div");
     banner.className = "status-banner " + bannerClass;
@@ -10816,7 +10863,7 @@ function buildMainDesktopDashboard(d) {
     `;
     page.appendChild(banner);
 
-    // 2. KPI Row (5 boxes)
+    // 2. KPI Row (5 boxes normally; 6 boxes if unknown/stale units exist)
     const kpiRow = document.createElement("div");
     kpiRow.className = "kpi-row";
     kpiRow.innerHTML = `
@@ -10836,6 +10883,11 @@ function buildMainDesktopDashboard(d) {
             <div class="kpi-val" style="color:#ef4444">${d.totalStopped}</div>
             <div class="kpi-label">Stopped</div>
         </div>
+        ${d.totalUnknown > 0 ? `
+        <div class="kpi unknown" style="background:#1f2328; border-color:#30363d">
+            <div class="kpi-val" style="color:#8b949e">${d.totalUnknown}</div>
+            <div class="kpi-label">Unknown</div>
+        </div>` : ''}
         <div class="kpi">
             <div class="kpi-val">${d.totalEquip}</div>
             <div class="kpi-label">Total units</div>
@@ -10898,10 +10950,13 @@ function buildMainDesktopDashboard(d) {
     const efTotal = efLoaded ? d.efTotal.length : "-";
     const efRun = efLoaded ? d.efRun : "-";
     const efGPct = (efLoaded && efTotal > 0) ? Math.round((d.efRun / efTotal) * 100) : 0;
+    const efUnk = efLoaded ? (d.efUnk || 0) : 0;
     const efFooter = efLoaded
         ? ((d.efCrit || 0) > 0
             ? `<span class="crit-tag" style="color:#ef4444">${d.efCrit} critical alert(s)</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} standby/PM` : ''}`
-            : `<span class="ok-tag">All healthy</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} scheduled standby` : ''}`)
+            : (efUnk > 0
+                ? `<span class="unknown-tag" style="color:#8b949e">${efUnk} unknown/stale</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} standby/PM` : ''}`
+                : `<span class="ok-tag">All healthy</span>${(d.efStop || 0) > 0 ? ` · ${d.efStop} scheduled standby` : ''}`))
         : '-';
     efCard.innerHTML = `
         <div class="scard-head">
@@ -10921,14 +10976,17 @@ function buildMainDesktopDashboard(d) {
     g8Card.onclick = () => navigateTo("AHU_G8", "");
     const g8Loaded = !!d.sourceStatus?.G8;
     const g8Total = g8Loaded ? 8 : "-";
-    const g8Norm = g8Loaded ? (8 - (d.g8Counts.warning + d.g8Counts.critical)) : "-";
+    const g8Norm = g8Loaded ? (d.g8Counts.normal ?? 0) : "-";
     const g8GPct = g8Loaded ? Math.round((g8Norm / 8) * 100) : 0;
     const g8YPct = g8Loaded ? Math.round((d.g8Counts.warning / 8) * 100) : 0;
     const g8RPct = g8Loaded ? Math.round((d.g8Counts.critical / 8) * 100) : 0;
+    const g8Unk = g8Loaded ? (d.g8Counts.unknown || 0) : 0;
     const g8WarnText = g8Loaded
         ? (d.g8Warnings.length > 0
             ? `<span class="warn-tag">${d.g8Counts.warning} warning</span> · ${escapeHtml(d.g8Warnings[0].name)} ${escapeHtml(d.g8Warnings[0].reason)}`
-            : `<span class="ok-tag">All healthy</span> · normal`)
+            : (g8Unk > 0
+                ? `<span class="unknown-tag" style="color:#8b949e">${g8Unk} unknown/stale</span>`
+                : `<span class="ok-tag">All healthy</span> · normal`))
         : '-';
     g8Card.innerHTML = `
         <div class="scard-head">
@@ -11395,7 +11453,9 @@ function buildMainMobileDashboard(d) {
             ? `${totalCrit} critical unit${totalCrit > 1 ? 's' : ''} require immediate attention.${isPartial ? ' (partial data)' : ''}`
             : (hasWarn
                 ? `No critical issue. ${totalWarn} units need a look.${isPartial ? ' (partial data)' : ''}`
-                : `All ${d.totalEquip} monitored units operating within limits.${isPartial ? ' (partial data)' : ''}`));
+                : (d.totalUnknown > 0
+                    ? `No critical issue or warning. ${d.totalNormal} units normal, ${d.totalUnknown} unknown/stale.${isPartial ? ' (partial data)' : ''}`
+                    : `All ${d.totalEquip} monitored units operating within limits.${isPartial ? ' (partial data)' : ''}`)));
 
     const banner = document.createElement("div");
     banner.className = `mob-hero-banner ${bannerState}`;
@@ -11982,11 +12042,15 @@ function renderMainDashboard() {
     const ahuOps = { on: 0, off: 0, unknown: 0 };
 
     ahuUnits.forEach(u => {
+        const serverTime = allData.ahuServerTime || allData.efServerTime || null;
+        const isStale = isTelemetryStale(u, serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds);
         const band = ahuBandOf(u);
         const op = ahuRunState(u);
         ahuOps[op] = (ahuOps[op] || 0) + 1;
 
-        if (band === "critical") {
+        if (isStale || band === "unknown") {
+            ahuCounts.unknown++;
+        } else if (band === "critical") {
             ahuCounts.critical++;
             if (!coveredEquipment.has(u.name.toUpperCase())) {
                 coveredEquipment.add(u.name.toUpperCase());
@@ -12206,8 +12270,16 @@ function renderMainDashboard() {
     let efWarn = 0;
     let efNorm = 0;
     let efStop = 0;
+    let efUnk = 0;
 
     efTotal.forEach(f => {
+        const serverTime = allData.efServerTime || null;
+        const isStale = isTelemetryStale(f, serverTime, STALE_THRESHOLD_SECONDS, f.age_seconds);
+        if (isStale) {
+            efUnk++;
+            return;
+        }
+
         const s = getEfStatus(f);
         if (s === "trip") {
             efCrit++;
@@ -12255,7 +12327,7 @@ function renderMainDashboard() {
             efRun++;
             efNorm++;
         } else {
-            efNorm++;
+            efUnk++;
         }
     });
 
@@ -12279,7 +12351,7 @@ function renderMainDashboard() {
 
     // --- OVERALL SYSTEM TOTALS (EXCLUSIVE BUCKETING) ---
     // Physical equipment units: AHU (97) + HVAC SC (49) + EF (59) = 205 (No double counting G8!)
-    // Mathematical invariant: critical + warning + normal + stopped = totalEquip for loaded sources
+    // Mathematical invariant: critical + warning + normal + stopped + unknown = totalEquip for loaded sources
     const totalEquip = anyEquipLoaded
         ? ((src.AHU ? ahuUnits.length : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? hvacUnits.length : 0) + (src.EF ? efTotal.length : 0))
         : "-";
@@ -12294,6 +12366,9 @@ function renderMainDashboard() {
         : "-";
     const totalStopped = anyEquipLoaded
         ? ((src.AHU ? (ahuCounts.stopped || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.stopped || 0) : 0) + (src.EF ? efStop : 0))
+        : "-";
+    const totalUnknown = anyEquipLoaded
+        ? ((src.AHU ? (ahuCounts.unknown || 0) : 0) + (src.CHILLER || src.CT || src.CCP || src.CHWP ? (hscCounts.unknown || 0) : 0) + (src.EF ? efUnk : 0))
         : "-";
 
     // --- SORT ISSUES ---
@@ -12404,6 +12479,7 @@ function renderMainDashboard() {
         totalWarning,
         totalNormal,
         totalStopped,
+        totalUnknown,
         ahuUnits,
         ahuCounts,
         ahuOps,
@@ -12413,6 +12489,7 @@ function renderMainDashboard() {
         efOff,
         efCrit,
         efStop,
+        efUnk,
         g8Counts,
         g8Warnings,
         chillers,
@@ -12458,6 +12535,7 @@ function renderMainDashboard() {
         totalWarning,
         totalNormal,
         totalStopped,
+        totalUnknown,
         activeTotal,
         activeAlarms,
         activeWarnings,
@@ -12470,6 +12548,7 @@ function renderMainDashboard() {
         efOff,
         efCrit,
         efStop,
+        efUnk,
         efTotal,
         g8Counts,
         hscCat,
