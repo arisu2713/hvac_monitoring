@@ -418,8 +418,15 @@ function getEfStatus(unit) {
 function createEfCard(unit) {
     const card = document.createElement("div");
 
-    const status = getEfStatus(unit);
-    card.className = "unit-card ef-card status-" + status;
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown"
+     * and values/subtext are set to neutral indicators.
+     */
+    const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    const status = isStale ? "unknown" : getEfStatus(unit);
+    card.className = "unit-card ef-card status-" + status + (isStale ? " is-stale" : "");
     card.dataset.status = status;
     card.tabIndex = 0;
 
@@ -446,7 +453,7 @@ function createEfCard(unit) {
 
     const dot = document.createElement("span");
     dot.className = "ef-run-dot is-" + status;
-    dot.title = status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN");
+    dot.title = isStale ? "Status tidak diketahui (data basi)" : (status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN"));
     card.appendChild(dot);
 
     const name = document.createElement("div");
@@ -454,7 +461,17 @@ function createEfCard(unit) {
     name.textContent = unitName;
     card.appendChild(name);
 
-    if (status !== "run") {
+    if (isStale) {
+        const label = document.createElement("div");
+        label.className = "ef-status-label is-unknown";
+        label.textContent = "—";
+        card.appendChild(label);
+
+        const sub = document.createElement("div");
+        sub.className = "ef-stale-subtext";
+        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        card.appendChild(sub);
+    } else if (status !== "run") {
         const label = document.createElement("div");
         label.className = "ef-status-label is-" + status;
         label.textContent = status === "off" ? "OFF" : "UNKNOWN";
@@ -608,9 +625,15 @@ function createEfCard(unit) {
 function createCard(unit) {
     const card = document.createElement("div");
 
-    const status = getStatus(unit);
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown".
+     */
+    const serverTime = allData.ahuServerTime || allData.efServerTime || null;
+    const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    const status = isStale ? "unknown" : getStatus(unit);
 
-    card.className = "unit-card status-" + status;
+    card.className = "unit-card status-" + status + (isStale ? " is-stale" : "");
     card.dataset.status = status;
 
     const name = document.createElement("div");
@@ -625,21 +648,35 @@ function createCard(unit) {
      * with no value line at all.
      */
     if (unit.status_only === true) {
+        if (isStale) {
+            const sub = document.createElement("div");
+            sub.className = "unit-stale-subtext";
+            sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+            card.appendChild(sub);
+        }
         return card;
     }
 
     const temp = document.createElement("div");
     temp.className = "unit-value";
 
-    if (unit.temp !== null && unit.temp !== undefined) {
+    if (isStale) {
+        temp.textContent = "— °C";
+    } else if (unit.temp !== null && unit.temp !== undefined) {
         temp.textContent = Number(unit.temp).toFixed(1) + " °C";
+        applyAlarmClass(temp, unit.temp, unit.temp_min, unit.temp_max);
     } else {
         temp.textContent = "-- °C";
     }
 
-    applyAlarmClass(temp, unit.temp, unit.temp_min, unit.temp_max);
-
     card.appendChild(temp);
+
+    if (isStale) {
+        const sub = document.createElement("div");
+        sub.className = "unit-stale-subtext";
+        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        card.appendChild(sub);
+    }
 
     return card;
 }
@@ -1054,7 +1091,7 @@ function g8CardHeader(titleText, state, showRunLabel, alarm) {
  * TRIP is rendered as TRIP / OK rather than RUN / OFF: it is a fault flag, so
  * "OFF" would invert its meaning.
  */
-function createG8EcFanTable(unit) {
+function createG8EcFanTable(unit, isStale = false) {
     const table = document.createElement("div");
     table.className = "g8-fan-table";
 
@@ -1075,7 +1112,13 @@ function createG8EcFanTable(unit) {
         name.textContent = "Fan " + n;
         table.appendChild(name);
 
-        const cells = [
+        const cells = isStale ? [
+            { text: "—", cls: "g8-val-unknown" },
+            { text: "—", cls: "" },
+            { text: "—", cls: "" },
+            { text: "—", cls: "" },
+            { text: "—", cls: "" }
+        ] : [
             { text: g8BoolText(fan.trip, "TRIP", "OK"), cls: g8TripClass(fan.trip) },
             { text: g8Format(fan.frequency, " Hz"), cls: "" },
             { text: g8Format(fan.temp_motor, " °C"), cls: "" },
@@ -1176,16 +1219,23 @@ function createG8Ahu9495Card(unit) {
  * table shows real frequency and temperatures.
  */
 function createG8Ahu9697Card(unit) {
-    const band = g8BandOf(unit);
-    const state = g8RunState(unit.run);
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown",
+     * room temp/rh and EC fan values become "—", and subtext displays last known update time.
+     */
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    const band = isStale ? "unknown" : g8BandOf(unit);
+    const state = isStale ? "unknown" : g8RunState(unit.run);
 
     const card = document.createElement("div");
-    card.className = g8CardClass(band);
+    card.className = g8CardClass(band) + (isStale ? " is-stale" : "");
     card.dataset.band = band;
     card.dataset.run = state;
-    card.dataset.condition = g8AhuCondition(unit);
+    card.dataset.condition = isStale ? "unknown" : g8AhuCondition(unit);
 
-    card.appendChild(g8CardHeader(unit.name ?? "", state, true, unit.alarm));
+    card.appendChild(g8CardHeader(unit.name ?? "", state, true, isStale ? null : unit.alarm));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -1195,20 +1245,31 @@ function createG8Ahu9697Card(unit) {
      * which ahuHealth carries with the value precisely so a room reading is
      * never measured against the AHU duct limit. Room RH has no limit, so it
      * stays uncoloured on every value.
+     * When stale, values are rendered as "—", not old cached readings.
      */
-    const health = ahuHealth(unit);
-
-    metrics.appendChild(g8Metric(
-        "Room Temperature",
-        g8Format(unit.room_temp, " °C"),
-        "",
-        isOutOfRange(health.value, health.min, health.max) ? "warning" : null
-    ));
-
-    metrics.appendChild(g8Metric("Room RH", g8Format(unit.room_rh, " % RH")));
+    if (isStale) {
+        metrics.appendChild(g8Metric("Room Temperature", "—"));
+        metrics.appendChild(g8Metric("Room RH", "—"));
+    } else {
+        const health = ahuHealth(unit);
+        metrics.appendChild(g8Metric(
+            "Room Temperature",
+            g8Format(unit.room_temp, " °C"),
+            "",
+            isOutOfRange(health.value, health.min, health.max) ? "warning" : null
+        ));
+        metrics.appendChild(g8Metric("Room RH", g8Format(unit.room_rh, " % RH")));
+    }
 
     card.appendChild(metrics);
-    card.appendChild(createG8EcFanTable(unit));
+    card.appendChild(createG8EcFanTable(unit, isStale));
+
+    if (isStale) {
+        const staleSub = document.createElement("div");
+        staleSub.className = "g8-stale-subtext";
+        staleSub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        card.appendChild(staleSub);
+    }
 
     return card;
 }
@@ -1521,33 +1582,50 @@ function createG8MissingCard(name) {
  * the value colours still carry the same meaning they always did.
  */
 function createG8EfCard(unit) {
-    const band = g8EfBandOf(unit);
-    const state = g8RunState(unit.status);
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown",
+     * frequency and current values become "—", and subtext displays last known update time.
+     */
+    const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    const band = isStale ? "unknown" : g8EfBandOf(unit);
+    const state = isStale ? "unknown" : g8RunState(unit.status);
 
     const card = document.createElement("div");
-    card.className = g8CardClass(band);
+    card.className = g8CardClass(band) + (isStale ? " is-stale" : "");
     card.dataset.band = band;
     card.dataset.run = state;
-    card.dataset.condition = g8EfCondition(unit);
+    card.dataset.condition = isStale ? "unknown" : g8EfCondition(unit);
 
     /*
-     * No header label on this card: the "Status" row below already writes
-     * RUN / OFF, so a header word would repeat it.
+     * For stale cards, state is "unknown", so show run dot and UNKNOWN label in header.
      */
-    card.appendChild(g8CardHeader(unit.name ?? "", state, false));
+    card.appendChild(g8CardHeader(unit.name ?? "", state, isStale));
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
 
-    metrics.appendChild(g8Metric(
-        "Status",
-        g8BoolText(unit.status, "RUN", "OFF"),
-        g8BoolClass(unit.status)
-    ));
-    metrics.appendChild(g8Metric("Frequency", g8Format(unit.frequency, " Hz")));
-    metrics.appendChild(g8Metric("Motor Current", g8Format(unit.motor_current, " A")));
+    if (isStale) {
+        metrics.appendChild(g8Metric("Status", "—", "g8-val-unknown"));
+        metrics.appendChild(g8Metric("Frequency", "—"));
+        metrics.appendChild(g8Metric("Motor Current", "—"));
+        card.appendChild(metrics);
 
-    card.appendChild(metrics);
+        const staleSub = document.createElement("div");
+        staleSub.className = "g8-stale-subtext";
+        staleSub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        card.appendChild(staleSub);
+    } else {
+        metrics.appendChild(g8Metric(
+            "Status",
+            g8BoolText(unit.status, "RUN", "OFF"),
+            g8BoolClass(unit.status)
+        ));
+        metrics.appendChild(g8Metric("Frequency", g8Format(unit.frequency, " Hz")));
+        metrics.appendChild(g8Metric("Motor Current", g8Format(unit.motor_current, " A")));
+        card.appendChild(metrics);
+    }
 
     return card;
 }
@@ -1754,6 +1832,18 @@ function renderAhuEfG8() {
     page.className = "g8-page";
 
     /*
+     * Freshness check for Daikin telemetry (AHU 96-97 & EF 58-61):
+     * If Daikin poller is down / data is stale, display dynamic notice at top.
+     */
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const daikinUnitsPresent = ahuData.some(u => G8_AHU_9697.includes(u.name)) || efData.length > 0;
+    if (daikinUnitsPresent && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+        const bannerMsg = "Data telemetri Daikin (AHU 96-97 & EF 58-61) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
+        page.appendChild(createStaleBanner(bannerMsg));
+    }
+
+    /*
      * The summary comes first, before the two groups, because the question it
      * answers — "is anything wrong right now" — is the one an operator arrives
      * with. It is built from the unit objects rather than by reading the cards,
@@ -1890,6 +1980,17 @@ function renderExhaustFan() {
         g8Header.appendChild(g8CountEl);
 
         g8Panel.appendChild(g8Header);
+
+        /*
+         * Freshness banner for Exhaust Fan G8 (Daikin poller):
+         * Shows dynamic relative time when telemetry is stale.
+         */
+        const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+        if (allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+            const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+            const bannerMsg = "Data Exhaust Fan G8 tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
+            g8Panel.appendChild(createStaleBanner(bannerMsg));
+        }
 
         const g8Grid = document.createElement("div");
         g8Grid.className = "ef-grid";
@@ -3635,20 +3736,61 @@ function updateSourceFreshness() {
     }
 
     if (daikinUnits.length > 0) {
+        let latestUpdate = null;
+        daikinUnits.forEach(u => {
+            const lu = normalizeSqlDatetime(u.last_update);
+            if (lu && (!latestUpdate || lu > latestUpdate)) {
+                latestUpdate = lu;
+            }
+        });
+        allData.sourceFreshness.latestDaikinUpdate = latestUpdate;
+
         const allStale = daikinUnits.every(u => isTelemetryStale(u, serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds));
         allData.sourceFreshness.DAIKIN = !allStale;
     } else {
+        allData.sourceFreshness.latestDaikinUpdate = null;
         allData.sourceFreshness.DAIKIN = false;
     }
 
     // Sub-sumber HNX: AHU 94-95 (tabel hnx_g8_current)
     const hnxUnits = (Array.isArray(allData.AHU) ? allData.AHU : []).filter(u => u && (u.name === "AHU 94" || u.name === "AHU 95"));
     if (hnxUnits.length > 0) {
+        let latestHnxUpdate = null;
+        hnxUnits.forEach(u => {
+            const lu = normalizeSqlDatetime(u.last_update);
+            if (lu && (!latestHnxUpdate || lu > latestHnxUpdate)) {
+                latestHnxUpdate = lu;
+            }
+        });
+        allData.sourceFreshness.latestHnxUpdate = latestHnxUpdate;
+
         const allStale = hnxUnits.every(u => isTelemetryStale(u, allData.ahuServerTime || serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds));
         allData.sourceFreshness.HNX = !allStale;
     } else {
+        allData.sourceFreshness.latestHnxUpdate = null;
         allData.sourceFreshness.HNX = false;
     }
+}
+
+/*
+ * Stale telemetry banner component (Phase 2):
+ * Displays a dynamic notice with relative time when a telemetry source has lost communication.
+ */
+function createStaleBanner(message) {
+    const banner = document.createElement("div");
+    banner.className = "stale-telemetry-banner";
+
+    const icon = document.createElement("span");
+    icon.className = "stale-banner-icon";
+    icon.textContent = "⚠️";
+    banner.appendChild(icon);
+
+    const text = document.createElement("span");
+    text.className = "stale-banner-text";
+    text.textContent = message;
+    banner.appendChild(text);
+
+    return banner;
 }
 
 /**
@@ -7377,11 +7519,18 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function ahuCreateCard(unit) {
-    const band = ahuBandOf(unit);
-    const state = ahuRunState(unit);
+    /*
+     * Telemetry Freshness & Stale Check (Phase 2):
+     * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown",
+     * operating label is "UNKNOWN", and subtext displays relative age.
+     */
+    const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    const band = isStale ? "unknown" : ahuBandOf(unit);
+    const state = isStale ? "unknown" : ahuRunState(unit);
 
     const card = document.createElement("div");
-    card.className = "ahu-card is-" + band;
+    card.className = "ahu-card is-" + band + (isStale ? " is-stale" : "");
     card.dataset.band = band;
     card.dataset.run = state;
     card.tabIndex = 0;
@@ -7577,6 +7726,13 @@ function ahuCreateCard(unit) {
         card.appendChild(label);
     }
 
+    if (isStale) {
+        const sub = document.createElement("div");
+        sub.className = "ahu-stale-subtext";
+        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        card.appendChild(sub);
+    }
+
     return card;
 }
 
@@ -7717,6 +7873,18 @@ function renderAhuDashboard(units) {
 
     const page = document.createElement("div");
     page.className = "ahu-dashboard";
+
+    /*
+     * Freshness banner for Daikin AHU 96-97:
+     * Shows dynamic relative time when telemetry is stale.
+     */
+    const serverTime = allData.ahuServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const hasDaikinAhu = ahuUnits.some(u => u && (u.name === "AHU 96" || u.name === "AHU 97"));
+    if (hasDaikinAhu && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+        const bannerMsg = "Data telemetri Daikin (AHU 96-97) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
+        page.appendChild(createStaleBanner(bannerMsg));
+    }
 
     /* ---- Summary tiles: HEALTH ---- */
     const summary = document.createElement("div");
