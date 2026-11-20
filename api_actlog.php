@@ -139,9 +139,12 @@ if ($equipId !== '') {
 }
 
 if ($search !== '') {
-    $conditions[] = '(equipment_id LIKE :search OR point_id LIKE :search2)';
+    // Perluas pencarian teks agar mencakup equipment_id, point_id, dan source_poller.
+    // Menggunakan nama parameter unik (:search, :search2, :search3) agar kompatibel dengan PDO.
+    $conditions[] = '(equipment_id LIKE :search OR point_id LIKE :search2 OR source_poller LIKE :search3)';
     $params[':search']  = '%' . $search . '%';
     $params[':search2'] = '%' . $search . '%';
+    $params[':search3'] = '%' . $search . '%';
 }
 
 if ($newStatus !== '') {
