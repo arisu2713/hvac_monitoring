@@ -17,6 +17,40 @@ session_write_close();
 header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
+$tz = $config['telemetry_source_tz'] ?? 'Asia/Jakarta';
+$loggedNegativeAhu = false;
+$loggedNegativeHnx = false;
+
+/*
+ * Koreksi Phase 2: Perhitungan age_seconds di PHP dengan zona waktu eksplisit ($tz).
+ * Memecahkan masalah timestamp DB Hostinger berzona UTC vs data poller berjam Jakarta.
+ */
+if (!function_exists('calcTelemetryAgeSeconds')) {
+    function calcTelemetryAgeSeconds(?string $lastUpdate, string $tz = 'Asia/Jakarta', ?bool &$loggedNegative = null): ?int {
+        if ($lastUpdate === null || trim($lastUpdate) === '') {
+            return null;
+        }
+        try {
+            $dt = new DateTime($lastUpdate, new DateTimeZone($tz));
+            $age = time() - $dt->getTimestamp();
+            if ($age >= 0) {
+                return (int)$age;
+            }
+            // Usia negatif kecil (>= -5 detik) dibulatkan 0 (toleransi clock skew minor)
+            if ($age >= -5) {
+                return 0;
+            }
+            // Usia negatif lebih besar -> null dan catat error_log sekali per request
+            if ($loggedNegative === null || $loggedNegative === false) {
+                $loggedNegative = true;
+                error_log(sprintf('[%s] Telemetry timestamp from future detected (%s in tz %s, age %d s)', basename(__FILE__), $lastUpdate, $tz, $age));
+            }
+            return null;
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+}
 
 try {
 
@@ -263,14 +297,16 @@ try {
      * so it feeds `run` (not `alarm`): the card shows green / red / gray via
      * the existing getStatus() rules.
      */
+    /*
+     * Query daikin_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
+     */
     $daikinSql = "
         SELECT
             equipment_no,
             point_name,
             value_bool,
             value_double,
-            last_update,
-            TIMESTAMPDIFF(SECOND, last_update, NOW()) AS age_seconds
+            last_update
         FROM daikin_current
         WHERE equipment_type = 'AHU'
           AND equipment_no IN ('96', '97')
@@ -361,10 +397,16 @@ try {
                 $row['last_update'] > $units[$unitName]['last_update']
             ) {
                 $units[$unitName]['last_update'] = $row['last_update'];
-                $units[$unitName]['age_seconds'] = $row['age_seconds'] !== null
-                    ? (int)$row['age_seconds']
-                    : null;
             }
+        }
+    }
+
+    /*
+     * Koreksi: Hitung age_seconds untuk AHU 96 dan 97 di PHP dengan zona waktu $tz.
+     */
+    foreach (['AHU 96', 'AHU 97'] as $dName) {
+        if (isset($units[$dName])) {
+            $units[$dName]['age_seconds'] = calcTelemetryAgeSeconds($units[$dName]['last_update'], $tz, $loggedNegativeAhu);
         }
     }
 
@@ -500,6 +542,9 @@ try {
      * Additive only: the points query, the AHU 1-93 loop, the Daikin AHU 96-97
      * block and their fields are all untouched.
      */
+    /*
+     * Query hnx_g8_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
+     */
     $hnxG8Sql = "
         SELECT
             p.id AS point_id,
@@ -507,8 +552,7 @@ try {
             p.point_name,
             c.value_double,
             c.value_bool,
-            c.last_update,
-            TIMESTAMPDIFF(SECOND, c.last_update, NOW()) AS age_seconds
+            c.last_update
         FROM hnx_g8_points p
         INNER JOIN hnx_g8_current c
             ON c.point_id = p.id
@@ -618,9 +662,6 @@ try {
                 $row['last_update'] > $units[$unitName]['last_update']
             ) {
                 $units[$unitName]['last_update'] = $row['last_update'];
-                $units[$unitName]['age_seconds'] = $row['age_seconds'] !== null
-                    ? (int)$row['age_seconds']
-                    : null;
             }
         }
 
@@ -672,6 +713,15 @@ try {
                 $row['value_double'] !== null
                     ? (float)$row['value_double']
                     : null;
+        }
+    }
+
+    /*
+     * Koreksi: Hitung age_seconds untuk AHU 94 dan 95 di PHP dengan zona waktu $tz.
+     */
+    foreach (['AHU 94', 'AHU 95'] as $hName) {
+        if (isset($units[$hName])) {
+            $units[$hName]['age_seconds'] = calcTelemetryAgeSeconds($units[$hName]['last_update'], $tz, $loggedNegativeHnx);
         }
     }
 

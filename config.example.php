@@ -8,4 +8,5 @@ return [
     'password' => '',
     'pm_edit_enabled' => false,
     'pm_reset_time' => '18:00',
+    'telemetry_source_tz' => 'Asia/Jakarta',
 ];

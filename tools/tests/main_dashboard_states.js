@@ -745,10 +745,10 @@ async function runStatesSuite() {
                         latestDaikinUpdate: staleTime
                     },
                     AHU: [
-                        { name: "AHU 01", temp: 21.5, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime, age_seconds: 5 },
-                        { name: "AHU 02", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime, age_seconds: 5 },
+                        { name: "AHU 01", temp: 21.5, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime },
+                        { name: "AHU 02", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: serverTime },
                         { name: "AHU 96", temp: 21.8, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: staleTime, age_seconds: staleAge, return_air_temp: 22.1, supply_air_temp: 18.2, rh: 58.0 },
-                        { name: "AHU 97", temp: 21.9, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: staleTime, age_seconds: staleAge, return_air_temp: 22.3, supply_air_temp: 18.4, rh: 59.0 }
+                        { name: "AHU 97", temp: 21.9, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: staleTime, age_seconds: null, return_air_temp: 22.3, supply_air_temp: 18.4, rh: 59.0 }
                     ],
                     CHILLER: [
                         { name: "CHILLER 1", run: 1, alarm: 0, cond_entering_temp: 29.5, evap_leaving_temp: 7.2, evap_leaving_temp_max: 12, cond_entering_temp_max: 32 }
@@ -763,10 +763,10 @@ async function runStatesSuite() {
                         { name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }
                     ],
                     EXHAUST_FAN: [
-                        { name: "EF 01", run: 1, trip: 0, last_update: serverTime, age_seconds: 5 }
+                        { name: "EF 01", run: 1, trip: 0, last_update: serverTime }
                     ],
                     EXHAUST_FAN_G8: [
-                        { name: "EF 58", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
+                        { name: "EF 58", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: null },
                         { name: "EF 59", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
                         { name: "EF 60", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge },
                         { name: "EF 61", status: 1, run: 1, trip: 0, last_update: staleTime, age_seconds: staleAge }
@@ -851,6 +851,16 @@ async function runStatesSuite() {
                 const ef58Subtext = ef58Card?.querySelector('.g8-stale-subtext')?.textContent.trim() || '';
                 const ef58Metrics = Array.from(ef58Card?.querySelectorAll('.m-val') || []).map(m => m.textContent.trim());
 
+                // Check non-Daikin without age_seconds vs Daikin with null age_seconds
+                const nonDaikinAhu = (allData.AHU || []).find(u => u.name === "AHU 01");
+                const nonDaikinEf = (allData.EXHAUST_FAN || []).find(u => u.name === "EF 01");
+                const nonDaikinAhuNormal = Boolean(nonDaikinAhu && ahuRunState(nonDaikinAhu) === "on" && !isTelemetryStale(nonDaikinAhu));
+                const nonDaikinEfNormal = Boolean(nonDaikinEf && getEfStatus(nonDaikinEf) === "run" && !isTelemetryStale(nonDaikinEf));
+
+                const daikinAhu97 = (allData.AHU || []).find(u => u.name === "AHU 97");
+                const daikinEf58 = (allData.EXHAUST_FAN_G8 || []).find(u => u.name === "EF 58");
+                const daikinNullAgeUnknown = Boolean(daikinAhu97 && isTelemetryStale(daikinAhu97) && daikinEf58 && isTelemetryStale(daikinEf58));
+
                 return {
                     crit,
                     warn,
@@ -865,7 +875,10 @@ async function runStatesSuite() {
                     ahu96Subtext,
                     ahu96Metrics,
                     ef58Subtext,
-                    ef58Metrics
+                    ef58Metrics,
+                    nonDaikinAhuNormal,
+                    nonDaikinEfNormal,
+                    daikinNullAgeUnknown
                 };
             }, vp.name === 'mobile');
 
@@ -894,6 +907,17 @@ async function runStatesSuite() {
                     ahu96Metrics: s5Check.ahu96Metrics,
                     ef58Subtext: s5Check.ef58Subtext,
                     ef58Metrics: s5Check.ef58Metrics
+                }
+            });
+
+            // Daikin age_seconds null -> unknown, non-Daikin without age_seconds -> normal
+            results.push({
+                name: `State 5 (${vp.name}): Daikin age_seconds null evaluates as unknown, non-Daikin without age_seconds stays normal`,
+                pass: s5Check.nonDaikinAhuNormal && s5Check.nonDaikinEfNormal && s5Check.daikinNullAgeUnknown,
+                details: {
+                    nonDaikinAhuNormal: s5Check.nonDaikinAhuNormal,
+                    nonDaikinEfNormal: s5Check.nonDaikinEfNormal,
+                    daikinNullAgeUnknown: s5Check.daikinNullAgeUnknown
                 }
             });
 

@@ -1021,18 +1021,17 @@ async function runRegressionSuite() {
                 lastAhuFetchTime = Date.now();
                 lastHvacScFetchTime = Date.now();
 
-                // 1. Fresh AHU OFF -> returns true (definitively off)
+                // 1. Fresh non-Daikin AHU OFF without age_seconds -> returns true (definitively off)
                 allData.AHU = [{
                     name: 'AHU 01',
                     status: 0,
                     run: 0,
                     run_status: 0,
-                    last_update: '2026-11-20 11:59:50',
-                    age_seconds: 10
+                    last_update: '2026-11-20 11:59:50'
                 }];
                 const freshAhuOff = checkUnitIsDefinitivelyOff({ equip_type: 'AHU', equipment: 'AHU 01' });
 
-                // 2. Stale AHU OFF -> fail-safe returns false (sounds)
+                // 2. Stale Daikin AHU 96 OFF (age_seconds: 259200) -> fail-safe returns false (sounds)
                 allData.AHU = [{
                     name: 'AHU 96',
                     status: 0,
@@ -1043,30 +1042,56 @@ async function runRegressionSuite() {
                 }];
                 const staleAhuOff = checkUnitIsDefinitivelyOff({ equip_type: 'AHU', equipment: 'AHU 96' });
 
-                // 3. Fresh Chiller OFF -> returns true
-                allData.CHILLER = [{
-                    name: 'CHILLER 1',
+                // 3. Daikin AHU 97 OFF with age_seconds null -> fail-safe returns false (sounds)
+                allData.AHU = [{
+                    name: 'AHU 97',
+                    status: 0,
                     run: 0,
+                    run_status: 0,
                     last_update: '2026-11-20 11:59:50',
-                    age_seconds: 10
+                    age_seconds: null
                 }];
-                const freshChillerOff = checkUnitIsDefinitivelyOff({ equip_type: 'CHILLER', equipment: 'CHILLER 1' });
+                const nullAgeDaikinOff = checkUnitIsDefinitivelyOff({ equip_type: 'AHU', equipment: 'AHU 97' });
 
-                // 4. Stale Chiller OFF -> fail-safe returns false (sounds)
-                allData.CHILLER = [{
-                    name: 'CHILLER 1',
-                    run: 0,
-                    last_update: '2026-11-16 18:29:12',
-                    age_seconds: 259200
-                }];
-                const staleChillerOff = checkUnitIsDefinitivelyOff({ equip_type: 'CHILLER', equipment: 'CHILLER 1' });
-
-                return { freshAhuOff, staleAhuOff, freshChillerOff, staleChillerOff };
+                return { freshAhuOff, staleAhuOff, nullAgeDaikinOff };
             });
 
-            const passed = res.freshAhuOff === true && res.staleAhuOff === false &&
-                           res.freshChillerOff === true && res.staleChillerOff === false;
+            const passed = res.freshAhuOff === true && res.staleAhuOff === false && res.nullAgeDaikinOff === false;
             results.push({ name: '21. checkUnitIsDefinitivelyOff returns false (fail-safe sounds) when unit is stale', passed, details: res });
+        }
+
+        // 22. Daikin age_seconds null -> unknown (basi)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                const daikinAhu = { name: 'AHU 96', run: 1, last_update: '2026-11-20 15:00:00', age_seconds: null };
+                const daikinEf = { id: 58, name: 'EF 58', status: 1, run: 1, last_update: '2026-11-20 15:00:00', age_seconds: null };
+                const ahuStale = isTelemetryStale(daikinAhu);
+                const efStale = isTelemetryStale(daikinEf);
+                const ahuCond = g8AhuCondition(daikinAhu);
+                const efStatus = getEfStatus(daikinEf);
+                return { ahuStale, efStale, ahuCond, efStatus };
+            });
+
+            const passed = res.ahuStale === true && res.efStale === true && res.ahuCond === 'unknown' && res.efStatus === 'unknown';
+            results.push({ name: '22. Daikin age_seconds null -> unknown (basi)', passed, details: res });
+        }
+
+        // 23. AHU/EF non-Daikin tanpa age_seconds -> status normal tetap
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                const nonDaikinAhu = { name: 'AHU 01', status: 1, run: 1, run_state: 1, temp: 22, temp_max: 25, last_update: '2026-11-20 15:00:00' };
+                const nonDaikinEf = { id: 1, name: 'EF 01', status: 1, run: 1, last_update: '2026-11-20 15:00:00' };
+                const ahuStale = isTelemetryStale(nonDaikinAhu);
+                const efStale = isTelemetryStale(nonDaikinEf);
+                const ahuStatus = ahuRunState(nonDaikinAhu);
+                const efStatus = getEfStatus(nonDaikinEf);
+                return { ahuStale, efStale, ahuStatus, efStatus };
+            });
+
+            const passed = res.ahuStale === false && res.efStale === false && res.ahuStatus === 'on' && res.efStatus === 'run';
+            results.push({ name: '23. AHU/EF non-Daikin tanpa age_seconds -> status normal tetap', passed, details: res });
         }
 
         await browser.close();

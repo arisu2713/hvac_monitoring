@@ -3770,36 +3770,52 @@ function formatRelativeTime(raisedAt, serverTimeStr) {
  */
 const STALE_THRESHOLD_SECONDS = 120;
 
+/*
+ * Helper untuk memeriksa apakah suatu unit adalah unit Daikin (AHU 96-97, EF 58-61).
+ * Memakai konstanta G8 yang sudah ada (G8_AHU_9697 dan G8_EF_NAMES).
+ */
+function isDaikinUnit(unitOrName) {
+    if (!unitOrName) return false;
+    let name = "";
+    if (typeof unitOrName === "string") {
+        name = unitOrName;
+    } else if (typeof unitOrName === "object") {
+        name = unitOrName.name || (unitOrName.id !== undefined && unitOrName.id !== null ? ("EF " + unitOrName.id) : "");
+    }
+    const norm = String(name).trim().toUpperCase().replace(/\s+/g, " ");
+    return G8_AHU_9697.some(n => n.toUpperCase() === norm)
+        || G8_EF_NAMES.some(n => n.toUpperCase() === norm);
+}
+
+/*
+ * Koreksi Phase 2: Pemeriksaan data basi HANYA berlaku untuk unit Daikin (AHU 96-97, EF 58-61).
+ * Unit non-Daikin (AHU 1-93, EF 1-55, Azbil, UnifiedPoller) TIDAK BOLEH terpengaruh (selalu return false).
+ * Untuk unit Daikin: age_seconds null atau last_update null/kosong -> basi (unknown/true), bukan segar.
+ */
 function isTelemetryStale(lastUpdate, serverTime, thresholdSec, ageSeconds) {
+    // 1. Filter ketat: Hanya unit Daikin yang diperiksa status basinya
+    if (!isDaikinUnit(lastUpdate)) {
+        return false;
+    }
+
     const limit = typeof thresholdSec === "number" ? thresholdSec : STALE_THRESHOLD_SECONDS;
 
-    // Koreksi 2: Pakai age_seconds bila ada (selisih zona waktu DB/PHP diatasi di backend)
+    // 2. Ekstrak age_seconds (dihitung oleh backend PHP dengan zona waktu Asia/Jakarta)
     const age = (typeof ageSeconds === "number" && !isNaN(ageSeconds))
         ? ageSeconds
-        : (typeof lastUpdate === "object" && lastUpdate !== null && typeof lastUpdate.age_seconds === "number"
+        : (typeof lastUpdate === "object" && lastUpdate !== null && typeof lastUpdate.age_seconds === "number" && !isNaN(lastUpdate.age_seconds)
             ? lastUpdate.age_seconds
             : null);
-    if (age !== null) {
-        return age > limit;
-    }
 
     const rawLu = (typeof lastUpdate === "object" && lastUpdate !== null) ? lastUpdate.last_update : lastUpdate;
-    if (!rawLu) return false;
-    const luNorm = normalizeSqlDatetime(rawLu);
-    if (!luNorm) return false;
-    const luMs = Date.parse(luNorm.replace(" ", "T"));
-    if (isNaN(luMs)) return false;
 
-    let nowMs = Date.now();
-    if (serverTime) {
-        const stNorm = normalizeSqlDatetime(serverTime);
-        const stMs = Date.parse(stNorm.replace(" ", "T"));
-        if (!isNaN(stMs)) {
-            nowMs = stMs;
-        }
+    // 3. Untuk unit Daikin: age_seconds null atau last_update null/kosong -> basi (unknown/true)
+    if (age === null || rawLu === null || rawLu === undefined || String(rawLu).trim() === "") {
+        return true;
     }
-    const diffSec = (nowMs - luMs) / 1000;
-    return diffSec > limit;
+
+    // 4. Bandingkan usia data telemetri dengan ambang batas (120 detik)
+    return age > limit;
 }
 
 function updateSourceFreshness() {
@@ -3851,8 +3867,7 @@ function updateSourceFreshness() {
         });
         allData.sourceFreshness.latestHnxUpdate = latestHnxUpdate;
 
-        const allStale = hnxUnits.every(u => isTelemetryStale(u, allData.ahuServerTime || serverTime, STALE_THRESHOLD_SECONDS, u.age_seconds));
-        allData.sourceFreshness.HNX = !allStale;
+        allData.sourceFreshness.HNX = hnxUnits.some(u => u && u.source_available !== false);
     } else {
         allData.sourceFreshness.latestHnxUpdate = null;
         allData.sourceFreshness.HNX = false;

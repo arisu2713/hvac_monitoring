@@ -17,6 +17,40 @@ session_write_close();
 header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
+$tz = $config['telemetry_source_tz'] ?? 'Asia/Jakarta';
+$loggedNegativeEf = false;
+$loggedNegativeG8 = false;
+
+/*
+ * Koreksi Phase 2: Perhitungan age_seconds di PHP dengan zona waktu eksplisit ($tz).
+ * Memecahkan masalah timestamp DB Hostinger berzona UTC vs data poller berjam Jakarta.
+ */
+if (!function_exists('calcTelemetryAgeSeconds')) {
+    function calcTelemetryAgeSeconds(?string $lastUpdate, string $tz = 'Asia/Jakarta', ?bool &$loggedNegative = null): ?int {
+        if ($lastUpdate === null || trim($lastUpdate) === '') {
+            return null;
+        }
+        try {
+            $dt = new DateTime($lastUpdate, new DateTimeZone($tz));
+            $age = time() - $dt->getTimestamp();
+            if ($age >= 0) {
+                return (int)$age;
+            }
+            // Usia negatif kecil (>= -5 detik) dibulatkan 0 (toleransi clock skew minor)
+            if ($age >= -5) {
+                return 0;
+            }
+            // Usia negatif lebih besar -> null dan catat error_log sekali per request
+            if ($loggedNegative === null || $loggedNegative === false) {
+                $loggedNegative = true;
+                error_log(sprintf('[%s] Telemetry timestamp from future detected (%s in tz %s, age %d s)', basename(__FILE__), $lastUpdate, $tz, $age));
+            }
+            return null;
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+}
 
 try {
     $dsn = sprintf(
@@ -36,14 +70,16 @@ try {
         ]
     );
 
+    /*
+     * Query ef_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
+     */
     $sql = "
         SELECT
             p.id AS ef_point_id,
             p.panel_no,
             p.ef_name AS name,
             c.status,
-            c.last_update,
-            TIMESTAMPDIFF(SECOND, c.last_update, NOW()) AS age_seconds
+            c.last_update
         FROM ef_points p
         INNER JOIN ef_current c
             ON c.ef_point_id = p.id
@@ -56,6 +92,8 @@ try {
     $exhaustFan = [];
 
     foreach ($rows as $row) {
+        /* Koreksi: hitung age_seconds di PHP dengan zona waktu $tz */
+        $ageSec = calcTelemetryAgeSeconds($row['last_update'], $tz, $loggedNegativeEf);
         $exhaustFan[] = [
             'id' => (int)$row['ef_point_id'],
             'panel_no' => (int)$row['panel_no'],
@@ -64,9 +102,7 @@ try {
                 ? (int)$row['status']
                 : null,
             'last_update' => $row['last_update'],
-            'age_seconds' => $row['age_seconds'] !== null
-                ? (int)$row['age_seconds']
-                : null,
+            'age_seconds' => $ageSec,
         ];
     }
 
@@ -112,6 +148,9 @@ try {
      */
     $exhaustFanG8 = [];
 
+    /*
+     * Query daikin_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
+     */
     $g8Sql = "
         SELECT
             equipment_no,
@@ -119,8 +158,7 @@ try {
             MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN value_bool END) AS value_bool,
             MAX(CASE WHEN point_name = 'FreqOUT' THEN value_double END) AS frequency,
             MAX(CASE WHEN point_name = 'MotorCurrent' THEN value_double END) AS motor_current,
-            MAX(last_update) AS last_update,
-            TIMESTAMPDIFF(SECOND, MAX(last_update), NOW()) AS age_seconds
+            MAX(last_update) AS last_update
         FROM daikin_current
         WHERE equipment_type = 'EF'
           AND equipment_no IN ('58', '59', '60', '61')
@@ -130,6 +168,8 @@ try {
     ";
 
     foreach ($pdo->query($g8Sql)->fetchAll() as $row) {
+        /* Koreksi: hitung age_seconds di PHP dengan zona waktu $tz */
+        $ageSec = calcTelemetryAgeSeconds($row['last_update'], $tz, $loggedNegativeG8);
 
         $exhaustFanG8[] = [
             'id' => $row['status_point_id'] !== null
@@ -152,9 +192,7 @@ try {
                 ? (float)$row['motor_current']
                 : null,
             'last_update' => $row['last_update'],
-            'age_seconds' => $row['age_seconds'] !== null
-                ? (int)$row['age_seconds']
-                : null,
+            'age_seconds' => $ageSec,
         ];
     }
 
