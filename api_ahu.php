@@ -18,6 +18,16 @@ header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
 $tz = $config['telemetry_source_tz'] ?? 'Asia/Jakarta';
+
+/*
+ * Phase 2 Tahap B: server_epoch dan source_tz_offset untuk waktu relatif lintas zona waktu.
+ * Offset zona telemetri dihitung dari config 'telemetry_source_tz' (default Asia/Jakarta).
+ */
+try {
+    $sourceTzOffset = (new DateTime('now', new DateTimeZone($tz)))->format('P');
+} catch (Throwable $e) {
+    $sourceTzOffset = '+07:00';
+}
 $loggedNegativeAhu = false;
 $loggedNegativeHnx = false;
 
@@ -889,6 +899,9 @@ try {
         [
             'success'     => true,
             'server_time' => date('Y-m-d H:i:s'),
+            /* Phase 2 Tahap B: server_epoch dan source_tz_offset di akar respons */
+            'server_epoch' => time(),
+            'source_tz_offset' => $sourceTzOffset,
             'equipment'   => [
                 'AHU' => $ahuList
             ]

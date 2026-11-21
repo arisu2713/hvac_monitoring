@@ -56,6 +56,18 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 $config = require __DIR__ . '/config.php';
 
+/*
+ * Phase 2 Tahap B: server_epoch dan source_tz_offset untuk waktu relatif lintas zona waktu.
+ * Offset zona telemetri dihitung dari config 'telemetry_source_tz' (default Asia/Jakarta).
+ */
+$sourceTz = $config['telemetry_source_tz'] ?? 'Asia/Jakarta';
+try {
+    $sourceTzOffset = (new DateTime('now', new DateTimeZone($sourceTz)))->format('P');
+} catch (Throwable $e) {
+    $sourceTzOffset = '+07:00';
+}
+$serverEpoch = time();
+
 try {
     $dsn = sprintf(
         'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
@@ -109,6 +121,9 @@ try {
         echo json_encode([
             'success'     => true,
             'server_time' => date('Y-m-d H:i:s'),
+            /* Phase 2 Tahap B: server_epoch dan source_tz_offset di akar respons */
+            'server_epoch' => $serverEpoch,
+            'source_tz_offset' => $sourceTzOffset,
             'notes'       => $notes
         ], JSON_UNESCAPED_UNICODE);
         exit;

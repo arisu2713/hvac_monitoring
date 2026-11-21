@@ -531,6 +531,9 @@ async function runStatesSuite() {
                     ROOM_TEMP_RH: [],
                     ALARM: {
                         server_time: "2026-11-19 12:00:00",
+                        /* Phase 2 Tahap B: Mock server_epoch dan source_tz_offset */
+                        server_epoch: 1795064400, // 2026-11-19 12:00:00 (+07:00)
+                        source_tz_offset: "+07:00",
                         counts: {
                             active_alarm: 3,
                             active_warning: 2,
@@ -646,6 +649,31 @@ async function runStatesSuite() {
                 const time30m = formatRelativeTime("2026-11-19 11:30:00", serverTime);
                 const timeLive = formatRelativeTime(null, serverTime);
 
+                /*
+                 * Phase 2 Tahap B: Pengujian waktu relatif lintas zona waktu.
+                 * Simulasi server Hostinger berzona UTC:
+                 * - Server UTC epoch: 1795269600 (2026-11-21 14:00:00 UTC = 21:00:00 Jakarta).
+                 * - Poller Jakarta (+07:00) pada waktu tersebut mencatat alarm raised 5 menit lalu:
+                 *   raised_at = "2026-11-21 20:55:00".
+                 * - Perilaku lama (tanpa epoch/offset): 14:00 - 20:55 bernilai negatif, Math.max(0, ...) -> "now".
+                 * - Dengan server_epoch dan source_tz_offset ("+07:00"): selisih tepat 300 detik -> "5 m" (bukan "now" dan bukan "7 h").
+                 */
+                const utcEpoch = 1795269600; // 2026-11-21 14:00:00 UTC
+                const utcServerTime = "2026-11-21 14:00:00";
+                const jktRaised5m = "2026-11-21 20:55:00";
+                const jktOffset = "+07:00";
+
+                const time5mUtc = formatRelativeTime(jktRaised5m, utcServerTime, utcEpoch, jktOffset);
+                const time5mUtcLegacy = formatRelativeTime(jktRaised5m, utcServerTime);
+
+                /*
+                 * Kasus zona sama: Server Jakarta (2026-11-21 21:00:00, epoch 1795273200) vs raised Jakarta (20:55:00).
+                 * Baik dengan epoch/offset maupun fallback lama harus menghasilkan "5 m".
+                 */
+                const jktServerTime = "2026-11-21 21:00:00";
+                const time5mSameTz = formatRelativeTime(jktRaised5m, jktServerTime, utcEpoch, jktOffset);
+                const time5mSameTzLegacy = formatRelativeTime(jktRaised5m, jktServerTime);
+
                 // Energy comparison without prev_date
                 const hasEnergyComparisonWithoutPrev = isMobile
                     ? Boolean(document.querySelector('.mob-energy-pct'))
@@ -675,6 +703,10 @@ async function runStatesSuite() {
                     time1m,
                     time30m,
                     timeLive,
+                    time5mUtc,
+                    time5mUtcLegacy,
+                    time5mSameTz,
+                    time5mSameTzLegacy,
                     hasEnergyComparisonWithoutPrev,
                     hasEnergyComparisonWithPrev,
                     energyPctText,
@@ -698,11 +730,24 @@ async function runStatesSuite() {
                 details: { firstWarnIndex, attentionItems: s4Check.attentionItems }
             });
 
-            // Relative time formatted from server_time
+            // Relative time formatted from server_time & epoch cross-timezone (Phase 2 Tahap B)
             results.push({
-                name: `State 4 (${vp.name}): Relative time formatted accurately from server_time`,
-                pass: s4Check.time2m === "2 m" && s4Check.time10m === "10 m" && s4Check.time1m === "1 m" && s4Check.time30m === "30 m" && s4Check.timeLive === "live",
-                details: { time2m: s4Check.time2m, time10m: s4Check.time10m, time1m: s4Check.time1m, time30m: s4Check.time30m, timeLive: s4Check.timeLive }
+                name: `State 4 (${vp.name}): Relative time formatted accurately from server_time and cross-timezone epoch`,
+                pass: s4Check.time2m === "2 m" && s4Check.time10m === "10 m" && s4Check.time1m === "1 m" && s4Check.time30m === "30 m" && s4Check.timeLive === "live"
+                    && s4Check.time5mUtc === "5 m" && s4Check.time5mUtc !== "now" && s4Check.time5mUtc !== "7 h"
+                    && s4Check.time5mSameTz === "5 m" && s4Check.time5mSameTzLegacy === "5 m"
+                    && s4Check.time5mUtcLegacy === "now",
+                details: {
+                    time2m: s4Check.time2m,
+                    time10m: s4Check.time10m,
+                    time1m: s4Check.time1m,
+                    time30m: s4Check.time30m,
+                    timeLive: s4Check.timeLive,
+                    time5mUtc: s4Check.time5mUtc,
+                    time5mUtcLegacy: s4Check.time5mUtcLegacy,
+                    time5mSameTz: s4Check.time5mSameTz,
+                    time5mSameTzLegacy: s4Check.time5mSameTzLegacy
+                }
             });
 
             // Energy comparison hidden without comparison data, displayed with comparison data

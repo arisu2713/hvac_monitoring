@@ -27,6 +27,18 @@ header('Content-Type: application/json; charset=utf-8');
 $config = require __DIR__ . '/config.php';
 
 /*
+ * Phase 2 Tahap B: server_epoch dan source_tz_offset untuk waktu relatif lintas zona waktu.
+ * Offset zona telemetri dihitung dari config 'telemetry_source_tz' (default Asia/Jakarta).
+ */
+$sourceTz = $config['telemetry_source_tz'] ?? 'Asia/Jakarta';
+try {
+    $sourceTzOffset = (new DateTime('now', new DateTimeZone($sourceTz)))->format('P');
+} catch (Throwable $e) {
+    $sourceTzOffset = '+07:00';
+}
+$serverEpoch = time();
+
+/*
  * Cleared alarms are history and would grow without bound, so only a recent
  * window is returned. ACTIVE rows are always included whatever their age.
  * Both values are clamped integers, never raw request strings.
@@ -173,6 +185,9 @@ try {
         ],
         'window_hours' => $hours,
         'server_time'  => $counts['server_time'],
+        /* Phase 2 Tahap B: server_epoch dan source_tz_offset di akar respons */
+        'server_epoch' => $serverEpoch,
+        'source_tz_offset' => $sourceTzOffset,
         /*
          * returned / matched / truncated let the page state honestly how much
          * of the window it is showing. `truncated` is true only when the LIMIT
@@ -231,6 +246,9 @@ try {
             ],
             'window_hours'     => $hours,
             'server_time'      => null,
+            /* Phase 2 Tahap B: server_epoch dan source_tz_offset di akar respons */
+            'server_epoch'     => $serverEpoch,
+            'source_tz_offset' => $sourceTzOffset,
             'returned'         => 0,
             'matched'          => 0,
             'limit'            => $limit,

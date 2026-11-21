@@ -437,6 +437,8 @@ function createEfCard(unit) {
      * and values/subtext are set to neutral indicators.
      */
     const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
     const status = isStale ? "unknown" : getEfStatus(unit);
     card.className = "unit-card ef-card status-" + status + (isStale ? " is-stale" : "");
@@ -485,7 +487,7 @@ function createEfCard(unit) {
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
         sub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
-            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(sub);
     } else if (status !== "run") {
         const label = document.createElement("div");
@@ -646,6 +648,8 @@ function createCard(unit) {
      * If telemetry is stale (> STALE_THRESHOLD_SECONDS), unit status is forced to "unknown".
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
     const status = isStale ? "unknown" : getStatus(unit);
 
@@ -667,7 +671,7 @@ function createCard(unit) {
         if (isStale) {
             const sub = document.createElement("div");
             sub.className = "unit-stale-subtext";
-            sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+            sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu";
             card.appendChild(sub);
         }
         return card;
@@ -690,7 +694,7 @@ function createCard(unit) {
     if (isStale) {
         const sub = document.createElement("div");
         sub.className = "unit-stale-subtext";
-        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu";
         card.appendChild(sub);
     }
 
@@ -1241,6 +1245,8 @@ function createG8Ahu9697Card(unit) {
      * room temp/rh and EC fan values become "—", and subtext displays last known update time.
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
     const band = isStale ? "unknown" : g8BandOf(unit);
     const state = isStale ? "unknown" : g8RunState(unit.run);
@@ -1286,7 +1292,7 @@ function createG8Ahu9697Card(unit) {
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
         staleSub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
-            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(staleSub);
     }
 
@@ -1415,6 +1421,8 @@ function g8AhuCondition(unit) {
      * never reported as "normal" or "off".
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
         return "unknown";
     }
@@ -1627,6 +1635,8 @@ function createG8EfCard(unit) {
      * frequency and current values become "—", and subtext displays last known update time.
      */
     const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
     const band = isStale ? "unknown" : g8EfBandOf(unit);
     const state = isStale ? "unknown" : g8RunState(unit.status);
@@ -1656,7 +1666,7 @@ function createG8EfCard(unit) {
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
         staleSub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
-            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(staleSub);
     } else {
         metrics.appendChild(g8Metric(
@@ -1878,6 +1888,8 @@ function renderAhuEfG8() {
      * Phase 2 Tahap A: Bila ada titik status unit dengan kualitas buruk, tampilkan pesan yang menyebut unitnya.
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const daikinUnitsPresent = ahuData.some(u => G8_AHU_9697.includes(u.name)) || efData.length > 0;
     const g8DaikinUnits = [
         ...ahuData.filter(u => G8_AHU_9697.includes(u.name)),
@@ -1890,7 +1902,7 @@ function renderAhuEfG8() {
         const bannerMsg = "Kualitas data telemetri buruk pada unit: " + names + " (down/fault/stale).";
         page.appendChild(createStaleBanner(bannerMsg));
     } else if (daikinUnitsPresent && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
-        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime, serverEpoch, sourceTzOffset);
         const bannerMsg = "Data telemetri Daikin (AHU 96-97 & EF 58-61) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
         page.appendChild(createStaleBanner(bannerMsg));
     }
@@ -2044,7 +2056,7 @@ function renderExhaustFan() {
             const bannerMsg = "Kualitas data telemetri buruk pada " + names + " (down/fault/stale).";
             g8Panel.appendChild(createStaleBanner(bannerMsg));
         } else if (allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
-            const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+            const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime, serverEpoch, sourceTzOffset);
             const bannerMsg = "Data Exhaust Fan G8 tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
             g8Panel.appendChild(createStaleBanner(bannerMsg));
         }
@@ -3166,6 +3178,8 @@ function checkUnitIsDefinitivelyOff(alarm) {
     }
 
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
 
     if (equipType === "AHU" || /^AHU\s+\d+$/i.test(equipment)) {
         /* If AHU data is missing or stale (> RUN_STATE_MAX_AGE_MS), fail-safe return false (sounds) */
@@ -3751,19 +3765,64 @@ function createAlarmGroup(title, alarms, isActive, unavailable, extraClass) {
     return group;
 }
 
-function formatRelativeTime(raisedAt, serverTimeStr) {
+/*
+ * Phase 2 Tahap B: formatRelativeTime waktu relatif lintas zona waktu.
+ * Bila server_epoch dan source_tz_offset tersedia (melalui parameter atau allData),
+ * hitung dari epoch:
+ *   raisedMs = Date.parse(raisedAt dengan 'T' + source_tz_offset)
+ *   nowMs = server_epoch * 1000
+ * Bila tidak tersedia, perilaku lama sebagai cadangan. Jangan memakai jam browser.
+ */
+function formatRelativeTime(raisedAt, serverTimeStr, serverEpoch, sourceTzOffset) {
     if (!raisedAt) {
         return "live";
     }
-    let nowMs = Date.now();
-    if (serverTimeStr) {
-        const parsedServer = Date.parse(String(serverTimeStr).replace(" ", "T"));
-        if (!isNaN(parsedServer)) {
-            nowMs = parsedServer;
+
+    // Resolusi parameter opsional dari argumen atau dari allData jika cocok
+    let epoch = (serverEpoch !== undefined && serverEpoch !== null && serverEpoch !== false)
+        ? Number(serverEpoch)
+        : null;
+
+    let tzOffset = (sourceTzOffset !== undefined && sourceTzOffset !== null)
+        ? String(sourceTzOffset).trim()
+        : null;
+
+    if (epoch === null && serverEpoch === undefined && typeof allData !== "undefined") {
+        if (!serverTimeStr || serverTimeStr === allData.alarmServerTime || serverTimeStr === allData.ALARM?.server_time) {
+            epoch = (allData.alarmServerEpoch ?? allData.ALARM?.server_epoch) ?? null;
+            tzOffset = tzOffset || (allData.alarmSourceTzOffset ?? allData.ALARM?.source_tz_offset) || null;
+        } else if (serverTimeStr === allData.efServerTime) {
+            epoch = allData.efServerEpoch ?? null;
+            tzOffset = tzOffset || allData.efSourceTzOffset || null;
+        } else if (serverTimeStr === allData.ahuServerTime) {
+            epoch = allData.ahuServerEpoch ?? null;
+            tzOffset = tzOffset || allData.ahuSourceTzOffset || null;
         }
     }
-    const raisedMs = Date.parse(String(raisedAt).replace(" ", "T"));
-    if (isNaN(raisedMs)) {
+
+    let nowMs = null;
+    let raisedMs = NaN;
+
+    if (epoch !== null && !isNaN(epoch) && tzOffset) {
+        nowMs = epoch * 1000;
+        let raisedStr = String(raisedAt).trim().replace(" ", "T");
+        if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raisedStr)) {
+            raisedStr += tzOffset;
+        }
+        raisedMs = Date.parse(raisedStr);
+    } else {
+        // Perilaku lama sebagai cadangan bila epoch & offset tidak tersedia.
+        // Jangan memakai jam browser agar tidak bergantung pada jam klien.
+        if (serverTimeStr) {
+            const parsedServer = Date.parse(String(serverTimeStr).replace(" ", "T"));
+            if (!isNaN(parsedServer)) {
+                nowMs = parsedServer;
+            }
+        }
+        raisedMs = Date.parse(String(raisedAt).replace(" ", "T"));
+    }
+
+    if (nowMs === null || isNaN(nowMs) || isNaN(raisedMs)) {
         return "live";
     }
 
@@ -4397,6 +4456,9 @@ async function loadAlarmData() {
         lastSuccessfulAlarmData = alarmResult.value;
         allData.ALARM = alarmResult.value;
         allData.alarmServerTime = alarmResult.value.server_time || null;
+        /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+        allData.alarmServerEpoch = alarmResult.value.server_epoch || null;
+        allData.alarmSourceTzOffset = alarmResult.value.source_tz_offset || null;
         dbAlarms = Array.isArray(alarmResult.value.alarms) ? alarmResult.value.alarms : [];
     } else if (lastSuccessfulAlarmData) {
         dbAlarms = Array.isArray(lastSuccessfulAlarmData.alarms) ? lastSuccessfulAlarmData.alarms : [];
@@ -4407,6 +4469,9 @@ async function loadAlarmData() {
     if (efSuccess) {
         lastSuccessfulEfData = efResult.value;
         allData.efServerTime = efResult.value.server_time || null;
+        /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+        allData.efServerEpoch = efResult.value.server_epoch || null;
+        allData.efSourceTzOffset = efResult.value.source_tz_offset || null;
         const eq = efResult.value.equipment || {};
         liveEfPanel = Array.isArray(eq.EXHAUST_FAN) ? eq.EXHAUST_FAN : [];
         liveEfG8 = Array.isArray(eq.EXHAUST_FAN_G8) ? eq.EXHAUST_FAN_G8 : [];
@@ -6575,6 +6640,8 @@ function ahuHealth(unit) {
 function ahuBandOf(unit) {
     if (!unit) return "unknown";
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
         return "unknown";
     }
@@ -6609,6 +6676,8 @@ function ahuBandOf(unit) {
 function ahuRunState(unit) {
     if (!unit) return "unknown";
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     if (isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds)) {
         return "unknown";
     }
@@ -7697,6 +7766,8 @@ function ahuCreateCard(unit) {
      * operating label is "UNKNOWN", and subtext displays relative age.
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
     const band = isStale ? "unknown" : ahuBandOf(unit);
     const state = isStale ? "unknown" : ahuRunState(unit);
@@ -7904,7 +7975,7 @@ function ahuCreateCard(unit) {
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
         sub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
-            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(sub);
     }
 
@@ -8054,6 +8125,8 @@ function renderAhuDashboard(units) {
      * Phase 2 Tahap A: Bila ada titik status unit dengan kualitas buruk, tampilkan pesan yang menyebut unitnya.
      */
     const serverTime = allData.ahuServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = allData.ahuServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
+    const sourceTzOffset = allData.ahuSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const daikinAhus = ahuUnits.filter(u => u && (u.name === "AHU 96" || u.name === "AHU 97"));
     const badQualityAhu = daikinAhus.filter(u => isUnitQualityBad(u));
     const hasDaikinAhu = daikinAhus.length > 0;
@@ -8063,7 +8136,7 @@ function renderAhuDashboard(units) {
         const bannerMsg = "Kualitas data telemetri buruk pada " + names + " (down/fault/stale).";
         page.appendChild(createStaleBanner(bannerMsg));
     } else if (hasDaikinAhu && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
-        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
+        const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime, serverEpoch, sourceTzOffset);
         const bannerMsg = "Data telemetri Daikin (AHU 96-97) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
         page.appendChild(createStaleBanner(bannerMsg));
     }
@@ -11354,13 +11427,15 @@ function buildMainDesktopDashboard(d) {
 
     const topIssues = d.issues.slice(0, 5);
     const serverTime = (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = (allData.ALARM && allData.ALARM.server_epoch) || allData.alarmServerEpoch || null;
+    const sourceTzOffset = (allData.ALARM && allData.ALARM.source_tz_offset) || allData.alarmSourceTzOffset || null;
 
     const itemsHtml = topIssues.length > 0
         ? topIssues.map((issue) => {
             const isCrit = issue.severity === "critical";
             const dotClass = isCrit ? "r" : "y";
             const timeTag = issue.raised_at
-                ? formatRelativeTime(issue.raised_at, serverTime)
+                ? formatRelativeTime(issue.raised_at, serverTime, serverEpoch, sourceTzOffset)
                 : "live";
             return `
                 <div class="attn-item" data-target="${escapeHtml(issue.target)}" data-filter="${escapeHtml(issue.filter || '')}">
@@ -11644,6 +11719,8 @@ function buildMainMobileDashboard(d) {
 
     const displayIssues = (d.issues || []).slice(0, 4);
     const serverTime = (allData.ALARM && allData.ALARM.server_time) || null;
+    const serverEpoch = (allData.ALARM && allData.ALARM.server_epoch) || allData.alarmServerEpoch || null;
+    const sourceTzOffset = (allData.ALARM && allData.ALARM.source_tz_offset) || allData.alarmSourceTzOffset || null;
     if (displayIssues.length === 0) {
         issuesCard.innerHTML = `
             <div class="mob-issue-item mob-empty-clean">
@@ -11657,7 +11734,7 @@ function buildMainMobileDashboard(d) {
             const icon = isCrit ? '✕' : '⚠';
             const stateClass = isCrit ? 'is-crit' : 'is-warn';
             const timeTag = issue.raised_at
-                ? formatRelativeTime(issue.raised_at, serverTime)
+                ? formatRelativeTime(issue.raised_at, serverTime, serverEpoch, sourceTzOffset)
                 : 'live';
 
             let titleText = `${issue.equipment} &middot; ${issue.value || issue.param}`;
@@ -12880,6 +12957,9 @@ async function loadData() {
             if (ahuRes.status === "fulfilled" && ahuRes.value?.success) {
                 allData.AHU = ahuRes.value.equipment?.AHU || [];
                 allData.ahuServerTime = ahuRes.value.server_time || null;
+                /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+                allData.ahuServerEpoch = ahuRes.value.server_epoch || null;
+                allData.ahuSourceTzOffset = ahuRes.value.source_tz_offset || null;
                 allData.sourceStatus.AHU = true;
                 lastAhuFetchTime = Date.now();
             } else {
@@ -12910,6 +12990,9 @@ async function loadData() {
             if (efRes.status === "fulfilled" && efRes.value?.success) {
                 Object.assign(allData, efRes.value.equipment || {});
                 allData.efServerTime = efRes.value.server_time || null;
+                /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+                allData.efServerEpoch = efRes.value.server_epoch || null;
+                allData.efSourceTzOffset = efRes.value.source_tz_offset || null;
                 allData.sourceStatus.EF = Array.isArray(efRes.value.equipment?.EXHAUST_FAN);
                 allData.sourceStatus.G8 = Array.isArray(efRes.value.equipment?.EXHAUST_FAN_G8);
             } else {
@@ -12920,6 +13003,9 @@ async function loadData() {
             if (alarmRes.status === "fulfilled" && alarmRes.value?.success) {
                 allData.ALARM = alarmRes.value;
                 allData.alarmServerTime = alarmRes.value.server_time || null;
+                /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+                allData.alarmServerEpoch = alarmRes.value.server_epoch || null;
+                allData.alarmSourceTzOffset = alarmRes.value.source_tz_offset || null;
                 allData.sourceStatus.ALARM = true;
             } else {
                 allData.sourceStatus.ALARM = false;
@@ -13016,9 +13102,15 @@ async function loadData() {
         allData = Object.assign({}, allData, data.equipment || {});
         if (currentEquipment === "AHU" || currentEquipment === "AHU_G8") {
             allData.ahuServerTime = data.server_time || null;
+            /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+            allData.ahuServerEpoch = data.server_epoch || null;
+            allData.ahuSourceTzOffset = data.source_tz_offset || null;
             lastAhuFetchTime = Date.now();
         } else if (currentEquipment === "EXHAUST_FAN") {
             allData.efServerTime = data.server_time || null;
+            /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+            allData.efServerEpoch = data.server_epoch || null;
+            allData.efSourceTzOffset = data.source_tz_offset || null;
         } else if (currentEquipment === "CHILLER") {
             lastHvacScFetchTime = Date.now();
         }
@@ -13055,6 +13147,9 @@ async function loadData() {
 
             allData = Object.assign({}, allData, efData.equipment || {});
             allData.efServerTime = efData.server_time || null;
+            /* Phase 2 Tahap B: Simpan server_epoch dan source_tz_offset */
+            allData.efServerEpoch = efData.server_epoch || null;
+            allData.efSourceTzOffset = efData.source_tz_offset || null;
         }
 
         updateSourceFreshness();
