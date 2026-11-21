@@ -15739,13 +15739,29 @@ function actlogBuildPageSwitch(availableTypes) {
     pageSwitch.appendChild(typeRow);
 }
 
+/* ---- Build export CSV URL with all active filters ---- */
+
+function actlogBuildExportUrl() {
+    const params = new URLSearchParams({
+        export:     "csv",
+        period:     actlogState.period || "all",
+        date_from:  actlogState.dateFrom || "",
+        date_to:    actlogState.dateTo || "",
+        equip_type: actlogState.equipType || "",
+        equip_id:   actlogState.equipId || "",
+        search:     actlogState.search || "",
+        new_status: actlogState.newStatus || "",
+    });
+    return "api_actlog.php?" + params.toString();
+}
+
 /* ---- Build filter bar (into #pageFilters) ---- */
 
 function actlogBuildFilters(availableTypes) {
     clearPageFilters();
     if (!pageFilters) return;
 
-    /* Quick Filter Control Row (Filter Tanggal button + inline search) */
+    /* Quick Filter Control Row (Filter Tanggal button + inline search + Export CSV) */
     const quickBar = document.createElement("div");
     quickBar.className = "actlog-filter-quickbar";
 
@@ -15795,6 +15811,77 @@ function actlogBuildFilters(availableTypes) {
     searchWrap.appendChild(searchBtn);
 
     quickBar.appendChild(searchWrap);
+
+    /* 3. Export CSV Button */
+    const exportBtn = document.createElement("button");
+    exportBtn.type = "button";
+    exportBtn.id = "actlogExportBtn";
+    exportBtn.className = "filter-button actlog-btn-export";
+    exportBtn.setAttribute("title", "Export semua data yang difilter ke CSV");
+    exportBtn.innerHTML = '<span class="actlog-export-icon">📥</span> <span class="actlog-export-label">Export CSV</span>';
+
+    /* 4. Export Status Notice */
+    const exportStatus = document.createElement("span");
+    exportStatus.id = "actlogExportStatus";
+    exportStatus.className = "actlog-export-status";
+    exportStatus.setAttribute("aria-live", "polite");
+
+    exportBtn.addEventListener("click", async () => {
+        const exportUrl = actlogBuildExportUrl();
+        exportStatus.textContent = "Menyiapkan...";
+        exportStatus.className = "actlog-export-status is-busy";
+        exportBtn.disabled = true;
+
+        try {
+            // Periksa response header via HEAD untuk mendeteksi status dan truncated header
+            const headRes = await fetch(exportUrl, { method: "HEAD", cache: "no-store" });
+            if (!headRes.ok) {
+                throw new Error("HTTP error " + headRes.status);
+            }
+
+            const isTruncated = headRes.headers.get("X-Export-Truncated") === "1";
+            const totalRows   = headRes.headers.get("X-Export-Total");
+
+            // Unduhan langsung via elemen <a> tanpa memuat blob besar di memori browser (kompatibel WebView2)
+            const a = document.createElement("a");
+            a.href = exportUrl;
+            a.setAttribute("download", "");
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { if (a.parentNode) a.parentNode.removeChild(a); }, 1000);
+
+            if (isTruncated) {
+                const totalFormatted = totalRows ? Number(totalRows).toLocaleString("id-ID") : "50.000+";
+                exportStatus.textContent = `Diekspor 50.000 dari ${totalFormatted} baris (dibatasi)`;
+                exportStatus.className = "actlog-export-status is-truncated";
+            } else {
+                exportStatus.textContent = "Unduhan dimulai";
+                exportStatus.className = "actlog-export-status is-success";
+                setTimeout(() => {
+                    if (exportStatus.textContent === "Unduhan dimulai") {
+                        exportStatus.textContent = "";
+                        exportStatus.className = "actlog-export-status";
+                    }
+                }, 4000);
+            }
+        } catch (err) {
+            console.error("[actlogExport] Gagal mengunduh CSV:", err);
+            exportStatus.textContent = "Gagal mengunduh CSV";
+            exportStatus.className = "actlog-export-status is-error";
+            setTimeout(() => {
+                if (exportStatus.textContent === "Gagal mengunduh CSV") {
+                    exportStatus.textContent = "";
+                    exportStatus.className = "actlog-export-status";
+                }
+            }, 5000);
+        } finally {
+            exportBtn.disabled = false;
+        }
+    });
+
+    quickBar.appendChild(exportBtn);
+    quickBar.appendChild(exportStatus);
 
     const updateText = document.createElement("span");
     updateText.id = "actlogUpdateText";

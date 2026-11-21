@@ -7128,6 +7128,67 @@ body.is-actlog-view .page-filters {
     white-space: nowrap;
 }
 
+.actlog-btn-export {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    min-height: 30px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    border-radius: 9999px;
+    background: #1e293b;
+    border: 1px solid #3b82f6;
+    color: #93c5fd;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background .15s, border-color .15s, color .15s;
+}
+
+.actlog-btn-export:hover:not(:disabled) {
+    background: #2563eb;
+    border-color: #60a5fa;
+    color: #fff;
+}
+
+.actlog-btn-export:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.actlog-export-icon {
+    font-size: 11px;
+    line-height: 1;
+}
+
+.actlog-export-status {
+    font-size: 11px;
+    color: #94a3b8;
+    white-space: nowrap;
+    align-self: center;
+}
+
+.actlog-export-status.is-busy {
+    color: #38bdf8;
+}
+
+.actlog-export-status.is-truncated {
+    color: #f59e0b;
+    font-weight: 600;
+}
+
+.actlog-export-status.is-error {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.actlog-export-status.is-success {
+    color: #10b981;
+}
+
 /* ---- Table group wrapper ---- */
 
 .actlog-group {
@@ -7538,6 +7599,7 @@ body.is-actlog-view .page-filters {
         align-items: center;
         gap: 6px;
         width: 100%;
+        flex-wrap: wrap;
     }
 
     .actlog-date-toggle-btn {
@@ -7545,10 +7607,27 @@ body.is-actlog-view .page-filters {
         padding: 3px 10px;
         font-size: 10.5px;
         height: 28px;
+        order: 1;
+    }
+
+    .actlog-btn-export {
+        height: 28px;
+        min-height: 28px;
+        padding: 3px 10px;
+        font-size: 10.5px;
+        order: 1;
     }
 
     .actlog-search-wrap {
+        width: 100%;
         gap: 4px;
+        order: 2;
+    }
+
+    .actlog-export-status {
+        font-size: 10px;
+        width: 100%;
+        order: 3;
     }
 
     .actlog-search-input {
