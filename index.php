@@ -482,7 +482,10 @@ function createEfCard(unit) {
 
         const sub = document.createElement("div");
         sub.className = "ef-stale-subtext";
-        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
+        sub.textContent = isUnitQualityBad(unit)
+            ? "kualitas data buruk (down/fault/stale)"
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
         card.appendChild(sub);
     } else if (status !== "run") {
         const label = document.createElement("div");
@@ -1280,7 +1283,10 @@ function createG8Ahu9697Card(unit) {
     if (isStale) {
         const staleSub = document.createElement("div");
         staleSub.className = "g8-stale-subtext";
-        staleSub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
+        staleSub.textContent = isUnitQualityBad(unit)
+            ? "kualitas data buruk (down/fault/stale)"
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
         card.appendChild(staleSub);
     }
 
@@ -1647,7 +1653,10 @@ function createG8EfCard(unit) {
 
         const staleSub = document.createElement("div");
         staleSub.className = "g8-stale-subtext";
-        staleSub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
+        staleSub.textContent = isUnitQualityBad(unit)
+            ? "kualitas data buruk (down/fault/stale)"
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
         card.appendChild(staleSub);
     } else {
         metrics.appendChild(g8Metric(
@@ -1865,12 +1874,22 @@ function renderAhuEfG8() {
     page.className = "g8-page";
 
     /*
-     * Freshness check for Daikin telemetry (AHU 96-97 & EF 58-61):
-     * If Daikin poller is down / data is stale, display dynamic notice at top.
+     * Freshness & quality check for Daikin telemetry (AHU 96-97 & EF 58-61):
+     * Phase 2 Tahap A: Bila ada titik status unit dengan kualitas buruk, tampilkan pesan yang menyebut unitnya.
      */
     const serverTime = allData.ahuServerTime || allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
     const daikinUnitsPresent = ahuData.some(u => G8_AHU_9697.includes(u.name)) || efData.length > 0;
-    if (daikinUnitsPresent && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+    const g8DaikinUnits = [
+        ...ahuData.filter(u => G8_AHU_9697.includes(u.name)),
+        ...efData.filter(u => isDaikinUnit(u))
+    ];
+    const badQualityG8 = g8DaikinUnits.filter(u => isUnitQualityBad(u));
+
+    if (badQualityG8.length > 0) {
+        const names = badQualityG8.map(u => u.name).join(", ");
+        const bannerMsg = "Kualitas data telemetri buruk pada unit: " + names + " (down/fault/stale).";
+        page.appendChild(createStaleBanner(bannerMsg));
+    } else if (daikinUnitsPresent && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
         const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
         const bannerMsg = "Data telemetri Daikin (AHU 96-97 & EF 58-61) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
         page.appendChild(createStaleBanner(bannerMsg));
@@ -2015,11 +2034,16 @@ function renderExhaustFan() {
         g8Panel.appendChild(g8Header);
 
         /*
-         * Freshness banner for Exhaust Fan G8 (Daikin poller):
-         * Shows dynamic relative time when telemetry is stale.
+         * Freshness & quality banner for Exhaust Fan G8 (Daikin poller):
+         * Phase 2 Tahap A: Bila ada titik status unit dengan kualitas buruk, tampilkan pesan yang menyebut unitnya.
          */
         const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
-        if (allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+        const badQualityEf = (Array.isArray(g8Data) ? g8Data : []).filter(u => isUnitQualityBad(u));
+        if (badQualityEf.length > 0) {
+            const names = badQualityEf.map(u => u.name).join(", ");
+            const bannerMsg = "Kualitas data telemetri buruk pada " + names + " (down/fault/stale).";
+            g8Panel.appendChild(createStaleBanner(bannerMsg));
+        } else if (allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
             const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
             const bannerMsg = "Data Exhaust Fan G8 tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
             g8Panel.appendChild(createStaleBanner(bannerMsg));
@@ -3788,14 +3812,48 @@ function isDaikinUnit(unitOrName) {
 }
 
 /*
+ * Helper Phase 2 Tahap A: Memeriksa apakah kualitas titik status unit Daikin buruk
+ * (status NULL atau bukan 'ok', mis. 'down', 'fault', 'stale').
+ * Titik status unit: Sts_EF1/Sts_EF2 untuk EF 58-61; BFM1/BFM2-RUN-ST untuk AHU 96-97.
+ */
+function isUnitQualityBad(unit) {
+    if (!unit || !isDaikinUnit(unit)) return false;
+    if (unit.quality === "bad") return true;
+    if (typeof unit.quality === "string" && unit.quality.toLowerCase() !== "ok") return true;
+    if (unit.raw_status !== undefined) {
+        if (unit.raw_status === null || String(unit.raw_status).trim().toLowerCase() !== "ok") {
+            return true;
+        }
+    }
+    if (typeof unit.status === "string" && ["down", "fault", "stale"].includes(unit.status.toLowerCase())) {
+        return true;
+    }
+    if (typeof unit.run === "string" && ["down", "fault", "stale"].includes(unit.run.toLowerCase())) {
+        return true;
+    }
+    if (unit.point_quality && (unit.point_quality.status === "bad" || unit.point_quality.run === "bad")) {
+        return true;
+    }
+    return false;
+}
+
+/*
  * Koreksi Phase 2: Pemeriksaan data basi HANYA berlaku untuk unit Daikin (AHU 96-97, EF 58-61).
  * Unit non-Daikin (AHU 1-93, EF 1-55, Azbil, UnifiedPoller) TIDAK BOLEH terpengaruh (selalu return false).
  * Untuk unit Daikin: age_seconds null atau last_update null/kosong -> basi (unknown/true), bukan segar.
+ * Phase 2 Tahap A: Titik status unit dengan kualitas buruk (down/fault/stale/null) dianggap tidak tersedia (unknown).
  */
 function isTelemetryStale(lastUpdate, serverTime, thresholdSec, ageSeconds) {
     // 1. Filter ketat: Hanya unit Daikin yang diperiksa status basinya
     if (!isDaikinUnit(lastUpdate)) {
         return false;
+    }
+
+    // Phase 2 Tahap A: Kualitas titik status unit buruk -> unknown (sama dengan aturan data basi)
+    if (typeof lastUpdate === "object" && lastUpdate !== null) {
+        if (isUnitQualityBad(lastUpdate)) {
+            return true;
+        }
     }
 
     const limit = typeof thresholdSec === "number" ? thresholdSec : STALE_THRESHOLD_SECONDS;
@@ -7843,7 +7901,10 @@ function ahuCreateCard(unit) {
     if (isStale) {
         const sub = document.createElement("div");
         sub.className = "ahu-stale-subtext";
-        sub.textContent = "Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu";
+        /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
+        sub.textContent = isUnitQualityBad(unit)
+            ? "kualitas data buruk (down/fault/stale)"
+            : ("Data " + formatRelativeTime(unit.last_update, serverTime) + " lalu");
         card.appendChild(sub);
     }
 
@@ -7989,12 +8050,19 @@ function renderAhuDashboard(units) {
     page.className = "ahu-dashboard";
 
     /*
-     * Freshness banner for Daikin AHU 96-97:
-     * Shows dynamic relative time when telemetry is stale.
+     * Freshness & quality banner for Daikin AHU 96-97:
+     * Phase 2 Tahap A: Bila ada titik status unit dengan kualitas buruk, tampilkan pesan yang menyebut unitnya.
      */
     const serverTime = allData.ahuServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
-    const hasDaikinAhu = ahuUnits.some(u => u && (u.name === "AHU 96" || u.name === "AHU 97"));
-    if (hasDaikinAhu && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
+    const daikinAhus = ahuUnits.filter(u => u && (u.name === "AHU 96" || u.name === "AHU 97"));
+    const badQualityAhu = daikinAhus.filter(u => isUnitQualityBad(u));
+    const hasDaikinAhu = daikinAhus.length > 0;
+
+    if (badQualityAhu.length > 0) {
+        const names = badQualityAhu.map(u => u.name).join(", ");
+        const bannerMsg = "Kualitas data telemetri buruk pada " + names + " (down/fault/stale).";
+        page.appendChild(createStaleBanner(bannerMsg));
+    } else if (hasDaikinAhu && allData.sourceFreshness && allData.sourceFreshness.DAIKIN === false) {
         const relTime = formatRelativeTime(allData.sourceFreshness.latestDaikinUpdate, serverTime);
         const bannerMsg = "Data telemetri Daikin (AHU 96-97) tidak diperbarui sejak " + relTime + " lalu (komunikasi terputus).";
         page.appendChild(createStaleBanner(bannerMsg));

@@ -921,6 +921,183 @@ async function runStatesSuite() {
                 }
             });
 
+            // ==========================================
+            // STATE 6: DAIKIN NIAGARA POINT QUALITY (TAHAP A)
+            // ==========================================
+            await page.evaluate(() => {
+                const nowTime = "2026-11-20 12:00:00";
+                allData = {
+                    ahuServerTime: nowTime,
+                    efServerTime: nowTime,
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: false,
+                        ALARM: true, ENERGY_SUMMARY: true
+                    },
+                    sourceFreshness: {
+                        DAIKIN: true,
+                        HNX: true,
+                        latestDaikinUpdate: nowTime
+                    },
+                    AHU: [
+                        { name: "AHU 01", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, quality: "bad", raw_status: "down", last_update: nowTime },
+                        { name: "AHU 96", run: null, quality: "bad", raw_status: "fault", point_quality: { run: "bad" }, last_update: nowTime, age_seconds: 5 },
+                        { name: "AHU 97", temp: 21.9, temp_min: 15, temp_max: 25, status: 1, run: 1, alarm: 0, room_temp: 22.3, quality: "ok", raw_status: "ok", point_quality: { run: "ok" }, last_update: nowTime, age_seconds: 5 }
+                    ],
+                    CHILLER: [
+                        { name: "CHILLER 1", run: 1, alarm: 0, cond_entering_temp: 29.5, evap_leaving_temp: 7.2, evap_leaving_temp_max: 12, cond_entering_temp_max: 32 }
+                    ],
+                    CT: [
+                        { name: "CT 1A", run: 1, alarm: 0, return_temp: 28.0, return_temp_max: 32.0 }
+                    ],
+                    CCP: [
+                        { name: "CCP 1", run: 1, alarm: 0, frequency: 49.8, current: 16.5 }
+                    ],
+                    CHWP: [
+                        { name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }
+                    ],
+                    EXHAUST_FAN: [
+                        { name: "EF 01", run: 1, trip: 0, quality: "bad", raw_status: "down", last_update: nowTime }
+                    ],
+                    EXHAUST_FAN_G8: [
+                        { id: 58, name: "EF 58", status: null, run: 1, quality: "bad", raw_status: "down", last_update: nowTime, age_seconds: 5 },
+                        { id: 59, name: "EF 59", status: 1, run: 1, frequency: null, motor_current: 24.5, quality: "ok", raw_status: "ok", point_quality: { status: "ok", frequency: "bad", motor_current: "ok" }, last_update: nowTime, age_seconds: 5 },
+                        { id: 60, name: "EF 60", status: null, run: null, quality: "bad", raw_status: null, last_update: nowTime, age_seconds: 5 },
+                        { id: 61, name: "EF 61", status: 1, run: 1, frequency: 38, motor_current: 23.5, quality: "ok", raw_status: "ok", last_update: nowTime, age_seconds: 5 }
+                    ],
+                    ROOM_TEMP_RH: [],
+                    ALARM: {
+                        server_time: nowTime,
+                        counts: { active_alarm: 0, active_warning: 0, active_total: 0 },
+                        total_events: 10,
+                        alarms: []
+                    },
+                    ENERGY_SUMMARY: {
+                        report_kwh: 8500, prev_kwh: null, report_date: '2026-11-18', prev_date: null,
+                        daily_history: [{ date: '2026-11-18', label: '18 Nov', short_day: 'Wed', kwh: 8500, is_latest: true }],
+                        peak_day: { date: '2026-11-18', label: '18 Nov', kwh: 8500 }, avg_daily_kwh: 8500
+                    }
+                };
+
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            const shot6Path = path.join(shotDir, `state6_quality_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot6Path, fullPage: true });
+
+            const s6Check = await page.evaluate((isMobile) => {
+                const crit = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0));
+                const warn = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim() || 0));
+                const norm = Number(isMobile
+                    ? 0
+                    : (document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const stop = Number(isMobile
+                    ? 0
+                    : (document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const unk = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi.unknown .kpi-val')?.textContent.trim() || 0));
+                const total = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi-row .kpi:last-child .kpi-val')?.textContent.trim() || 0));
+
+                const bannerSub = isMobile
+                    ? (document.querySelector('.mob-hero-sub')?.textContent.trim() || '')
+                    : (document.querySelector('.banner-sub')?.textContent.trim() || '');
+
+                const invariantHolds = !isMobile ? ((crit + warn + norm + stop + unk) === total) : true;
+
+                // Render AHU_G8 page to inspect cards and quality banner
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+
+                const banner = document.querySelector('.stale-telemetry-banner');
+                const bannerText = banner ? banner.textContent.trim() : '';
+                const bannerMentionsBadUnits = bannerText.includes('AHU 96') && bannerText.includes('EF 58') && bannerText.includes('EF 60');
+
+                // Inspect AHU 96 card
+                const ahu96Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 96'));
+                const ahu96Subtext = ahu96Card?.querySelector('.g8-stale-subtext')?.textContent.trim() || '';
+                const ahu96DotUnknown = Boolean(ahu96Card?.querySelector('.ahu-run-dot.is-unknown'));
+
+                // Inspect EF 58 card
+                const ef58Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 58'));
+                const ef58Subtext = ef58Card?.querySelector('.g8-stale-subtext')?.textContent.trim() || '';
+                const ef58DotUnknown = Boolean(ef58Card?.querySelector('.ahu-run-dot.is-unknown'));
+                const ef58Metrics = Array.from(ef58Card?.querySelectorAll('.metric-item .m-val') || []).map(m => m.textContent.trim());
+
+                // Inspect EF 59 card (only freq down)
+                const ef59Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 59'));
+                const ef59DotRun = Boolean(ef59Card?.querySelector('.ahu-run-dot.is-run'));
+                const ef59FreqVal = Array.from(ef59Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Frequency'))?.querySelector('.m-val')?.textContent.trim();
+                const ef59StatusVal = Array.from(ef59Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Status'))?.querySelector('.m-val')?.textContent.trim();
+
+                // Non-Daikin unit checks
+                const nonDaikinAhu = (allData.AHU || []).find(u => u.name === "AHU 01");
+                const nonDaikinEf = (allData.EXHAUST_FAN || []).find(u => u.name === "EF 01");
+                const nonDaikinAhuNormal = Boolean(nonDaikinAhu && ahuRunState(nonDaikinAhu) === "on" && !isTelemetryStale(nonDaikinAhu));
+                const nonDaikinEfNormal = Boolean(nonDaikinEf && getEfStatus(nonDaikinEf) === "run" && !isTelemetryStale(nonDaikinEf));
+
+                return {
+                    crit, warn, norm, stop, unk, total,
+                    bannerSub,
+                    invariantHolds,
+                    bannerMentionsBadUnits,
+                    bannerText,
+                    ahu96Subtext,
+                    ahu96DotUnknown,
+                    ef58Subtext,
+                    ef58DotUnknown,
+                    ef58Metrics,
+                    ef59DotRun,
+                    ef59FreqVal,
+                    ef59StatusVal,
+                    nonDaikinAhuNormal,
+                    nonDaikinEfNormal
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 6 (${vp.name}): Niagara point quality: KPI invariant holds and unknown counts bad status units`,
+                pass: vp.name === 'desktop'
+                    ? (s6Check.invariantHolds && s6Check.unk === 3 && s6Check.norm === 9 && s6Check.total === 12)
+                    : (s6Check.bannerSub.includes('unknown/stale') && s6Check.bannerSub.includes('3 unknown/stale')),
+                details: { crit: s6Check.crit, warn: s6Check.warn, norm: s6Check.norm, stop: s6Check.stop, unk: s6Check.unk, total: s6Check.total, invariantHolds: s6Check.invariantHolds, bannerSub: s6Check.bannerSub }
+            });
+
+            results.push({
+                name: `State 6 (${vp.name}): Bad quality units render "-" card, gray dot, and "kualitas data buruk" subtext, and banner names bad units`,
+                pass: s6Check.bannerMentionsBadUnits &&
+                      s6Check.ahu96DotUnknown && s6Check.ahu96Subtext.includes('kualitas data buruk') &&
+                      s6Check.ef58DotUnknown && s6Check.ef58Subtext.includes('kualitas data buruk') &&
+                      s6Check.ef58Metrics.every(v => v === '—'),
+                details: {
+                    bannerMentionsBadUnits: s6Check.bannerMentionsBadUnits,
+                    bannerText: s6Check.bannerText,
+                    ahu96Subtext: s6Check.ahu96Subtext,
+                    ef58Subtext: s6Check.ef58Subtext,
+                    ef58Metrics: s6Check.ef58Metrics
+                }
+            });
+
+            results.push({
+                name: `State 6 (${vp.name}): Only metric down keeps unit status RUN, metric shows "-", and non-Daikin unaffected`,
+                pass: s6Check.ef59DotRun && s6Check.ef59StatusVal === 'RUN' && s6Check.ef59FreqVal === '—' && s6Check.nonDaikinAhuNormal && s6Check.nonDaikinEfNormal,
+                details: {
+                    ef59DotRun: s6Check.ef59DotRun,
+                    ef59StatusVal: s6Check.ef59StatusVal,
+                    ef59FreqVal: s6Check.ef59FreqVal,
+                    nonDaikinAhuNormal: s6Check.nonDaikinAhuNormal,
+                    nonDaikinEfNormal: s6Check.nonDaikinEfNormal
+                }
+            });
+
             await context.close();
         }
 

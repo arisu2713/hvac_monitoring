@@ -1094,6 +1094,167 @@ async function runRegressionSuite() {
             results.push({ name: '23. AHU/EF non-Daikin tanpa age_seconds -> status normal tetap', passed, details: res });
         }
 
+        // =========================================================================
+        // TAHAP A TESTS: KUALITAS TITIK NIAGARA / DAIKIN (Cases 24 to 29)
+        // =========================================================================
+
+        // 24. EF RUN dengan status 'down' -> unknown (bukan normal) dan tidak memicu alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: null,
+                    run: 1,
+                    quality: 'bad',
+                    raw_status: 'down',
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const status = getEfStatus(fan);
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const unackCount = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const hasTrigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+
+                return { status, unackCount, lastMsg, hasTrigger };
+            });
+
+            const passed = res.status === 'unknown' && res.unackCount === 0 && !res.hasTrigger && res.lastMsg !== 'PLAY_ALARM';
+            results.push({ name: '24. EF RUN dengan status "down" -> unknown (bukan normal) dan tidak memicu alarm', passed, details: res });
+        }
+
+        // 25. AHU 96 status 'fault' pada BFM2-RUN-ST -> unknown
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ahu = {
+                    name: 'AHU 96',
+                    run: null,
+                    quality: 'bad',
+                    raw_status: 'fault',
+                    point_quality: { run: 'bad', room_temp: 'ok', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const runState = ahuRunState(ahu);
+                const band = ahuBandOf(ahu);
+                const cond = g8AhuCondition(ahu);
+                return { runState, band, cond };
+            });
+
+            const passed = res.runState === 'unknown' && res.band === 'unknown' && res.cond === 'unknown';
+            results.push({ name: '25. AHU 96 status "fault" pada BFM2-RUN-ST -> unknown', passed, details: res });
+        }
+
+        // 26. Hanya titik frekuensi down -> status unit tetap, metrik "-"
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 1,
+                    frequency: null,
+                    motor_current: 23.55,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', frequency: 'bad', motor_current: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const status = getEfStatus(fan);
+                const cond = g8EfCondition(fan);
+                const card = createG8EfCard(fan);
+                const freqVal = Array.from(card.querySelectorAll('.metric-item')).find(r => r.querySelector('.m-lbl')?.textContent.includes('Frequency'))?.querySelector('.m-val')?.textContent.trim();
+                const statusVal = Array.from(card.querySelectorAll('.metric-item')).find(r => r.querySelector('.m-lbl')?.textContent.includes('Status'))?.querySelector('.m-val')?.textContent.trim();
+                return { status, cond, freqVal, statusVal };
+            });
+
+            const passed = res.status === 'run' && res.cond === 'normal' && res.freqVal === '—' && res.statusVal === 'RUN';
+            results.push({ name: '26. Hanya titik frekuensi down -> status unit tetap, metrik "-"', passed, details: res });
+        }
+
+        // 27. Status NULL -> unknown
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: null,
+                    quality: 'bad',
+                    raw_status: null,
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const status = getEfStatus(fan);
+                const isStale = isTelemetryStale(fan);
+                return { status, isStale };
+            });
+
+            const passed = res.status === 'unknown' && res.isStale === true;
+            results.push({ name: '27. Status NULL -> unknown', passed, details: res });
+        }
+
+        // 28. Invarian bucket critical+warning+normal+stopped+unknown = total tetap berlaku
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.sourceStatus = { AHU: true, EF: true };
+                allData.AHU = [
+                    { name: 'AHU 01', status: 1, run: 1, temp: 22, temp_max: 25 },
+                    { name: 'AHU 96', status: null, run: null, quality: 'bad', raw_status: 'fault', age_seconds: 10, last_update: '2026-11-20 11:59:50' }
+                ];
+                allData.EXHAUST_FAN = [
+                    { id: 1, name: 'EF 01', status: 1, run: 1 }
+                ];
+                allData.EXHAUST_FAN_G8 = [
+                    { id: 58, name: 'EF 58', status: null, run: null, quality: 'bad', raw_status: 'down', age_seconds: 10, last_update: '2026-11-20 11:59:50' },
+                    { id: 59, name: 'EF 59', status: 1, run: 1, quality: 'ok', raw_status: 'ok', age_seconds: 10, last_update: '2026-11-20 11:59:50' }
+                ];
+                allData.CHILLER = [];
+                allData.CT = [];
+                allData.CCP = [];
+                allData.CHWP = [];
+                allData.ALARM = { alarms: [] };
+                renderMainDashboard();
+                const crit = Number(document.querySelector('.kpi.red .kpi-val')?.textContent || 0);
+                const warn = Number(document.querySelector('.kpi.yellow .kpi-val')?.textContent || 0);
+                const norm = Number(document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent || 0);
+                const stop = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent || 0);
+                const unk = Number(document.querySelector('.kpi.unknown .kpi-val')?.textContent || 0);
+                const total = Number(document.querySelector('.kpi-row .kpi:last-child .kpi-val')?.textContent || 0);
+                return { total, crit, warn, norm, stop, unk, sum: crit + warn + norm + stop + unk };
+            });
+
+            const passed = res.sum === res.total && res.total === 5 && res.unk === 2;
+            results.push({ name: '28. Invarian bucket critical+warning+normal+stopped+unknown = total tetap berlaku', passed, details: res });
+        }
+
+        // 29. Unit non-Daikin tidak terpengaruh oleh status titik / field quality
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                const nonDaikinAhu = { name: 'AHU 01', status: 1, run: 1, temp: 22, temp_max: 25, quality: 'bad', raw_status: 'down' };
+                const nonDaikinEf = { id: 1, name: 'EF 01', status: 1, run: 1, quality: 'bad', raw_status: 'down' };
+                const ahuStale = isTelemetryStale(nonDaikinAhu);
+                const efStale = isTelemetryStale(nonDaikinEf);
+                const ahuRun = ahuRunState(nonDaikinAhu);
+                const efStatus = getEfStatus(nonDaikinEf);
+                return { ahuStale, efStale, ahuRun, efStatus };
+            });
+
+            const passed = res.ahuStale === false && res.efStale === false && res.ahuRun === 'on' && res.efStatus === 'run';
+            results.push({ name: '29. Unit non-Daikin tidak terpengaruh oleh status titik / field quality', passed, details: res });
+        }
+
         await browser.close();
 
         console.log('\n================== REGRESSION TEST RESULTS ==================');

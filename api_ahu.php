@@ -52,6 +52,16 @@ if (!function_exists('calcTelemetryAgeSeconds')) {
     }
 }
 
+/*
+ * Phase 2 Tahap A: Helper validasi kualitas status titik Niagara / Daikin.
+ * Aturan per titik: status NULL atau bukan 'ok' (tidak peka huruf besar) -> tidak valid.
+ */
+if (!function_exists('isPointStatusOk')) {
+    function isPointStatusOk(?string $status): bool {
+        return $status !== null && strtolower(trim($status)) === 'ok';
+    }
+}
+
 try {
 
     $dsn = sprintf(
@@ -298,7 +308,7 @@ try {
      * the existing getStatus() rules.
      */
     /*
-     * Query daikin_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
+     * Query daikin_current: SELECT kolom status ditambahkan untuk validasi kualitas titik (Phase 2 Tahap A).
      */
     $daikinSql = "
         SELECT
@@ -306,6 +316,7 @@ try {
             point_name,
             value_bool,
             value_double,
+            status,
             last_update
         FROM daikin_current
         WHERE equipment_type = 'AHU'
@@ -327,6 +338,14 @@ try {
                 'last_update' => null,
                 'age_seconds' => null,
                 'status_only' => true,
+                /* Phase 2 Tahap A: Penanda kualitas data Niagara per unit & per titik */
+                'quality'       => 'ok',
+                'raw_status'    => null,
+                'point_quality' => [
+                    'run'       => 'ok',
+                    'room_temp' => 'ok',
+                    'room_rh'   => 'ok',
+                ],
 
                 'room_temp'   => null,
                 'room_rh'     => null,
@@ -365,24 +384,40 @@ try {
         $pointName = trim($row['point_name'] ?? '');
 
         /*
+         * Phase 2 Tahap A: Aturan kualitas titik Niagara daikin_current:
+         * status NULL atau bukan 'ok' (tidak peka huruf besar) -> nilai titik dianggap
+         * tidak tersedia (value_bool/value_double dikirim null) dan sertakan penanda kualitas sederhana.
+         */
+        $pointStatus = $row['status'] !== null ? trim($row['status']) : null;
+        $pointOk = isPointStatusOk($pointStatus);
+        $pointQuality = $pointOk ? 'ok' : 'bad';
+
+        /*
          * Only the points this card actually shows may touch it — including its
          * timestamp. Every other Daikin point (Feed_MV1, SetPoint, FEED_*,
          * Diff, Pre, Med, SpDP01/02) stays out.
          */
         if ($pointName === 'BFM1-RUN-ST' || $pointName === 'BFM2-RUN-ST') {
 
-            $units[$unitName]['run'] =
-                $row['value_bool'] !== null ? (int)$row['value_bool'] : null;
+            $units[$unitName]['quality'] = $pointQuality;
+            $units[$unitName]['raw_status'] = $pointStatus;
+            $units[$unitName]['point_quality']['run'] = $pointQuality;
+            $units[$unitName]['run'] = ($pointOk && $row['value_bool'] !== null)
+                ? (int)$row['value_bool']
+                : null;
+            $units[$unitName]['points']['run'] = $units[$unitName]['run'];
 
         } elseif ($pointName === 'RoomTemp1') {
 
-            $units[$unitName]['room_temp'] = $row['value_double'] !== null
+            $units[$unitName]['point_quality']['room_temp'] = $pointQuality;
+            $units[$unitName]['room_temp'] = ($pointOk && $row['value_double'] !== null)
                 ? (float)$row['value_double']
                 : null;
 
         } elseif ($pointName === 'SensorHumidityROOM') {
 
-            $units[$unitName]['room_rh'] = $row['value_double'] !== null
+            $units[$unitName]['point_quality']['room_rh'] = $pointQuality;
+            $units[$unitName]['room_rh'] = ($pointOk && $row['value_double'] !== null)
                 ? (float)$row['value_double']
                 : null;
 
@@ -436,13 +471,17 @@ try {
      * TRIP is a fault flag, not a run flag, so it is surfaced as its own field
      * and never folded into `run`.
      */
+    /*
+     * Query daikin_current EC Fan: SELECT kolom status ditambahkan (Phase 2 Tahap A).
+     */
     $ecFanSql = "
         SELECT
             p.equipment_no,
             p.point_name,
             p.unit,
             c.value_bool,
-            c.value_double
+            c.value_double,
+            c.status
         FROM daikin_points p
         LEFT JOIN daikin_current c
             ON c.point_id = p.id
@@ -481,10 +520,17 @@ try {
             continue;
         }
 
+        /*
+         * Phase 2 Tahap A: Aturan kualitas titik Niagara EC Fan:
+         * status NULL atau bukan 'ok' -> nilai titik dianggap tidak tersedia (null).
+         */
+        $fanStatus = $row['status'] !== null ? trim($row['status']) : null;
+        $fanOk = isPointStatusOk($fanStatus);
+
         $units[$unitName]['ec_fans'][$fanNo][$metric] =
             $metric === 'trip'
-                ? ($row['value_bool'] !== null ? (int)$row['value_bool'] : null)
-                : ($row['value_double'] !== null ? (float)$row['value_double'] : null);
+                ? (($fanOk && $row['value_bool'] !== null) ? (int)$row['value_bool'] : null)
+                : (($fanOk && $row['value_double'] !== null) ? (float)$row['value_double'] : null);
 
         $units[$unitName]['ec_fans'][$fanNo]['unit'] = $row['unit'];
     }

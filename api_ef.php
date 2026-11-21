@@ -52,6 +52,16 @@ if (!function_exists('calcTelemetryAgeSeconds')) {
     }
 }
 
+/*
+ * Phase 2 Tahap A: Helper validasi kualitas status titik Niagara / Daikin.
+ * Aturan per titik: status NULL atau bukan 'ok' (tidak peka huruf besar) -> tidak valid.
+ */
+if (!function_exists('isPointStatusOk')) {
+    function isPointStatusOk(?string $status): bool {
+        return $status !== null && strtolower(trim($status)) === 'ok';
+    }
+}
+
 try {
     $dsn = sprintf(
         'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
@@ -151,13 +161,19 @@ try {
     /*
      * Query daikin_current: TIMESTAMPDIFF dihapus dari SQL (dihitung di PHP berbasis $tz).
      */
+    /*
+     * Query daikin_current: SELECT kolom status ditambahkan untuk validasi kualitas titik (Phase 2 Tahap A).
+     */
     $g8Sql = "
         SELECT
             equipment_no,
             MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN point_id END) AS status_point_id,
             MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN value_bool END) AS value_bool,
+            MAX(CASE WHEN point_name IN ('Sts_EF1', 'Sts_EF2') THEN status END) AS unit_status_raw,
             MAX(CASE WHEN point_name = 'FreqOUT' THEN value_double END) AS frequency,
+            MAX(CASE WHEN point_name = 'FreqOUT' THEN status END) AS freq_status_raw,
             MAX(CASE WHEN point_name = 'MotorCurrent' THEN value_double END) AS motor_current,
+            MAX(CASE WHEN point_name = 'MotorCurrent' THEN status END) AS current_status_raw,
             MAX(last_update) AS last_update
         FROM daikin_current
         WHERE equipment_type = 'EF'
@@ -171,6 +187,32 @@ try {
         /* Koreksi: hitung age_seconds di PHP dengan zona waktu $tz */
         $ageSec = calcTelemetryAgeSeconds($row['last_update'], $tz, $loggedNegativeG8);
 
+        /*
+         * Phase 2 Tahap A: Aturan kualitas titik Niagara daikin_current:
+         * status NULL atau bukan 'ok' (tidak peka huruf besar) -> nilai titik dianggap
+         * tidak tersedia (value_bool/value_double dikirim null) dan sertakan penanda kualitas sederhana.
+         */
+        $statusPointRaw = $row['unit_status_raw'] !== null ? trim($row['unit_status_raw']) : null;
+        $statusPointOk = isPointStatusOk($statusPointRaw);
+        $unitQuality = $statusPointOk ? 'ok' : 'bad';
+        $unitStatusVal = ($statusPointOk && $row['value_bool'] !== null)
+            ? (int)$row['value_bool']
+            : null;
+
+        $freqPointRaw = $row['freq_status_raw'] !== null ? trim($row['freq_status_raw']) : null;
+        $freqPointOk = isPointStatusOk($freqPointRaw);
+        $freqQuality = $freqPointOk ? 'ok' : 'bad';
+        $freqVal = ($freqPointOk && $row['frequency'] !== null)
+            ? (float)$row['frequency']
+            : null;
+
+        $currentPointRaw = $row['current_status_raw'] !== null ? trim($row['current_status_raw']) : null;
+        $currentPointOk = isPointStatusOk($currentPointRaw);
+        $currentQuality = $currentPointOk ? 'ok' : 'bad';
+        $currentVal = ($currentPointOk && $row['motor_current'] !== null)
+            ? (float)$row['motor_current']
+            : null;
+
         $exhaustFanG8[] = [
             'id' => $row['status_point_id'] !== null
                 ? (int)$row['status_point_id']
@@ -182,17 +224,19 @@ try {
             // renders these as a single flat group.
             'panel_no' => null,
             'name' => 'EF ' . (int)$row['equipment_no'],
-            'status' => $row['value_bool'] !== null
-                ? (int)$row['value_bool']
-                : null,
-            'frequency' => $row['frequency'] !== null
-                ? (float)$row['frequency']
-                : null,
-            'motor_current' => $row['motor_current'] !== null
-                ? (float)$row['motor_current']
-                : null,
+            'status' => $unitStatusVal,
+            'frequency' => $freqVal,
+            'motor_current' => $currentVal,
             'last_update' => $row['last_update'],
             'age_seconds' => $ageSec,
+            /* Phase 2 Tahap A: Penanda kualitas data per unit dan per titik */
+            'quality' => $unitQuality,
+            'raw_status' => $statusPointRaw,
+            'point_quality' => [
+                'status' => $unitQuality,
+                'frequency' => $freqQuality,
+                'motor_current' => $currentQuality,
+            ],
         ];
     }
 
