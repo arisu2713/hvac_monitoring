@@ -29,7 +29,10 @@ if (empty($_SESSION['user_id'])) {
 
 session_write_close();
 
-header('Content-Type: application/json; charset=utf-8');
+$isExport = (isset($_GET['export']) && strtolower(trim((string)$_GET['export'])) === 'csv');
+if (!$isExport) {
+    header('Content-Type: application/json; charset=utf-8');
+}
 
 $config = require __DIR__ . '/config.php';
 
@@ -39,9 +42,32 @@ if (!defined('ACTLOG_ALLOWED_PER_PAGE')) {
     define('ACTLOG_DEFAULT_PER_PAGE', 50);
     define('ACTLOG_ALLOWED_TYPES', ['AHU', 'CHILLER', 'CCP', 'CHWP', 'CT', 'EF']);
     define('ACTLOG_ALLOWED_STATUSES', ['ON', 'OFF']);
+    define('ACTLOG_EXPORT_MAX_ROWS', 50000);
 }
 
 /* ---- Input validation helpers ---- */
+
+if (!function_exists('actlog_sanitize_csv_cell')) {
+    /**
+     * Mitigasi CSV formula injection (CWE-1236).
+     * Sel diawali '=', '+', '-', '@', tab (\t), atau CR (\r) diberi awalan tanda kutip tunggal (').
+     */
+    function actlog_sanitize_csv_cell(mixed $value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        $str = (string) $value;
+        if ($str === '') {
+            return '';
+        }
+        $c = $str[0];
+        if ($c === '=' || $c === '+' || $c === '-' || $c === '@' || $c === "\t" || $c === "\r") {
+            return "'" . $str;
+        }
+        return $str;
+    }
+}
 
 if (!function_exists('actlog_clamp_int')) {
     function actlog_clamp_int(mixed $raw, int $min, int $max, int $default): int
@@ -193,6 +219,80 @@ try {
     $totalOn  = (int) $countsRow['total_on'];
     $totalOff = (int) $countsRow['total_off'];
 
+    /* Mode Export CSV: streaming baris tanpa memuat seluruh data ke memori */
+    if ($isExport) {
+        // Atur batas waktu eksekusi wajar untuk streaming ekspor
+        set_time_limit(300);
+
+        $serverTime = date('Ymd_His');
+        $filename   = 'activity_log_' . $serverTime . '.csv';
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-store');
+        header('X-Export-Total: ' . $total);
+        header('Access-Control-Expose-Headers: X-Export-Total, X-Export-Truncated');
+
+        if ($total > ACTLOG_EXPORT_MAX_ROWS) {
+            header('X-Export-Truncated: 1');
+        }
+
+        // Tulis UTF-8 BOM agar Excel mengenali encoding UTF-8 secara otomatis
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF");
+
+        // Baris header kolom (nama kolom Inggris sesuai database)
+        $csvHeaders = [
+            'event_time',
+            'equipment_type',
+            'equipment_id',
+            'point_id',
+            'previous_status',
+            'new_status',
+            'source_poller',
+        ];
+        fputcsv($out, $csvHeaders, ',', '"', "\\", "\r\n");
+
+        // Kueri ekspor memuat seluruh baris yang lolos filter dengan batas maksimal 50.000 baris terbaru
+        $exportSql = "
+            SELECT
+                event_time,
+                equipment_type,
+                equipment_id,
+                point_id,
+                previous_status,
+                new_status,
+                source_poller
+            FROM equipment_status_events
+            $where
+            ORDER BY event_time DESC, id DESC
+            LIMIT " . ACTLOG_EXPORT_MAX_ROWS . "
+        ";
+
+        $exportStmt = $pdo->prepare($exportSql);
+        foreach ($params as $k => $v) {
+            $exportStmt->bindValue($k, $v);
+        }
+        $exportStmt->execute();
+
+        // Streaming baris per baris dengan sanitasi mitigasi formula injection
+        while ($row = $exportStmt->fetch(PDO::FETCH_ASSOC)) {
+            $csvRow = [
+                actlog_sanitize_csv_cell($row['event_time']),
+                actlog_sanitize_csv_cell($row['equipment_type']),
+                actlog_sanitize_csv_cell($row['equipment_id']),
+                actlog_sanitize_csv_cell($row['point_id']),
+                actlog_sanitize_csv_cell($row['previous_status']),
+                actlog_sanitize_csv_cell($row['new_status']),
+                actlog_sanitize_csv_cell($row['source_poller']),
+            ];
+            fputcsv($out, $csvRow, ',', '"', "\\", "\r\n");
+        }
+
+        fclose($out);
+        exit;
+    }
+
     $totalPages = $total > 0 ? (int) ceil($total / $perPage) : 1;
     // Clamp page to valid range now that we know totalPages
     if ($page > $totalPages) {
@@ -270,6 +370,20 @@ try {
         : $e->getMessage()));
 
     if ($tableMissing) {
+        if ($isExport) {
+            $filename = 'activity_log_' . date('Ymd_His') . '.csv';
+            header('Content-Type: text/csv; charset=utf-8');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Cache-Control: no-store');
+            header('X-Export-Total: 0');
+            header('Access-Control-Expose-Headers: X-Export-Total, X-Export-Truncated');
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, ['event_time', 'equipment_type', 'equipment_id', 'point_id', 'previous_status', 'new_status', 'source_poller'], ',', '"', "\\", "\r\n");
+            fclose($out);
+            exit;
+        }
+
         http_response_code(200);
         echo json_encode([
             'success'         => true,
@@ -284,6 +398,13 @@ try {
             'events'          => [],
             'available_types' => [],
         ]);
+        exit;
+    }
+
+    if ($isExport) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "Error generating CSV export.";
         exit;
     }
 
