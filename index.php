@@ -440,9 +440,14 @@ function createEfCard(unit) {
     const serverEpoch = allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
     const sourceTzOffset = allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
-    const status = isStale ? "unknown" : getEfStatus(unit);
-    card.className = "unit-card ef-card status-" + status + (isStale ? " is-stale" : "");
-    card.dataset.status = status;
+    /*
+     * Phase 2 Tahap 2: Evaluasi status trip untuk EF 58-61.
+     * Bila trip=1 dan data tidak basi, unit berada dalam kondisi TRIP.
+     */
+    const isTrip = !isStale && unit.trip === 1;
+    const status = isStale ? "unknown" : (isTrip ? "trip" : getEfStatus(unit));
+    card.className = "unit-card ef-card status-" + (isTrip ? "trip" : status) + (isStale ? " is-stale" : "") + (isTrip ? " is-trip" : "");
+    card.dataset.status = isTrip ? "trip" : status;
     card.tabIndex = 0;
 
     const unitName = unit.name ?? "";
@@ -456,8 +461,29 @@ function createEfCard(unit) {
         card.appendChild(buildNoteIconButton("EXHAUST_FAN", unit, note));
     }
 
-    // Preventive Maintenance (PM) text badge (top-left) if active
-    if (isPm) {
+    /*
+     * Phase 2 Tahap 2: Badge PM dan TRIP:
+     * - Bila trip=1 dan PM aktif: badge "TRIP · PM" redup
+     * - Bila trip=1 tanpa PM: badge "TRIP" merah
+     * - Bila hanya PM aktif (tanpa trip): badge "PM" kuning (perilaku asli)
+     */
+    if (isTrip) {
+        card.classList.add("has-trip-badge");
+        if (isPm) {
+            card.classList.add("has-pm");
+            const tripPmBadge = document.createElement("span");
+            tripPmBadge.className = "ef-badge-trip ef-badge-trip-pm";
+            tripPmBadge.textContent = "TRIP · PM";
+            tripPmBadge.title = "EF Trip Protection aktif (MCB/kontak proteksi), PM aktif (alarm dibisukan)";
+            card.appendChild(tripPmBadge);
+        } else {
+            const tripBadge = document.createElement("span");
+            tripBadge.className = "ef-badge-trip";
+            tripBadge.textContent = "TRIP";
+            tripBadge.title = "EF Trip Protection aktif (trip kontak proteksi)";
+            card.appendChild(tripBadge);
+        }
+    } else if (isPm) {
         card.classList.add("has-pm");
         const pmBadge = document.createElement("span");
         pmBadge.className = "ef-pm-badge";
@@ -467,8 +493,8 @@ function createEfCard(unit) {
     }
 
     const dot = document.createElement("span");
-    dot.className = "ef-run-dot is-" + status;
-    dot.title = isStale ? "Status tidak diketahui (data basi)" : (status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN"));
+    dot.className = "ef-run-dot is-" + (isTrip ? "trip" : status);
+    dot.title = isStale ? "Status tidak diketahui (data basi)" : (isTrip ? "TRIP (trip kontak proteksi)" : (status === "run" ? "RUN" : (status === "off" ? "OFF" : "UNKNOWN")));
     card.appendChild(dot);
 
     const name = document.createElement("div");
@@ -489,6 +515,12 @@ function createEfCard(unit) {
             ? "kualitas data buruk (down/fault/stale)"
             : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(sub);
+    } else if (isTrip) {
+        /* Phase 2 Tahap 2: Teks status jujur TRIP (bukan sekadar OFF) */
+        const label = document.createElement("div");
+        label.className = "ef-status-label is-trip";
+        label.textContent = "TRIP";
+        card.appendChild(label);
     } else if (status !== "run") {
         const label = document.createElement("div");
         label.className = "ef-status-label is-" + status;
@@ -1638,19 +1670,45 @@ function createG8EfCard(unit) {
     const serverEpoch = allData.efServerEpoch || (allData.ALARM && allData.ALARM.server_epoch) || null;
     const sourceTzOffset = allData.efSourceTzOffset || (allData.ALARM && allData.ALARM.source_tz_offset) || null;
     const isStale = isTelemetryStale(unit, serverTime, STALE_THRESHOLD_SECONDS, unit.age_seconds);
+    /*
+     * Phase 2 Tahap 2: Evaluasi status trip untuk EF 58-61 pada halaman G8.
+     * Bila trip=1 dan data tidak basi, unit berstatus TRIP.
+     */
+    const isTrip = !isStale && unit.trip === 1;
     const band = isStale ? "unknown" : g8EfBandOf(unit);
-    const state = isStale ? "unknown" : g8RunState(unit.status);
+    const state = isStale ? "unknown" : (isTrip ? "trip" : g8RunState(unit.status));
+    const isPm = typeof isUnitInMaintenance === "function" && isUnitInMaintenance("EXHAUST_FAN", unit.name);
 
     const card = document.createElement("div");
-    card.className = g8CardClass(band) + (isStale ? " is-stale" : "");
+    card.className = g8CardClass(band) + (isStale ? " is-stale" : "") + (isTrip ? " is-trip" : "");
     card.dataset.band = band;
     card.dataset.run = state;
     card.dataset.condition = isStale ? "unknown" : g8EfCondition(unit);
 
     /*
      * For stale cards, state is "unknown", so show run dot and UNKNOWN label in header.
+     * Phase 2 Tahap 2: Sertakan badge TRIP / TRIP · PM pada header bila unit trip.
      */
-    card.appendChild(g8CardHeader(unit.name ?? "", state, isStale));
+    const headerEl = g8CardHeader(unit.name ?? "", isTrip ? "off" : state, isStale);
+    if (isTrip) {
+        const tripBadge = document.createElement("span");
+        if (isPm) {
+            tripBadge.className = "g8-badge-trip g8-badge-trip-pm";
+            tripBadge.textContent = "TRIP · PM";
+            tripBadge.title = "EF Trip Protection aktif (MCB/kontak proteksi), PM aktif (alarm dibisukan)";
+        } else {
+            tripBadge.className = "g8-badge-trip";
+            tripBadge.textContent = "TRIP";
+            tripBadge.title = "EF Trip Protection aktif (trip kontak proteksi)";
+        }
+        const runContainer = headerEl.querySelector(".g8-run");
+        if (runContainer) {
+            runContainer.insertBefore(tripBadge, runContainer.firstChild);
+        } else {
+            headerEl.appendChild(tripBadge);
+        }
+    }
+    card.appendChild(headerEl);
 
     const metrics = document.createElement("div");
     metrics.className = "compact-metrics";
@@ -1664,16 +1722,25 @@ function createG8EfCard(unit) {
         const staleSub = document.createElement("div");
         staleSub.className = "g8-stale-subtext";
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
-        staleSub.textContent = isUnitQualityBad(unit)
+        sub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
             : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(staleSub);
     } else {
-        metrics.appendChild(g8Metric(
-            "Status",
-            g8BoolText(unit.status, "RUN", "OFF"),
-            g8BoolClass(unit.status)
-        ));
+        /* Phase 2 Tahap 2: Teks status jujur TRIP (bukan sekadar OFF) pada baris Status */
+        if (isTrip) {
+            metrics.appendChild(g8Metric(
+                "Status",
+                "TRIP",
+                "g8-val-alarm"
+            ));
+        } else {
+            metrics.appendChild(g8Metric(
+                "Status",
+                g8BoolText(unit.status, "RUN", "OFF"),
+                g8BoolClass(unit.status)
+            ));
+        }
         metrics.appendChild(g8Metric("Frequency", g8Format(unit.frequency, " Hz")));
         metrics.appendChild(g8Metric("Motor Current", g8Format(unit.motor_current, " A")));
         card.appendChild(metrics);
@@ -7187,11 +7254,47 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
     statRow.className = "ahu-detail-summary-row";
 
     if (equipType === "EXHAUST_FAN") {
-        const status = getEfStatus(unit);
         const isPm = isUnitInMaintenance("EXHAUST_FAN", unit.name);
+        const isTrip = unit.trip === 1;
+        const status = getEfStatus(unit);
+        let statusText = status === "run" ? "RUNNING" : (status === "off" ? "STOPPED" : "UNKNOWN");
+        let statusClass = status === "run" ? "is-run" : (status === "off" ? "is-off" : "is-unknown");
+
+        /* Phase 2 Tahap 2: Teks status jujur TRIP pada modal jika unit trip */
+        if (isTrip) {
+            statusText = "TRIP";
+            statusClass = "is-trip";
+        }
+
         const panelText = unit.panel_no !== undefined ? "Panel " + unit.panel_no : (unit.source || "G8");
-        const statusText = status === "run" ? "RUNNING" : (status === "off" ? "STOPPED" : "UNKNOWN");
-        const statusClass = status === "run" ? "is-run" : (status === "off" ? "is-off" : "is-unknown");
+
+        let conditionNote = "Normal";
+        if (isTrip) {
+            conditionNote = isPm ? "Trip aktif, PM aktif (alarm dibisukan)" : "Trip Protection Active (trip kontak proteksi)";
+        } else if (status === "run" && isPm) {
+            conditionNote = "EF sudah RUN, PM masih aktif";
+        } else if (isPm) {
+            conditionNote = "Alarm OFF dibisukan";
+        }
+
+        /*
+         * Phase 2 Tahap 2: Baris Trip pada modal detail EF 58-61:
+         * - trip = 1 -> "TRIP"
+         * - trip = 0 -> "Normal"
+         * - trip = null -> "—" (tidak ditampilkan sebagai normal)
+         * - unit non-G8 (unit.trip undefined) -> baris tidak ditampilkan agar tidak mengubah unit lain.
+         */
+        let tripColHtml = "";
+        if (unit.trip !== undefined) {
+            const tripValText = unit.trip === 1 ? "TRIP" : (unit.trip === 0 ? "Normal" : "—");
+            const tripValClass = unit.trip === 1 ? "is-trip" : (unit.trip === 0 ? "is-normal" : "is-unknown");
+            tripColHtml = `
+            <div>
+                <div class="ahu-detail-stat-label">Trip</div>
+                <div class="ahu-detail-stat-value ${tripValClass}">${tripValText}</div>
+            </div>
+            `;
+        }
 
         statRow.innerHTML = `
             <div>
@@ -7202,13 +7305,14 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                 <div class="ahu-detail-stat-label">Panel / Group</div>
                 <div class="ahu-detail-stat-value">${panelText}</div>
             </div>
+            ${tripColHtml}
             <div>
                 <div class="ahu-detail-stat-label">Maintenance (PM)</div>
                 <div class="ahu-detail-stat-value is-pm-stat">${isPm ? 'AKTIF' : 'NONAKTIF'}</div>
             </div>
             <div>
                 <div class="ahu-detail-stat-label">Condition Note</div>
-                <div class="ahu-detail-stat-value is-pm-notice">${(status === 'run' && isPm) ? 'EF sudah RUN, PM masih aktif' : (isPm ? 'Alarm OFF dibisukan' : 'Normal')}</div>
+                <div class="ahu-detail-stat-value is-pm-notice">${conditionNote}</div>
             </div>
         `;
     } else {
@@ -7359,7 +7463,12 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                 const statNotice = statRow.querySelector(".is-pm-notice");
                 if (statNotice) {
                     const st = getEfStatus(unit);
-                    statNotice.textContent = (st === "run" && data.active) ? "EF sudah RUN, PM masih aktif" : (data.active ? "Alarm OFF dibisukan" : "Normal");
+                    /* Phase 2 Tahap 2: Pertahankan pesan Trip Protection bila unit trip saat toggle PM */
+                    if (unit.trip === 1) {
+                        statNotice.textContent = data.active ? "Trip aktif, PM aktif (alarm dibisukan)" : "Trip Protection Active (trip kontak proteksi)";
+                    } else {
+                        statNotice.textContent = (st === "run" && data.active) ? "EF sudah RUN, PM masih aktif" : (data.active ? "Alarm OFF dibisukan" : "Normal");
+                    }
                 }
 
             } catch (err) {

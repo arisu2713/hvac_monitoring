@@ -8430,4 +8430,64 @@ body.modal-open {
     color: var(--pm-notice-error);
 }
 
+/* =========================================================
+   Phase 2 Tahap 2: EF Trip Badges and Detail Modal Styles
+   ========================================================= */
+.ef-badge-trip {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    padding: 2.5px 5px;
+    border-radius: 4px;
+    background: #c62828;
+    color: #ffffff;
+    border: 1px solid #e53935;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    z-index: 3;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+}
+
+.unit-card.ef-card.has-note .ef-badge-trip {
+    left: 29px;
+}
+
+.ef-badge-trip.ef-badge-trip-pm {
+    background: #374151;
+    color: #9ca3af;
+    border-color: #4b5563;
+    opacity: 0.85;
+}
+
+.g8-badge-trip {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: #c62828;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    margin-right: 6px;
+}
+
+.g8-badge-trip.g8-badge-trip-pm {
+    background: #374151;
+    color: #9ca3af;
+    opacity: 0.85;
+}
+
+.ahu-detail-stat-value.is-trip {
+    color: #ef4444;
+    font-weight: 700;
+}
+
+.ahu-detail-stat-value.is-normal {
+    color: #22c55e;
+}
+
 

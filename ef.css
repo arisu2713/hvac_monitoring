@@ -222,6 +222,11 @@
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4), 0 0 4px rgba(237, 60, 60, 0.4);
 }
 
+.ef-run-dot.is-trip {
+    background: #ef4444;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4), 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
 .ef-run-dot.is-unknown {
     background: #6e7681;
 }
@@ -261,6 +266,12 @@
     border: 1px solid rgba(237, 60, 60, 0.3);
 }
 
+.ef-status-label.is-trip {
+    color: #ffffff;
+    background: #dc2626;
+    border: 1px solid #ef4444;
+}
+
 .ef-status-label.is-unknown {
     color: #8b949e;
     background: rgba(139, 148, 158, 0.1);
@@ -290,6 +301,18 @@
     background: #1c1012;
 }
 
+.unit-card.ef-card.status-trip {
+    background: #1c0e10;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    box-shadow: 0 0 8px rgba(220, 38, 38, 0.25);
+    animation: ef-off-pulse 1.6s ease-in-out infinite;
+}
+
+.unit-card.ef-card.status-trip:hover {
+    background: #241114;
+    border-color: rgba(239, 68, 68, 0.75);
+}
+
 .unit-card.ef-card.status-unknown {
     background: #0d1117;
     border: 1px dashed #30363d;
@@ -310,7 +333,8 @@
 
 /* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
-    .unit-card.ef-card.status-off {
+    .unit-card.ef-card.status-off,
+    .unit-card.ef-card.status-trip {
         animation: none;
     }
 }
