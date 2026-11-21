@@ -1255,6 +1255,394 @@ async function runRegressionSuite() {
             results.push({ name: '29. Unit non-Daikin tidak terpengaruh oleh status titik / field quality', passed, details: res });
         }
 
+        // 30. EF 58 TRIP tanpa PM -> bunyi, tampil di ALARMS, KPI critical
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const hasTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const tripAlarm = activeItems.activeAlarms.find(a => a.equipment === 'EF 58' && a.metric === 'TRIP');
+
+                allData.sourceStatus = { EF: true };
+                allData.EXHAUST_FAN = [];
+                allData.EXHAUST_FAN_G8 = [fan];
+                allData.ALARM = { alarms: [] };
+                renderMainDashboard();
+                const critVal = Number(document.querySelector('.kpi.red .kpi-val')?.textContent || 0);
+
+                return {
+                    hasTrigger,
+                    lastMsg,
+                    hasTripAlarm: Boolean(tripAlarm),
+                    desc: tripAlarm?.description,
+                    critVal
+                };
+            });
+
+            const passed = res.hasTrigger && res.lastMsg === 'PLAY_ALARM' && res.hasTripAlarm &&
+                           res.desc === 'EF 58 Trip Protection Active (trip kontak proteksi)' && res.critVal === 1;
+            results.push({ name: '30. EF 58 TRIP tanpa PM -> bunyi, tampil di ALARMS, KPI critical', passed, details: res });
+        }
+
+        // 31. TRIP dengan PM aktif -> tidak bunyi, tidak di daftar, banner menghitung, KPI stopped
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 58');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const hasTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const tripAlarm = activeItems.activeAlarms.find(a => a.equipment === 'EF 58');
+                const pmCount = activeItems.pmSuppressedCount;
+
+                allData.sourceStatus = { EF: true };
+                allData.EXHAUST_FAN = [];
+                allData.EXHAUST_FAN_G8 = [fan];
+                allData.ALARM = { alarms: [] };
+                renderMainDashboard();
+                const stopVal = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent || 0);
+                const critVal = Number(document.querySelector('.kpi.red .kpi-val')?.textContent || 0);
+
+                return {
+                    hasTrigger,
+                    lastMsg,
+                    inActiveList: Boolean(tripAlarm),
+                    pmCount,
+                    stopVal,
+                    critVal
+                };
+            });
+
+            const passed = !res.hasTrigger && res.lastMsg !== 'PLAY_ALARM' && !res.inActiveList &&
+                           res.pmCount >= 1 && res.stopVal === 1 && res.critVal === 0;
+            results.push({ name: '31. TRIP dengan PM aktif -> tidak bunyi, tidak di daftar, banner menghitung, KPI stopped', passed, details: res });
+        }
+
+        // 32. PM berakhir saat trip masih 1 -> tampil dan bunyi lagi
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 58');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const duringPmTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+
+                // PM expires / is deleted
+                maintenanceByUnit.delete(k);
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const afterPmTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const lastMsg = window.__webviewMessages[window.__webviewMessages.length - 1];
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const tripAlarm = activeItems.activeAlarms.find(a => a.equipment === 'EF 58');
+
+                return {
+                    duringPmTrigger,
+                    afterPmTrigger,
+                    lastMsg,
+                    hasTripAlarm: Boolean(tripAlarm)
+                };
+            });
+
+            const passed = !res.duringPmTrigger && res.afterPmTrigger && res.lastMsg === 'PLAY_ALARM' && res.hasTripAlarm;
+            results.push({ name: '32. PM berakhir saat trip masih 1 -> tampil dan bunyi lagi', passed, details: res });
+        }
+
+        // 33. TRIP + OFF bersamaan -> hanya satu alarm (TRIP)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const hasTripTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const hasOffTrigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+                const rowsForEf58 = syntheticLiveEfAlarms.filter(r => r.equipment === 'EF 58');
+
+                return {
+                    hasTripTrigger,
+                    hasOffTrigger,
+                    rowCount: rowsForEf58.length,
+                    metric: rowsForEf58[0]?.metric
+                };
+            });
+
+            const passed = res.hasTripTrigger && !res.hasOffTrigger && res.rowCount === 1 && res.metric === 'TRIP';
+            results.push({ name: '33. TRIP + OFF bersamaan -> hanya satu alarm (TRIP)', passed, details: res });
+        }
+
+        // 34. trip null / kualitas buruk -> unknown, tidak ada alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 1,
+                    trip: null,
+                    quality: 'bad',
+                    raw_status: 'down',
+                    point_quality: { status: 'bad', trip: 'bad' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const cond = g8EfCondition(fan);
+                const hasTripTrigger = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const hasOffTrigger = activeAlarmTriggerKeys.has('EFOFF:EF 58');
+
+                return { cond, hasTripTrigger, hasOffTrigger };
+            });
+
+            const passed = res.cond === 'unknown' && !res.hasTripTrigger && !res.hasOffTrigger;
+            results.push({ name: '34. trip null / kualitas buruk -> unknown, tidak ada alarm', passed, details: res });
+        }
+
+        // 35. trip kembali 0 -> alarm hilang
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const activeBefore = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+
+                // Trip returns to 0, unit runs
+                fan.trip = 0;
+                fan.status = 1;
+                fan.last_update = '2026-11-20 12:00:00';
+                fan.age_seconds = 0;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const activeAfter = activeAlarmTriggerKeys.has('EFTRIP:EF 58');
+                const remainingRows = syntheticLiveEfAlarms.filter(r => r.equipment === 'EF 58');
+
+                return {
+                    activeBefore,
+                    activeAfter,
+                    rowCount: remainingRows.length
+                };
+            });
+
+            const passed = res.activeBefore && !res.activeAfter && res.rowCount === 0;
+            results.push({ name: '35. trip kembali 0 -> alarm hilang', passed, details: res });
+        }
+
+        // 36. ACK membisukan bunyi hanya untuk perangkat itu
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan58 = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                const fan59 = {
+                    id: 59,
+                    name: 'EF 59',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan58, fan59], [], true, true);
+                fan58.last_update = '2026-11-20 11:59:50';
+                fan59.last_update = '2026-11-20 11:59:50';
+                evaluateAlarmTriggers([], [fan58, fan59], [], true, true);
+
+                // ACK only EF 58
+                acknowledgedAlarmKeys.add('EFTRIP:EF 58');
+                writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+                updateGlobalAlarmWidget();
+
+                const unackCountAfterFirstAck = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const msgAfterFirstAck = window.__webviewMessages[window.__webviewMessages.length - 1];
+
+                // Now ACK EF 59
+                acknowledgedAlarmKeys.add('EFTRIP:EF 59');
+                writeAcknowledgedAlarmKeys(acknowledgedAlarmKeys);
+                updateGlobalAlarmWidget();
+
+                const unackCountAfterSecondAck = Array.from(activeAlarmTriggerKeys).filter(k => !acknowledgedAlarmKeys.has(k)).length;
+                const msgAfterSecondAck = window.__webviewMessages[window.__webviewMessages.length - 1];
+
+                return {
+                    unackCountAfterFirstAck,
+                    msgAfterFirstAck,
+                    unackCountAfterSecondAck,
+                    msgAfterSecondAck
+                };
+            });
+
+            const passed = res.unackCountAfterFirstAck === 1 && res.msgAfterFirstAck === 'PLAY_ALARM' &&
+                           res.unackCountAfterSecondAck === 0 && res.msgAfterSecondAck === 'STOP_ALARM';
+            results.push({ name: '36. ACK membisukan bunyi hanya untuk perangkat itu', passed, details: res });
+        }
+
+        // 37. EF non-G8 (EF 1-55) tidak terpengaruh
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                const fan01 = { id: 1, name: 'EF 01', status: 1, panel_no: 1 };
+                openUnitDetailModal('EXHAUST_FAN', fan01, null);
+                const modal = document.querySelector('.ahu-detail-modal');
+                const labels = Array.from(modal.querySelectorAll('.ahu-detail-stat-label')).map(el => el.textContent.trim());
+                const hasTripLabel = labels.includes('Trip');
+                closeUnitDetailModal();
+
+                const fan58 = { id: 58, name: 'EF 58', status: 1, trip: 0 };
+                openUnitDetailModal('EXHAUST_FAN', fan58, null);
+                const modalG8 = document.querySelector('.ahu-detail-modal');
+                const labelsG8 = Array.from(modalG8.querySelectorAll('.ahu-detail-stat-label')).map(el => el.textContent.trim());
+                const g8HasTripLabel = labelsG8.includes('Trip');
+                const tripVal = modalG8.querySelector('.ahu-detail-stat-value.is-normal')?.textContent.trim();
+                closeUnitDetailModal();
+
+                return { hasTripLabel, g8HasTripLabel, tripVal };
+            });
+
+            const passed = !res.hasTripLabel && res.g8HasTripLabel && res.tripVal === 'Normal';
+            results.push({ name: '37. EF non-G8 (EF 1-55) tidak terpengaruh', passed, details: res });
+        }
+
+        // 38. Fail-safe PM gagal -> tampil dan bunyi
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 58');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+                maintenanceFetchSuccess = false;
+                pmHistoryFetchSuccess = false;
+
+                const fan = {
+                    id: 58,
+                    name: 'EF 58',
+                    status: 0,
+                    trip: 1,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:45',
+                    age_seconds: 15
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                fan.last_update = '2026-11-20 11:59:50';
+                fan.age_seconds = 10;
+                evaluateAlarmTriggers([], [fan], [], true, true);
+
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const tripAlarm = activeItems.activeAlarms.find(a => a.equipment === 'EF 58');
+                const suppressed = isAlarmSuppressedByPm(tripAlarm, []);
+
+                return {
+                    hasTripAlarm: Boolean(tripAlarm),
+                    suppressed
+                };
+            });
+
+            const passed = res.hasTripAlarm && res.suppressed === false;
+            results.push({ name: '38. Fail-safe PM gagal -> tampil dan bunyi', passed, details: res });
+        }
+
         await browser.close();
 
         console.log('\n================== REGRESSION TEST RESULTS ==================');

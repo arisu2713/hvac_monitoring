@@ -1143,6 +1143,203 @@ async function runStatesSuite() {
                 }
             });
 
+            // ==========================================
+            // STATE 7: G8 EF TRIP STATES (Tahap 5)
+            // ==========================================
+            // State 7a: EF 58 TRIP without PM
+            await page.evaluate(() => {
+                const nowTime = "2026-11-20 12:00:00";
+                maintenanceByUnit.clear();
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                allData = {
+                    efServerTime: nowTime,
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: true,
+                        ALARM: true, ENERGY_SUMMARY: true
+                    },
+                    sourceFreshness: { DAIKIN: true, HNX: true },
+                    AHU: [
+                        { name: "AHU 01", temp: 22.0, temp_min: 15, temp_max: 25, status: 1, run_state: 1, alarm: 0, last_update: nowTime }
+                    ],
+                    CHILLER: [
+                        { name: "CHILLER 1", run: 1, alarm: 0, cond_entering_temp: 29.5, evap_leaving_temp: 7.2, evap_leaving_temp_max: 12, cond_entering_temp_max: 32 }
+                    ],
+                    CT: [{ name: "CT 1A", run: 1, alarm: 0, return_temp: 28.0, return_temp_max: 32.0 }],
+                    CCP: [{ name: "CCP 1", run: 1, alarm: 0, frequency: 49.8, current: 16.5 }],
+                    CHWP: [{ name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }],
+                    EXHAUST_FAN: [{ name: "EF 01", status: 1, run: 1, last_update: nowTime }],
+                    EXHAUST_FAN_G8: [
+                        { name: "EF 58", status: 0, run: 0, trip: 1, frequency: 0, motor_current: 0, quality: 'ok', raw_status: 'ok', point_quality: { status: 'ok', trip: 'ok' }, last_update: nowTime, age_seconds: 5 },
+                        { name: "EF 59", status: 1, run: 1, trip: 0, frequency: 40.1, motor_current: 24.8, quality: 'ok', raw_status: 'ok', point_quality: { status: 'ok', trip: 'ok' }, last_update: nowTime, age_seconds: 5 },
+                        { name: "EF 60", status: 1, run: 1, trip: 0, frequency: 38.0, motor_current: 23.6, quality: 'ok', raw_status: 'ok', point_quality: { status: 'ok', trip: 'ok' }, last_update: nowTime, age_seconds: 5 },
+                        { name: "EF 61", status: 1, run: 1, trip: 0, frequency: 38.0, motor_current: 23.4, quality: 'ok', raw_status: 'ok', point_quality: { status: 'ok', trip: 'ok' }, last_update: nowTime, age_seconds: 5 }
+                    ],
+                    ROOM_TEMP_RH: [],
+                    ALARM: { server_time: nowTime, counts: { active_alarm: 0, active_warning: 0, active_total: 0 }, alarms: [] },
+                    ENERGY_SUMMARY: { report_kwh: 8500, prev_kwh: 8000, report_date: '2026-11-20', prev_date: '2026-11-19', daily_history: [], peak_day: {}, avg_daily_kwh: 8500 }
+                };
+
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            // Screenshot for State 7a: TRIP without PM (Desktop & Mobile)
+            const shot7aPath = path.join(shotDir, `ef_trip_no_pm_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot7aPath, fullPage: true });
+
+            const s7aCheck = await page.evaluate((isMobile) => {
+                const crit = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0));
+                const warn = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-warn .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim() || 0));
+                const norm = Number(isMobile
+                    ? 0
+                    : (document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const stop = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-stopped .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const unk = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi.unknown .kpi-val')?.textContent.trim() || 0));
+                const total = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi-row .kpi:last-child .kpi-val')?.textContent.trim() || 0));
+
+                const invariantHolds = !isMobile ? ((crit + warn + norm + stop + unk) === total) : true;
+
+                // Needs attention item
+                const issueRow = Array.from(document.querySelectorAll('.attn-item, .mob-issue-item')).find(el => el.textContent.includes('EF 58'));
+                const hasTripReason = issueRow ? (issueRow.textContent.includes('Trip') || issueRow.textContent.includes('TRIP')) : false;
+
+                // Switch to G8 page to inspect card and modal
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+                const ef58Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 58'));
+                const hasTripBadge = Boolean(ef58Card?.querySelector('.g8-badge-trip'));
+                const tripBadgeText = ef58Card?.querySelector('.g8-badge-trip')?.textContent.trim();
+                const ef58StatusMetric = Array.from(ef58Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Status'))?.querySelector('.m-val')?.textContent.trim();
+
+                // Open modal detail for EF 58
+                openUnitDetailModal("EXHAUST_FAN", allData.EXHAUST_FAN_G8[0], null);
+                const modal = document.querySelector('.ahu-detail-modal');
+                const modalHasTripRow = Array.from(modal.querySelectorAll('.ahu-detail-stat-label')).some(el => el.textContent.trim() === 'Trip');
+                const modalTripVal = modal.querySelector('.ahu-detail-stat-value.is-trip')?.textContent.trim();
+                closeUnitDetailModal();
+
+                return {
+                    crit, warn, norm, stop, unk, total, invariantHolds,
+                    hasTripReason,
+                    hasTripBadge,
+                    tripBadgeText,
+                    ef58StatusMetric,
+                    modalHasTripRow,
+                    modalTripVal
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 7a (${vp.name}): EF 58 TRIP without PM -> KPI critical, reason "Trip", TRIP badge on card and modal`,
+                pass: s7aCheck.crit === 1 && s7aCheck.invariantHolds && s7aCheck.hasTripReason &&
+                      s7aCheck.hasTripBadge && s7aCheck.tripBadgeText === 'TRIP' &&
+                      s7aCheck.ef58StatusMetric === 'TRIP' && s7aCheck.modalHasTripRow && s7aCheck.modalTripVal === 'TRIP',
+                details: s7aCheck
+            });
+
+            // State 7b: EF 58 TRIP with PM active
+            await page.evaluate(() => {
+                const k = maintenanceKey('EXHAUST_FAN', 'EF 58');
+                maintenanceByUnit.set(k, { active: 1, is_active: true, remaining_seconds: 3600, fetched_at: Date.now() });
+
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            // Screenshot for State 7b: TRIP with PM (Desktop & Mobile)
+            const shot7bPath = path.join(shotDir, `ef_trip_with_pm_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot7bPath, fullPage: true });
+
+            const s7bCheck = await page.evaluate((isMobile) => {
+                const crit = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0));
+                const stop = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-stopped .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim() || 0));
+                const total = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi-row .kpi:last-child .kpi-val')?.textContent.trim() || 0));
+
+                // Needs attention should NOT list EF 58
+                const ef58InIssues = Array.from(document.querySelectorAll('.attn-item, .mob-issue-item')).some(el => el.textContent.includes('EF 58'));
+
+                // Switch to G8 page to inspect card and modal
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+                const ef58Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 58'));
+                const tripPmBadge = ef58Card?.querySelector('.g8-badge-trip.g8-badge-trip-pm');
+                const badgeText = tripPmBadge?.textContent.trim();
+
+                // Open modal detail for EF 58
+                openUnitDetailModal("EXHAUST_FAN", allData.EXHAUST_FAN_G8[0], null);
+                const modal = document.querySelector('.ahu-detail-modal');
+                const condNotice = modal.querySelector('.ahu-detail-stat-value.is-pm-notice')?.textContent.trim();
+                closeUnitDetailModal();
+
+                return {
+                    crit, stop, total,
+                    ef58InIssues,
+                    hasDimmedBadge: Boolean(tripPmBadge),
+                    badgeText,
+                    condNotice
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 7b (${vp.name}): EF 58 TRIP with PM -> KPI stopped (not critical), no issue in Needs attention, "TRIP · PM" badge`,
+                pass: s7bCheck.crit === 0 && s7bCheck.stop >= 1 && !s7bCheck.ef58InIssues &&
+                      s7bCheck.hasDimmedBadge && s7bCheck.badgeText === 'TRIP · PM' &&
+                      s7bCheck.condNotice.includes('Trip aktif, PM aktif'),
+                details: s7bCheck
+            });
+
+            // State 7c: Normal state (trip = 0 for all EF 58-61)
+            await page.evaluate(() => {
+                maintenanceByUnit.clear();
+                allData.EXHAUST_FAN_G8[0].trip = 0;
+                allData.EXHAUST_FAN_G8[0].status = 1;
+                allData.EXHAUST_FAN_G8[0].run = 1;
+
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            // Screenshot for State 7c: Normal state (Desktop & Mobile)
+            const shot7cPath = path.join(shotDir, `ef_trip_normal_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot7cPath, fullPage: true });
+
+            const s7cCheck = await page.evaluate(() => {
+                openUnitDetailModal("EXHAUST_FAN", allData.EXHAUST_FAN_G8[0], null);
+                const modal = document.querySelector('.ahu-detail-modal');
+                const normalTripVal = modal.querySelector('.ahu-detail-stat-value.is-normal')?.textContent.trim();
+                closeUnitDetailModal();
+
+                return { normalTripVal };
+            });
+
+            results.push({
+                name: `State 7c (${vp.name}): Normal telemetry (trip=0) -> modal detail displays Trip: "Normal"`,
+                pass: s7cCheck.normalTripVal === 'Normal',
+                details: s7cCheck
+            });
+
             await context.close();
         }
 
