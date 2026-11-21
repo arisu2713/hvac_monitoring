@@ -1040,7 +1040,10 @@ function g8TripClass(value) {
  * out of range — and because callers that have no limit to apply (every RH
  * reading, every frequency, every fan temperature) simply omit it.
  */
-function g8Metric(label, value, valueClass, flag) {
+/*
+ * Perbaikan regresi Phase 2: Mendukung title/tooltip untuk penanda nilai stale ("nilai belum diperbarui (stale)").
+ */
+function g8Metric(label, value, valueClass, flag, title) {
     const item = document.createElement("div");
     item.className = "metric-item";
 
@@ -1053,6 +1056,12 @@ function g8Metric(label, value, valueClass, flag) {
         + (valueClass ? " " + valueClass : "")
         + (flag ? " g8-flag-" + flag : "");
     val.textContent = value;
+
+    if (title) {
+        val.title = title;
+    } else if (valueClass && valueClass.includes("g8-val-stale")) {
+        val.title = "nilai belum diperbarui (stale)";
+    }
 
     item.appendChild(lbl);
     item.appendChild(val);
@@ -1305,14 +1314,31 @@ function createG8Ahu9697Card(unit) {
         metrics.appendChild(g8Metric("Room Temperature", "—"));
         metrics.appendChild(g8Metric("Room RH", "—"));
     } else {
+        /*
+         * Perbaikan regresi Phase 2: Kualitas metrik per titik ('ok', 'stale', 'bad').
+         * Metrik 'stale' -> tampil nilai tetapi diredupkan (.g8-val-stale) dan diberi tooltip "nilai belum diperbarui (stale)".
+         * Metrik 'bad' -> tampil "—".
+         */
         const health = ahuHealth(unit);
+        const pq = unit.point_quality || {};
+        const tempStale = pq.room_temp === "stale";
+        const tempBad = pq.room_temp === "bad" || unit.room_temp === null;
+        const tempText = tempBad ? "—" : g8Format(unit.room_temp, " °C");
+        const tempCls = tempStale ? "g8-val-stale" : "";
+
         metrics.appendChild(g8Metric(
             "Room Temperature",
-            g8Format(unit.room_temp, " °C"),
-            "",
-            isOutOfRange(health.value, health.min, health.max) ? "warning" : null
+            tempText,
+            tempCls,
+            (!tempBad && isOutOfRange(health.value, health.min, health.max)) ? "warning" : null
         ));
-        metrics.appendChild(g8Metric("Room RH", g8Format(unit.room_rh, " % RH")));
+
+        const rhStale = pq.room_rh === "stale";
+        const rhBad = pq.room_rh === "bad" || unit.room_rh === null;
+        const rhText = rhBad ? "—" : g8Format(unit.room_rh, " % RH");
+        const rhCls = rhStale ? "g8-val-stale" : "";
+
+        metrics.appendChild(g8Metric("Room RH", rhText, rhCls));
     }
 
     card.appendChild(metrics);
@@ -1756,8 +1782,23 @@ function createG8EfCard(unit) {
                 g8BoolClass(unit.status)
             ));
         }
-        metrics.appendChild(g8Metric("Frequency", g8Format(unit.frequency, " Hz")));
-        metrics.appendChild(g8Metric("Motor Current", g8Format(unit.motor_current, " A")));
+        /*
+         * Perbaikan regresi Phase 2: Kualitas metrik per titik ('ok', 'stale', 'bad').
+         * Metrik 'stale' -> tampil nilai tetapi diredupkan (.g8-val-stale) dan diberi tooltip "nilai belum diperbarui (stale)".
+         * Metrik 'bad' -> tampil "—".
+         */
+        const pq = unit.point_quality || {};
+        const freqStale = pq.frequency === "stale";
+        const freqBad = pq.frequency === "bad" || unit.frequency === null;
+        const freqText = freqBad ? "—" : g8Format(unit.frequency, " Hz");
+        const freqCls = freqStale ? "g8-val-stale" : "";
+        metrics.appendChild(g8Metric("Frequency", freqText, freqCls));
+
+        const curStale = pq.motor_current === "stale";
+        const curBad = pq.motor_current === "bad" || unit.motor_current === null;
+        const curText = curBad ? "—" : g8Format(unit.motor_current, " A");
+        const curCls = curStale ? "g8-val-stale" : "";
+        metrics.appendChild(g8Metric("Motor Current", curText, curCls));
         card.appendChild(metrics);
     }
 
@@ -7437,6 +7478,45 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
             `;
         }
 
+        /*
+         * Baris metrik Motor Current & Frequency untuk EF G8 (EF 58-61):
+         * - Stale: nilai tampil diredupkan (.is-metric-stale) dengan tooltip "nilai belum diperbarui (stale)".
+         * - Bad: nilai "—".
+         * - Normal: nilai normal.
+         */
+        let g8MetricsHtml = "";
+        if (unit.frequency !== undefined || unit.motor_current !== undefined) {
+            const pq = unit.point_quality || {};
+
+            if (unit.frequency !== undefined) {
+                const isFreqStale = pq.frequency === "stale";
+                const isFreqBad = pq.frequency === "bad" || unit.frequency === null;
+                const freqText = isFreqBad ? "—" : g8Format(unit.frequency, " Hz");
+                const freqCls = isFreqStale ? "is-metric-stale" : "";
+                const freqTitle = isFreqStale ? 'title="nilai belum diperbarui (stale)"' : '';
+                g8MetricsHtml += `
+                <div>
+                    <div class="ahu-detail-stat-label">Frequency</div>
+                    <div class="ahu-detail-stat-value ${freqCls}" ${freqTitle}>${freqText}</div>
+                </div>
+                `;
+            }
+
+            if (unit.motor_current !== undefined) {
+                const isCurStale = pq.motor_current === "stale";
+                const isCurBad = pq.motor_current === "bad" || unit.motor_current === null;
+                const curText = isCurBad ? "—" : g8Format(unit.motor_current, " A");
+                const curCls = isCurStale ? "is-metric-stale" : "";
+                const curTitle = isCurStale ? 'title="nilai belum diperbarui (stale)"' : '';
+                g8MetricsHtml += `
+                <div>
+                    <div class="ahu-detail-stat-label">Motor Current</div>
+                    <div class="ahu-detail-stat-value ${curCls}" ${curTitle}>${curText}</div>
+                </div>
+                `;
+            }
+        }
+
         statRow.innerHTML = `
             <div>
                 <div class="ahu-detail-stat-label">Operating Status</div>
@@ -7447,6 +7527,7 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                 <div class="ahu-detail-stat-value">${panelText}</div>
             </div>
             ${tripColHtml}
+            ${g8MetricsHtml}
             <div>
                 <div class="ahu-detail-stat-label">Maintenance (PM)</div>
                 <div class="ahu-detail-stat-value is-pm-stat">${isPm ? 'AKTIF' : 'NONAKTIF'}</div>
@@ -7472,7 +7553,7 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
                 <div class="ahu-detail-stat-value is-${runState}">${runState === 'on' ? 'RUNNING' : (runState === 'off' ? 'STOPPED' : 'UNKNOWN')}</div>
             </div>
             <div>
-                <div class="ahu-detail-stat-label">Reading</div>
+                <div class="ahu-detail-stat-label">${isDaikinUnit(unit) ? 'Room Temp' : 'Reading'}</div>
                 <div class="ahu-detail-stat-value"></div>
             </div>
             <div>
@@ -7481,7 +7562,20 @@ function openUnitDetailModal(equipType, unit, anchorTile) {
             </div>
         `;
         const statVals = statRow.querySelectorAll(".ahu-detail-stat-value");
-        if (statVals[2]) statVals[2].textContent = reading || "—";
+        if (statVals[2]) {
+            if (isDaikinUnit(unit) && unit.room_temp !== undefined) {
+                const pq = unit.point_quality || {};
+                const isTempStale = pq.room_temp === "stale";
+                const isTempBad = pq.room_temp === "bad" || unit.room_temp === null;
+                statVals[2].textContent = isTempBad ? "—" : g8Format(unit.room_temp, " °C");
+                if (isTempStale) {
+                    statVals[2].classList.add("is-metric-stale");
+                    statVals[2].title = "nilai belum diperbarui (stale)";
+                }
+            } else {
+                statVals[2].textContent = reading || "—";
+            }
+        }
         if (statVals[3]) statVals[3].textContent = tag || "Within Limits";
     }
 

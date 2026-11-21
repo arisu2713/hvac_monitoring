@@ -1340,6 +1340,197 @@ async function runStatesSuite() {
                 details: s7cCheck
             });
 
+            // ==========================================
+            // STATE 8: G8 METRIC POINT QUALITY (Perbaikan Regresi Phase 2)
+            // ==========================================
+            // State 8a: EF 60 MotorCurrent stale -> nilai tampil redup (.g8-val-stale), status tetap RUN, KPI tidak berubah, banner basi tidak muncul
+            await page.evaluate(() => {
+                const nowTime = "2026-11-20 12:00:00";
+                maintenanceByUnit.clear();
+
+                allData = {
+                    efServerTime: nowTime,
+                    ahuServerTime: nowTime,
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: true,
+                        ALARM: true
+                    },
+                    sourceFreshness: {
+                        DAIKIN: true,
+                        HNX: true,
+                        latestDaikinUpdate: "2026-11-20 11:59:50"
+                    },
+                    AHU: [
+                        { name: "AHU 01", run: 1, alarm: 0, temp: 22.5, duct_temp_max: 28.0, quality: "ok" },
+                        {
+                            name: "AHU 96",
+                            device_id: "daikin",
+                            run: 1,
+                            alarm: 0,
+                            room_temp: 24.5,
+                            room_rh: 55.0,
+                            quality: "ok",
+                            raw_status: "ok",
+                            point_quality: { run: "ok", room_temp: "stale", room_rh: "ok" },
+                            last_update: "2026-11-20 11:59:50",
+                            age_seconds: 10
+                        }
+                    ],
+                    CHILLER: [
+                        { name: "CHILLER 1", run: 1, alarm: 0, current: 150.0, temp: 7.2 }
+                    ],
+                    CT: [
+                        { name: "CT 1", run: 1, alarm: 0, current: 25.0 }
+                    ],
+                    CCP: [
+                        { name: "CCP 1", run: 1, alarm: 0, frequency: 49.8, current: 16.5 }
+                    ],
+                    CHWP: [
+                        { name: "CHWP 1", run: 1, alarm: 0, frequency: 49.2, current: 15.8 }
+                    ],
+                    EXHAUST_FAN: [
+                        { name: "EF 01", status: 1 }
+                    ],
+                    EXHAUST_FAN_G8: [
+                        {
+                            id: 60,
+                            name: "EF 60",
+                            status: 1,
+                            frequency: 38.0,
+                            motor_current: 24.04,
+                            trip: 0,
+                            quality: "ok",
+                            raw_status: "ok",
+                            point_quality: { status: "ok", frequency: "ok", motor_current: "stale", trip: "ok" },
+                            last_update: "2026-11-20 11:59:50",
+                            age_seconds: 10
+                        }
+                    ],
+                    ROOM_TEMP_RH: [],
+                    ALARM: {
+                        server_time: nowTime,
+                        server_epoch: 1795064400,
+                        source_tz_offset: "+07:00",
+                        counts: { active_alarm: 0, active_warning: 0, active_total: 0 },
+                        total_events: 10,
+                        alarms: []
+                    }
+                };
+
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            // Screenshot for State 8: EF 60 MotorCurrent stale (Desktop & Mobile)
+            const shot8Path = path.join(shotDir, `ef_metric_stale_${vp.name}_${vp.width}.png`);
+            await page.screenshot({ path: shot8Path, fullPage: true });
+
+            const s8aCheck = await page.evaluate((isMobile) => {
+                const crit = Number(isMobile
+                    ? (document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim() || 0)
+                    : (document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0));
+                const unk = Number(isMobile
+                    ? 0
+                    : (document.querySelector('.kpi.unknown .kpi-val')?.textContent.trim() || 0));
+                const hasStaleBanner = Boolean(document.querySelector('.stale-telemetry-banner'));
+
+                // Switch to G8 page to inspect EF 60 card
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+                const ef60Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 60'));
+                const curRow = Array.from(ef60Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Motor Current'));
+                const curValEl = curRow?.querySelector('.m-val');
+                const curText = curValEl?.textContent.trim();
+                const curIsStale = curValEl?.classList.contains('g8-val-stale');
+                const curTitle = curValEl?.getAttribute('title');
+
+                // Check AHU 96 room temp on G8 page
+                const ahu96Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 96'));
+                const tempRow = Array.from(ahu96Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Room Temperature'));
+                const tempValEl = tempRow?.querySelector('.m-val');
+                const tempText = tempValEl?.textContent.trim();
+                const tempIsStale = tempValEl?.classList.contains('g8-val-stale');
+
+                // Open modal detail for EF 60
+                openUnitDetailModal("EXHAUST_FAN", allData.EXHAUST_FAN_G8[0], null);
+                const modal = document.querySelector('.ahu-detail-modal');
+                const modalCurVal = Array.from(modal.querySelectorAll('.ahu-detail-stat-label')).find(el => el.textContent.trim() === 'Motor Current')?.nextElementSibling;
+                const modalCurText = modalCurVal?.textContent.trim();
+                const modalCurIsStale = modalCurVal?.classList.contains('is-metric-stale');
+                const modalCurTitle = modalCurVal?.getAttribute('title');
+                closeUnitDetailModal();
+
+                return {
+                    crit, unk, hasStaleBanner,
+                    curText, curIsStale, curTitle,
+                    tempText, tempIsStale,
+                    modalCurText, modalCurIsStale, modalCurTitle
+                };
+            }, vp.name === 'mobile');
+
+            results.push({
+                name: `State 8a (${vp.name}): MotorCurrent & AHU RoomTemp stale -> values display dimmed with tooltip, no banner, unit stays RUN, KPI unaffected`,
+                pass: s8aCheck.crit === 0 && s8aCheck.unk === 0 && !s8aCheck.hasStaleBanner &&
+                      s8aCheck.curText.includes('24') && s8aCheck.curIsStale && s8aCheck.curTitle === 'nilai belum diperbarui (stale)' &&
+                      s8aCheck.tempText.includes('24.5') && s8aCheck.tempIsStale &&
+                      s8aCheck.modalCurText.includes('24') && s8aCheck.modalCurIsStale && s8aCheck.modalCurTitle === 'nilai belum diperbarui (stale)',
+                details: s8aCheck
+            });
+
+            // State 8b: EF 60 MotorCurrent down -> displays "—", status unit stays RUN, no banner
+            await page.evaluate(() => {
+                allData.EXHAUST_FAN_G8[0].motor_current = null;
+                allData.EXHAUST_FAN_G8[0].point_quality.motor_current = "bad";
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            const s8bCheck = await page.evaluate(() => {
+                const ef60Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 60'));
+                const curRow = Array.from(ef60Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Motor Current'));
+                const curVal = curRow?.querySelector('.m-val')?.textContent.trim();
+                const statusRow = Array.from(ef60Card?.querySelectorAll('.metric-item') || []).find(r => r.querySelector('.m-lbl')?.textContent.includes('Status'));
+                const statusVal = statusRow?.querySelector('.m-val')?.textContent.trim();
+                const hasStaleBanner = Boolean(document.querySelector('.stale-telemetry-banner'));
+
+                return { curVal, statusVal, hasStaleBanner };
+            });
+
+            results.push({
+                name: `State 8b (${vp.name}): MotorCurrent down -> displays "—", status unit stays RUN, no banner`,
+                pass: s8bCheck.curVal === '—' && s8bCheck.statusVal === 'RUN' && !s8bCheck.hasStaleBanner,
+                details: s8bCheck
+            });
+
+            // State 8c: EF 60 Sts_EF stale -> unit becomes unknown, banner appears (strict rule)
+            await page.evaluate(() => {
+                allData.EXHAUST_FAN_G8[0].status = null;
+                allData.EXHAUST_FAN_G8[0].quality = "bad";
+                allData.EXHAUST_FAN_G8[0].raw_status = "stale";
+                allData.EXHAUST_FAN_G8[0].point_quality.status = "stale";
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            const s8cCheck = await page.evaluate(() => {
+                const ef60Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('EF 60'));
+                const isUnknown = ef60Card?.classList.contains('is-unknown') || ef60Card?.dataset.run === 'unknown';
+                const hasStaleBanner = Boolean(document.querySelector('.stale-telemetry-banner'));
+                const bannerText = document.querySelector('.stale-telemetry-banner')?.textContent.trim() || '';
+
+                return { isUnknown, hasStaleBanner, bannerText };
+            });
+
+            results.push({
+                name: `State 8c (${vp.name}): Sts_EF stale -> unit unknown, banner appears with unit name (strict rule)`,
+                pass: s8cCheck.isUnknown && s8cCheck.hasStaleBanner && s8cCheck.bannerText.includes('EF 60'),
+                details: s8cCheck
+            });
+
             await context.close();
         }
 

@@ -63,9 +63,27 @@ if (!function_exists('calcTelemetryAgeSeconds')) {
 }
 
 /*
- * Phase 2 Tahap A: Helper validasi kualitas status titik Niagara / Daikin.
- * Aturan per titik: status NULL atau bukan 'ok' (tidak peka huruf besar) -> tidak valid.
+ * Helper validasi kualitas status titik Niagara / Daikin:
+ * - 'ok': status ok
+ * - 'stale': status stale (nilai metrik tetap dikirim tetapi ditandai stale)
+ * - 'bad': down, fault, null, atau status lainnya (nilai dibuang menjadi null)
  */
+if (!function_exists('classifyPointStatus')) {
+    function classifyPointStatus(?string $status): string {
+        if ($status === null) {
+            return 'bad';
+        }
+        $s = strtolower(trim($status));
+        if ($s === 'ok') {
+            return 'ok';
+        }
+        if ($s === 'stale') {
+            return 'stale';
+        }
+        return 'bad';
+    }
+}
+
 if (!function_exists('isPointStatusOk')) {
     function isPointStatusOk(?string $status): bool {
         return $status !== null && strtolower(trim($status)) === 'ok';
@@ -202,39 +220,39 @@ try {
         $ageSec = calcTelemetryAgeSeconds($row['last_update'], $tz, $loggedNegativeG8);
 
         /*
-         * Phase 2 Tahap A: Aturan kualitas titik Niagara daikin_current:
-         * status NULL atau bukan 'ok' (tidak peka huruf besar) -> nilai titik dianggap
-         * tidak tersedia (value_bool/value_double dikirim null) dan sertakan penanda kualitas sederhana.
+         * Perbaikan regresi Phase 2: Kualitas titik Niagara daikin_current per kategori titik:
+         * 1. Titik Status Unit (Sts_EF1/Sts_EF2):
+         *    Aturan ketat tetap: selain 'ok' (termasuk 'stale', 'down', 'fault', NULL) -> tidak diketahui (null).
+         * 2. Titik Metrik (FreqOUT, MotorCurrent):
+         *    'ok'    -> nilai normal, point_quality 'ok'
+         *    'stale' -> nilai TETAP dikirim (tidak null), point_quality 'stale'
+         *    'bad'   -> nilai null, point_quality 'bad'
+         * 3. Titik Trip (Sts_TripEF1/Sts_TripEF2):
+         *    Aturan ketat tetap: selain 'ok' -> null (unknown).
          */
         $statusPointRaw = $row['unit_status_raw'] !== null ? trim($row['unit_status_raw']) : null;
-        $statusPointOk = isPointStatusOk($statusPointRaw);
+        $statusPointQuality = classifyPointStatus($statusPointRaw);
+        $statusPointOk = ($statusPointQuality === 'ok');
         $unitQuality = $statusPointOk ? 'ok' : 'bad';
         $unitStatusVal = ($statusPointOk && $row['value_bool'] !== null)
             ? (int)$row['value_bool']
             : null;
 
         $freqPointRaw = $row['freq_status_raw'] !== null ? trim($row['freq_status_raw']) : null;
-        $freqPointOk = isPointStatusOk($freqPointRaw);
-        $freqQuality = $freqPointOk ? 'ok' : 'bad';
-        $freqVal = ($freqPointOk && $row['frequency'] !== null)
+        $freqQuality = classifyPointStatus($freqPointRaw);
+        $freqVal = ($freqQuality !== 'bad' && $row['frequency'] !== null)
             ? (float)$row['frequency']
             : null;
 
         $currentPointRaw = $row['current_status_raw'] !== null ? trim($row['current_status_raw']) : null;
-        $currentPointOk = isPointStatusOk($currentPointRaw);
-        $currentQuality = $currentPointOk ? 'ok' : 'bad';
-        $currentVal = ($currentPointOk && $row['motor_current'] !== null)
+        $currentQuality = classifyPointStatus($currentPointRaw);
+        $currentVal = ($currentQuality !== 'bad' && $row['motor_current'] !== null)
             ? (float)$row['motor_current']
             : null;
 
-        /*
-         * Phase 2 Tahap 1: Validasi kualitas titik Sts_TripEF1/Sts_TripEF2 per unit:
-         * Status titik bukan 'ok' -> trip: null (unknown), bukan 0.
-         * Status titik 'ok' -> (int)$row['trip_value_bool'] (0 = normal, 1 = TRIP).
-         */
         $tripPointRaw = $row['trip_status_raw'] !== null ? trim($row['trip_status_raw']) : null;
-        $tripPointOk = isPointStatusOk($tripPointRaw);
-        $tripQuality = $tripPointOk ? 'ok' : 'bad';
+        $tripQuality = classifyPointStatus($tripPointRaw);
+        $tripPointOk = ($tripQuality === 'ok');
         $tripVal = ($tripPointOk && $row['trip_value_bool'] !== null)
             ? (int)$row['trip_value_bool']
             : null;
@@ -260,7 +278,7 @@ try {
             'quality' => $unitQuality,
             'raw_status' => $statusPointRaw,
             'point_quality' => [
-                'status' => $unitQuality,
+                'status' => $statusPointQuality,
                 'frequency' => $freqQuality,
                 'motor_current' => $currentQuality,
                 'trip' => $tripQuality,

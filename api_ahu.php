@@ -63,9 +63,27 @@ if (!function_exists('calcTelemetryAgeSeconds')) {
 }
 
 /*
- * Phase 2 Tahap A: Helper validasi kualitas status titik Niagara / Daikin.
- * Aturan per titik: status NULL atau bukan 'ok' (tidak peka huruf besar) -> tidak valid.
+ * Helper validasi kualitas status titik Niagara / Daikin:
+ * - 'ok': status ok
+ * - 'stale': status stale (nilai metrik tetap dikirim tetapi ditandai stale)
+ * - 'bad': down, fault, null, atau status lainnya (nilai dibuang menjadi null)
  */
+if (!function_exists('classifyPointStatus')) {
+    function classifyPointStatus(?string $status): string {
+        if ($status === null) {
+            return 'bad';
+        }
+        $s = strtolower(trim($status));
+        if ($s === 'ok') {
+            return 'ok';
+        }
+        if ($s === 'stale') {
+            return 'stale';
+        }
+        return 'bad';
+    }
+}
+
 if (!function_exists('isPointStatusOk')) {
     function isPointStatusOk(?string $status): bool {
         return $status !== null && strtolower(trim($status)) === 'ok';
@@ -394,13 +412,17 @@ try {
         $pointName = trim($row['point_name'] ?? '');
 
         /*
-         * Phase 2 Tahap A: Aturan kualitas titik Niagara daikin_current:
-         * status NULL atau bukan 'ok' (tidak peka huruf besar) -> nilai titik dianggap
-         * tidak tersedia (value_bool/value_double dikirim null) dan sertakan penanda kualitas sederhana.
+         * Perbaikan regresi Phase 2: Kualitas titik Niagara daikin_current per kategori titik:
+         * 1. Titik Status Unit (BFM1-RUN-ST / BFM2-RUN-ST):
+         *    Aturan ketat tetap: selain 'ok' (termasuk 'stale', 'down', 'fault', NULL) -> tidak diketahui (null).
+         * 2. Titik Metrik (RoomTemp1, SensorHumidityROOM):
+         *    'ok'    -> nilai normal, point_quality 'ok'
+         *    'stale' -> nilai TETAP dikirim (tidak null), point_quality 'stale'
+         *    'bad'   -> nilai null, point_quality 'bad'
          */
         $pointStatus = $row['status'] !== null ? trim($row['status']) : null;
-        $pointOk = isPointStatusOk($pointStatus);
-        $pointQuality = $pointOk ? 'ok' : 'bad';
+        $pointQuality = classifyPointStatus($pointStatus);
+        $pointOk = ($pointQuality === 'ok');
 
         /*
          * Only the points this card actually shows may touch it — including its
@@ -409,7 +431,7 @@ try {
          */
         if ($pointName === 'BFM1-RUN-ST' || $pointName === 'BFM2-RUN-ST') {
 
-            $units[$unitName]['quality'] = $pointQuality;
+            $units[$unitName]['quality'] = $pointOk ? 'ok' : 'bad';
             $units[$unitName]['raw_status'] = $pointStatus;
             $units[$unitName]['point_quality']['run'] = $pointQuality;
             $units[$unitName]['run'] = ($pointOk && $row['value_bool'] !== null)
@@ -420,14 +442,14 @@ try {
         } elseif ($pointName === 'RoomTemp1') {
 
             $units[$unitName]['point_quality']['room_temp'] = $pointQuality;
-            $units[$unitName]['room_temp'] = ($pointOk && $row['value_double'] !== null)
+            $units[$unitName]['room_temp'] = ($pointQuality !== 'bad' && $row['value_double'] !== null)
                 ? (float)$row['value_double']
                 : null;
 
         } elseif ($pointName === 'SensorHumidityROOM') {
 
             $units[$unitName]['point_quality']['room_rh'] = $pointQuality;
-            $units[$unitName]['room_rh'] = ($pointOk && $row['value_double'] !== null)
+            $units[$unitName]['room_rh'] = ($pointQuality !== 'bad' && $row['value_double'] !== null)
                 ? (float)$row['value_double']
                 : null;
 
@@ -531,16 +553,18 @@ try {
         }
 
         /*
-         * Phase 2 Tahap A: Aturan kualitas titik Niagara EC Fan:
-         * status NULL atau bukan 'ok' -> nilai titik dianggap tidak tersedia (null).
+         * Perbaikan regresi Phase 2: Kualitas titik Niagara EC Fan:
+         * - trip: aturan ketat, selain 'ok' -> null
+         * - metrik (frekuensi, suhu): stale -> nilai tetap dikirim; bad -> null
          */
         $fanStatus = $row['status'] !== null ? trim($row['status']) : null;
-        $fanOk = isPointStatusOk($fanStatus);
+        $fanQuality = classifyPointStatus($fanStatus);
+        $fanOk = ($fanQuality === 'ok');
 
         $units[$unitName]['ec_fans'][$fanNo][$metric] =
             $metric === 'trip'
                 ? (($fanOk && $row['value_bool'] !== null) ? (int)$row['value_bool'] : null)
-                : (($fanOk && $row['value_double'] !== null) ? (float)$row['value_double'] : null);
+                : (($fanQuality !== 'bad' && $row['value_double'] !== null) ? (float)$row['value_double'] : null);
 
         $units[$unitName]['ec_fans'][$fanNo]['unit'] = $row['unit'];
     }

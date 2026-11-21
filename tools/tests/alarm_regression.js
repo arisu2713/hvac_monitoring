@@ -1643,6 +1643,221 @@ async function runRegressionSuite() {
             results.push({ name: '38. Fail-safe PM gagal -> tampil dan bunyi', passed, details: res });
         }
 
+        // 39. MotorCurrent stale -> nilai tampil redup, unit tetap RUN, tidak ada alarm, KPI tidak berubah
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 60,
+                    name: 'EF 60',
+                    status: 1,
+                    frequency: 38.0,
+                    motor_current: 24.04,
+                    trip: 0,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', frequency: 'ok', motor_current: 'stale', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const alarmsForFan = activeItems.activeAlarms.filter(a => a.equipment === 'EF 60');
+
+                const status = getEfStatus(fan);
+                const isStale = isTelemetryStale(fan);
+                const cond = g8EfCondition(fan);
+
+                const card = createG8EfCard(fan);
+                const curMetric = Array.from(card.querySelectorAll('.metric-item')).find(r => r.querySelector('.m-lbl')?.textContent.includes('Motor Current'));
+                const curValEl = curMetric?.querySelector('.m-val');
+                const curText = curValEl?.textContent.trim();
+                const curIsStaleCls = curValEl?.classList.contains('g8-val-stale');
+                const curTitle = curValEl?.getAttribute('title');
+
+                allData.sourceStatus = { EF: true };
+                allData.EXHAUST_FAN = [];
+                allData.EXHAUST_FAN_G8 = [fan];
+                allData.ALARM = { alarms: [] };
+                renderMainDashboard();
+                const critVal = Number(document.querySelector('.kpi.red .kpi-val')?.textContent || 0);
+
+                return {
+                    alarmsCount: alarmsForFan.length,
+                    status,
+                    isStale,
+                    cond,
+                    curText,
+                    curIsStaleCls,
+                    curTitle,
+                    critVal
+                };
+            });
+
+            const passed = res.alarmsCount === 0 && res.status === 'run' && res.isStale === false &&
+                           res.cond === 'normal' && res.curText.includes('24') &&
+                           res.curIsStaleCls && res.curTitle === 'nilai belum diperbarui (stale)' && res.critVal === 0;
+            results.push({ name: '39. MotorCurrent stale -> nilai tampil redup, unit tetap RUN, tidak ada alarm, KPI tidak berubah', passed, details: res });
+        }
+
+        // 40. MotorCurrent down -> "-", status unit tetap
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 60,
+                    name: 'EF 60',
+                    status: 1,
+                    frequency: 38.0,
+                    motor_current: null,
+                    trip: 0,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', frequency: 'ok', motor_current: 'bad', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const status = getEfStatus(fan);
+                const isStale = isTelemetryStale(fan);
+                const cond = g8EfCondition(fan);
+                const card = createG8EfCard(fan);
+                const curVal = Array.from(card.querySelectorAll('.metric-item')).find(r => r.querySelector('.m-lbl')?.textContent.includes('Motor Current'))?.querySelector('.m-val')?.textContent.trim();
+
+                return { status, isStale, cond, curVal };
+            });
+
+            const passed = res.status === 'run' && res.isStale === false && res.cond === 'normal' && res.curVal === '—';
+            results.push({ name: '40. MotorCurrent down -> "-", status unit tetap', passed, details: res });
+        }
+
+        // 41. Sts_EF stale -> unknown (tetap ketat)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 60,
+                    name: 'EF 60',
+                    status: null,
+                    frequency: 38.0,
+                    motor_current: 24.04,
+                    trip: 0,
+                    quality: 'bad',
+                    raw_status: 'stale',
+                    point_quality: { status: 'stale', frequency: 'ok', motor_current: 'ok', trip: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const status = getEfStatus(fan);
+                const isStale = isTelemetryStale(fan);
+                const isBad = isUnitQualityBad(fan);
+                const cond = g8EfCondition(fan);
+
+                return { status, isStale, isBad, cond };
+            });
+
+            const passed = res.status === 'unknown' && res.isStale === true && res.isBad === true && res.cond === 'unknown';
+            results.push({ name: '41. Sts_EF stale -> unknown (tetap ketat)', passed, details: res });
+        }
+
+        // 42. Sts_TripEF stale -> unknown dan tidak ada alarm trip
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.efServerTime = '2026-11-20 12:00:00';
+                const fan = {
+                    id: 60,
+                    name: 'EF 60',
+                    status: 1,
+                    frequency: 38.0,
+                    motor_current: 24.04,
+                    trip: null,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { status: 'ok', frequency: 'ok', motor_current: 'ok', trip: 'stale' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                evaluateAlarmTriggers([], [fan], [], true, true);
+                const activeItems = getActiveAlarmItems({ showHidden: false });
+                const tripAlarm = activeItems.activeAlarms.find(a => a.equipment === 'EF 60' && a.metric === 'TRIP');
+                const cond = g8EfCondition(fan);
+
+                return {
+                    hasTripAlarm: Boolean(tripAlarm),
+                    cond
+                };
+            });
+
+            const passed = res.hasTripAlarm === false && res.cond === 'unknown';
+            results.push({ name: '42. Sts_TripEF stale -> unknown dan tidak ada alarm trip', passed, details: res });
+        }
+
+        // 43. AHU 96-97 metrik stale -> nilai tampil redup, unit tetap RUN, tidak ada alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ahu = {
+                    name: 'AHU 96',
+                    device_id: 'daikin',
+                    run: 1,
+                    alarm: 0,
+                    room_temp: 24.5,
+                    room_rh: 55.2,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { run: 'ok', room_temp: 'stale', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10
+                };
+                const isStale = isTelemetryStale(ahu);
+                const card = createG8Ahu9697Card(ahu);
+                const tempMetric = Array.from(card.querySelectorAll('.metric-item')).find(r => r.querySelector('.m-lbl')?.textContent.includes('Room Temperature'));
+                const tempValEl = tempMetric?.querySelector('.m-val');
+                const tempText = tempValEl?.textContent.trim();
+                const tempIsStaleCls = tempValEl?.classList.contains('g8-val-stale');
+                const tempTitle = tempValEl?.getAttribute('title');
+
+                return { isStale, tempText, tempIsStaleCls, tempTitle };
+            });
+
+            const passed = res.isStale === false && res.tempText.includes('24.5') &&
+                           res.tempIsStaleCls && res.tempTitle === 'nilai belum diperbarui (stale)';
+            results.push({ name: '43. AHU 96-97 metrik stale -> nilai tampil redup, unit tetap RUN, tidak ada alarm', passed, details: res });
+        }
+
+        // 44. Unit non-Daikin tidak terpengaruh oleh kualitas stale
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                const nonDaikinAhu = {
+                    name: 'AHU 01',
+                    device_id: 10203,
+                    run: 1,
+                    alarm: 0,
+                    temp: 23.0,
+                    quality: 'stale',
+                    raw_status: 'stale'
+                };
+                const nonDaikinEf = {
+                    name: 'EF 01',
+                    status: 1,
+                    quality: 'stale',
+                    raw_status: 'stale'
+                };
+                return {
+                    ahuStale: isTelemetryStale(nonDaikinAhu),
+                    efStale: isTelemetryStale(nonDaikinEf)
+                };
+            });
+
+            const passed = res.ahuStale === false && res.efStale === false;
+            results.push({ name: '44. Unit non-Daikin tidak terpengaruh oleh kualitas stale', passed, details: res });
+        }
+
         await browser.close();
 
         console.log('\n================== REGRESSION TEST RESULTS ==================');
