@@ -3062,11 +3062,14 @@ const PENDING_EARLY_ACK_MAX_MS = 15000;
  * Debounce tracking for Exhaust Fans:
  * Map: fanKey -> { lastUpdate: string|null, distinctCount: number }
  * Requires status 0 on >= EF_OFF_CONFIRM_READINGS distinct poller cycles (distinct last_update).
+ * Phase 2 Tahap 4: efTripDebounceMap dan liveEfTripFirstSeenMap untuk alarm proteksi TRIP EF 58-61.
  */
 const efDebounceMap = new Map();
+const efTripDebounceMap = new Map();
 
 /* First-seen tracking for synthetic LIVE rows ("HH:MM" WIB) */
 const liveEfFirstSeenMap = new Map();
+const liveEfTripFirstSeenMap = new Map();
 
 function readAcknowledgedAlarmKeys() {
     try {
@@ -3475,21 +3478,58 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                     const serverTime = allData.efServerTime || (allData.ALARM && allData.ALARM.server_time) || null;
                     const isStale = isTelemetryStale(fan, serverTime, STALE_THRESHOLD_SECONDS, fan.age_seconds);
                     const efTriggerKey = "EFOFF:" + fanKeyUpper;
-                    const hadActiveAlarm = lastEfOffKeys.has(efTriggerKey) || acknowledgedAlarmKeys.has(efTriggerKey);
+                    const tripTriggerKey = "EFTRIP:" + fanKeyUpper;
+                    const hadActiveOffAlarm = lastEfOffKeys.has(efTriggerKey) || acknowledgedAlarmKeys.has(efTriggerKey);
+                    const hadActiveTripAlarm = lastEfOffKeys.has(tripTriggerKey) || acknowledgedAlarmKeys.has(tripTriggerKey);
 
                     /*
-                     * Stale Telemetry Guard (Phase 2 Koreksi 8):
-                     * Do NOT trigger new alarms when EF data is stale.
+                     * Stale Telemetry Guard (Phase 2 Koreksi 8 & Tahap 4):
+                     * Do NOT trigger new alarms when EF data is stale or has bad quality.
                      * If an alarm was ALREADY active before becoming stale, KEEP it active (never auto-clear).
                      */
                     if (isStale) {
-                        if (hadActiveAlarm) {
-                            currentEfKeys.add(efTriggerKey);
-                            const prevRow = syntheticLiveEfAlarms.find(r => r.equipment && r.equipment.toUpperCase() === fanKeyUpper);
+                        if (hadActiveTripAlarm) {
+                            const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                            if (!isPmActive) {
+                                currentEfKeys.add(tripTriggerKey);
+                            }
+                            const prevRow = syntheticLiveEfAlarms.find(r => r.equipment && r.equipment.toUpperCase() === fanKeyUpper && r.metric === "TRIP");
                             if (prevRow) {
                                 newSyntheticLiveRows.push(prevRow);
                             } else {
-                                const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                                newSyntheticLiveRows.push({
+                                    id: "LIVETRIP:" + fanKeyUpper.replace(/^EF\s+/i, ""),
+                                    event_class: "ALARM",
+                                    source: "LIVE",
+                                    equip_type: "EF",
+                                    equipment: fanName,
+                                    point_id: null,
+                                    ef_point_id: fan.id || null,
+                                    panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
+                                    metric: "TRIP",
+                                    description: fanName + " Trip Protection Active (telemetry stale, alarm preserved)",
+                                    status: "ACTIVE",
+                                    value: 1,
+                                    limit_min: null,
+                                    limit_max: null,
+                                    raised_at: null,
+                                    first_seen: liveEfTripFirstSeenMap.get(fanKeyUpper) || "--",
+                                    cleared_at: null,
+                                    is_pm: isPmActive,
+                                    is_synthetic: true
+                                });
+                            }
+                            return;
+                        }
+                        if (hadActiveOffAlarm) {
+                            const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                            if (!isPmActive) {
+                                currentEfKeys.add(efTriggerKey);
+                            }
+                            const prevRow = syntheticLiveEfAlarms.find(r => r.equipment && r.equipment.toUpperCase() === fanKeyUpper && r.metric === "STATUS");
+                            if (prevRow) {
+                                newSyntheticLiveRows.push(prevRow);
+                            } else {
                                 newSyntheticLiveRows.push({
                                     id: "LIVE:" + fanKeyUpper.replace(/^EF\s+/i, ""),
                                     event_class: "ALARM",
@@ -3512,12 +3552,98 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                                     is_synthetic: true
                                 });
                             }
+                            return;
                         }
                         return;
                     }
 
-                    const status = getEfStatus(fan);
                     const lastUpdate = fan.last_update || "";
+
+                    /*
+                     * Phase 2 Tahap 4: Jalur Alarm Sintetis TRIP (EF 58-61).
+                     * - Konfirmasi anti-kedip: EF_OFF_CONFIRM_READINGS (2 pembacaan berbeda) atau EF_OFF_CONFIRM_SECONDS (20 s fallback).
+                     * - Muncul di halaman Alarm sebagai ALARM (critical) dengan deskripsi "EF XX Trip Protection Active (trip kontak proteksi)".
+                     * - PM membisukan alarm (tidak berbunyi, disembunyikan oleh isAlarmSuppressedByPm, dihitung banner PM).
+                     * - Sesuai Keputusan 5: Bila TRIP aktif, JANGAN buat alarm sintetis EF OFF untuk EF yang sama (dedupe).
+                     */
+                    if (fan.trip === 1) {
+                        const nowMs = Date.now();
+                        let tripEntry = efTripDebounceMap.get(fanKeyUpper);
+                        let isTripConfirmed = false;
+
+                        if (lastUpdate) {
+                            if (!tripEntry) {
+                                tripEntry = { lastUpdate: lastUpdate, distinctCount: 1, firstSeen: nowMs };
+                                efTripDebounceMap.set(fanKeyUpper, tripEntry);
+                            } else {
+                                if (tripEntry.lastUpdate !== lastUpdate) {
+                                    tripEntry.distinctCount = (tripEntry.distinctCount || 1) + 1;
+                                    tripEntry.lastUpdate = lastUpdate;
+                                }
+                            }
+                            if (tripEntry.distinctCount >= EF_OFF_CONFIRM_READINGS) {
+                                isTripConfirmed = true;
+                            }
+                        } else {
+                            if (!tripEntry) {
+                                tripEntry = { lastUpdate: "", distinctCount: 1, firstSeen: nowMs };
+                                efTripDebounceMap.set(fanKeyUpper, tripEntry);
+                            } else if (!tripEntry.firstSeen) {
+                                tripEntry.firstSeen = nowMs;
+                            }
+                            const elapsedSec = (nowMs - tripEntry.firstSeen) / 1000;
+                            if (elapsedSec >= EF_OFF_CONFIRM_SECONDS) {
+                                isTripConfirmed = true;
+                            }
+                        }
+
+                        if (isTripConfirmed) {
+                            if (!liveEfTripFirstSeenMap.has(fanKeyUpper)) {
+                                const now = new Date();
+                                const hh = String(now.getHours()).padStart(2, '0');
+                                const mm = String(now.getMinutes()).padStart(2, '0');
+                                liveEfTripFirstSeenMap.set(fanKeyUpper, hh + ":" + mm);
+                            }
+
+                            const isPmActive = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", fanName);
+                            if (!isPmActive) {
+                                currentEfKeys.add(tripTriggerKey);
+                            }
+
+                            newSyntheticLiveRows.push({
+                                id: "LIVETRIP:" + fanKeyUpper.replace(/^EF\s+/i, ""),
+                                event_class: "ALARM",
+                                source: "LIVE",
+                                equip_type: "EF",
+                                equipment: fanName,
+                                point_id: null,
+                                ef_point_id: fan.id || null,
+                                panel_no: fan.panel_no !== undefined ? fan.panel_no : null,
+                                metric: "TRIP",
+                                description: fanName + " Trip Protection Active (trip kontak proteksi)",
+                                status: "ACTIVE",
+                                value: 1,
+                                limit_min: null,
+                                limit_max: null,
+                                raised_at: null,
+                                first_seen: liveEfTripFirstSeenMap.get(fanKeyUpper) || "--",
+                                cleared_at: null,
+                                is_pm: isPmActive,
+                                is_synthetic: true
+                            });
+
+                            // Deduplikasi (Keputusan 5): Hapus dan lewati EF OFF saat TRIP aktif
+                            efDebounceMap.delete(fanKeyUpper);
+                            liveEfFirstSeenMap.delete(fanKeyUpper);
+                            return;
+                        }
+                    } else if (fan.trip === 0) {
+                        /* Reset trip debounce dan first seen saat trip kembali 0 */
+                        efTripDebounceMap.delete(fanKeyUpper);
+                        liveEfTripFirstSeenMap.delete(fanKeyUpper);
+                    }
+
+                    const status = getEfStatus(fan);
 
                     if (status === "off") {
                         const nowMs = Date.now();
@@ -3607,9 +3733,9 @@ function evaluateAlarmTriggers(alarmsList, liveEfList, liveG8List, dbSuccess, ef
                 }
             });
 
-            /* C2: Prune acknowledged EFOFF keys only when api_ef.php succeeded */
+            /* C2: Prune acknowledged EFOFF dan EFTRIP keys only when api_ef.php succeeded */
             acknowledgedAlarmKeys.forEach(k => {
-                if (k.startsWith("EFOFF:") && !currentEfKeys.has(k)) {
+                if ((k.startsWith("EFOFF:") || k.startsWith("EFTRIP:")) && !currentEfKeys.has(k)) {
                     acknowledgedAlarmKeys.delete(k);
                 }
             });
@@ -4124,7 +4250,7 @@ function getActiveAlarmItems(options = {}) {
     );
 
     const syntheticRows = (Array.isArray(syntheticLiveEfAlarms) ? syntheticLiveEfAlarms : []).filter(
-        row => !dbActiveEfNames.has(String(row.equipment || "").trim().toUpperCase())
+        row => row.metric === "TRIP" || !dbActiveEfNames.has(String(row.equipment || "").trim().toUpperCase())
     );
 
     /* Mark PM suppression on all candidate items */
