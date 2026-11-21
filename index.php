@@ -1510,6 +1510,21 @@ function g8EfCondition(unit) {
         return "unknown";
     }
 
+    /*
+     * Phase 2 Tahap 3: Kondisi trip untuk EF G8 (EF 58-61):
+     * - trip === null: sesuai aturan kualitas/basi -> "unknown"
+     * - trip === 1 tanpa PM: "critical" (alasan "Trip")
+     * - trip === 1 dengan PM aktif: "off" (stopped/maintenance pada halaman G8)
+     */
+    if (unit.trip === null && isDaikinUnit(unit)) {
+        return "unknown";
+    }
+
+    if (unit.trip === 1) {
+        const isPm = typeof isUnitInMaintenance === "function" && isUnitInMaintenance("EXHAUST_FAN", unit.name);
+        return isPm ? "off" : "critical";
+    }
+
     const state = g8RunState(unit.status);
 
     if (state === "on") {
@@ -1722,7 +1737,7 @@ function createG8EfCard(unit) {
         const staleSub = document.createElement("div");
         staleSub.className = "g8-stale-subtext";
         /* Phase 2 Tahap A: Teks kualitas data buruk bila status titik unit tidak ok */
-        sub.textContent = isUnitQualityBad(unit)
+        staleSub.textContent = isUnitQualityBad(unit)
             ? "kualitas data buruk (down/fault/stale)"
             : ("Data " + formatRelativeTime(unit.last_update, serverTime, serverEpoch, sourceTzOffset) + " lalu");
         card.appendChild(staleSub);
@@ -12541,9 +12556,10 @@ function renderMainDashboard() {
         }
         g8Counts[cond]++;
         if (cond === "warning" || cond === "critical") {
+            const isTrip = f && f.trip === 1;
             g8Warnings.push({
                 name: name,
-                reason: cond === "critical" ? "Alarm (OFF)" : "Offline"
+                reason: cond === "critical" ? (isTrip ? "Trip" : "Alarm (OFF)") : "Offline"
             });
         }
     });
@@ -12603,28 +12619,49 @@ function renderMainDashboard() {
             return;
         }
 
-        const s = getEfStatus(f);
-        if (s === "trip") {
-            efCrit++;
-            if (!coveredEquipment.has(f.name.toUpperCase())) {
-                coveredEquipment.add(f.name.toUpperCase());
-                issues.push({
-                    severity: "critical",
-                    equipment: f.name,
-                    section: "Exhaust fan (EF)",
-                    target: "EXHAUST_FAN",
-                    filter: f.name,
-                    param: "Trip",
-                    value: "TRIP",
-                    threshold: "Trip 0",
-                    reason: "Exhaust Fan reported a trip fault.",
-                    raised_at: null,
-                    is_live: true
-                });
+        /*
+         * Phase 2 Tahap 3: Agregasi Main Dashboard untuk EF G8 (EF 58-61) dengan Trip:
+         * - trip === null (dan isDaikinUnit): unknown
+         * - trip === 1 tanpa PM: efCrit++, issue reason "Trip"
+         * - trip === 1 dengan PM aktif: efStop++ (stopped/maintenance, bukan critical)
+         * Invarian: critical + warning + normal + stopped + unknown = total.
+         */
+        const isTrip = f.trip === 1;
+        const isPm = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", f.name);
+
+        if (isTrip) {
+            if (isPm) {
+                efStop++;
+            } else {
+                efCrit++;
+                if (!coveredEquipment.has(f.name.toUpperCase())) {
+                    coveredEquipment.add(f.name.toUpperCase());
+                    issues.push({
+                        severity: "critical",
+                        equipment: f.name,
+                        section: "Exhaust fan (EF)",
+                        target: "EXHAUST_FAN",
+                        filter: f.name,
+                        param: "Trip",
+                        value: "TRIP",
+                        threshold: "Trip 0",
+                        reason: "Trip",
+                        raised_at: null,
+                        is_live: true
+                    });
+                }
             }
-        } else if (s === "off") {
+            return;
+        }
+
+        if (f.trip === null && isDaikinUnit(f)) {
+            efUnk++;
+            return;
+        }
+
+        const s = getEfStatus(f);
+        if (s === "off") {
             efOff++;
-            const isPm = (typeof isUnitInMaintenance === "function") && isUnitInMaintenance("EXHAUST_FAN", f.name);
             if (isPm) {
                 efStop++;
             } else {
