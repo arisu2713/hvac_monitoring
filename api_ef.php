@@ -173,6 +173,7 @@ try {
      */
     /*
      * Query daikin_current: SELECT kolom status ditambahkan untuk validasi kualitas titik (Phase 2 Tahap A).
+     * Phase 2 Tahap 1: Tambahkan Sts_TripEF1/Sts_TripEF2 untuk alarm proteksi trip EF 58-61.
      */
     $g8Sql = "
         SELECT
@@ -184,11 +185,14 @@ try {
             MAX(CASE WHEN point_name = 'FreqOUT' THEN status END) AS freq_status_raw,
             MAX(CASE WHEN point_name = 'MotorCurrent' THEN value_double END) AS motor_current,
             MAX(CASE WHEN point_name = 'MotorCurrent' THEN status END) AS current_status_raw,
+            MAX(CASE WHEN point_name IN ('Sts_TripEF1', 'Sts_TripEF2') THEN point_id END) AS trip_point_id,
+            MAX(CASE WHEN point_name IN ('Sts_TripEF1', 'Sts_TripEF2') THEN value_bool END) AS trip_value_bool,
+            MAX(CASE WHEN point_name IN ('Sts_TripEF1', 'Sts_TripEF2') THEN status END) AS trip_status_raw,
             MAX(last_update) AS last_update
         FROM daikin_current
         WHERE equipment_type = 'EF'
           AND equipment_no IN ('58', '59', '60', '61')
-          AND point_name IN ('Sts_EF1', 'Sts_EF2', 'FreqOUT', 'MotorCurrent')
+          AND point_name IN ('Sts_EF1', 'Sts_EF2', 'FreqOUT', 'MotorCurrent', 'Sts_TripEF1', 'Sts_TripEF2')
         GROUP BY equipment_no
         ORDER BY CAST(equipment_no AS UNSIGNED)
     ";
@@ -223,6 +227,18 @@ try {
             ? (float)$row['motor_current']
             : null;
 
+        /*
+         * Phase 2 Tahap 1: Validasi kualitas titik Sts_TripEF1/Sts_TripEF2 per unit:
+         * Status titik bukan 'ok' -> trip: null (unknown), bukan 0.
+         * Status titik 'ok' -> (int)$row['trip_value_bool'] (0 = normal, 1 = TRIP).
+         */
+        $tripPointRaw = $row['trip_status_raw'] !== null ? trim($row['trip_status_raw']) : null;
+        $tripPointOk = isPointStatusOk($tripPointRaw);
+        $tripQuality = $tripPointOk ? 'ok' : 'bad';
+        $tripVal = ($tripPointOk && $row['trip_value_bool'] !== null)
+            ? (int)$row['trip_value_bool']
+            : null;
+
         $exhaustFanG8[] = [
             'id' => $row['status_point_id'] !== null
                 ? (int)$row['status_point_id']
@@ -237,6 +253,7 @@ try {
             'status' => $unitStatusVal,
             'frequency' => $freqVal,
             'motor_current' => $currentVal,
+            'trip' => $tripVal,
             'last_update' => $row['last_update'],
             'age_seconds' => $ageSec,
             /* Phase 2 Tahap A: Penanda kualitas data per unit dan per titik */
@@ -246,6 +263,7 @@ try {
                 'status' => $unitQuality,
                 'frequency' => $freqQuality,
                 'motor_current' => $currentQuality,
+                'trip' => $tripQuality,
             ],
         ];
     }
