@@ -8,17 +8,71 @@ Read this file before making changes. Update it whenever a decision changes.
 
 ---
 
+## 0. Database documentation (added 2026-10-11)
+
+A read-only database audit was completed on 2026-10-11. The detailed findings live
+in `docs/` — this file keeps only the summary:
+
+| Document | Contents |
+|---|---|
+| `docs/DATABASE_INVENTORY.md` | All databases, 24 local tables, 196 columns, keys, constraints, writers/readers, gaps |
+| `docs/DATABASE_ARCHITECTURE.md` | Data-flow diagram, per-domain authoritative source, copy-vs-write, risks |
+| `docs/DATABASE_LOCAL_REMOTE_PARITY.md` | Local schema fingerprints; **remote parity NOT VERIFIED** |
+| `docs/DATABASE_SECURITY_REVIEW.md` | Grants, embedded-secret findings (values redacted), exposure review |
+| `HVAC_MONITORING_PROJECT_HANDOFF_COPILOT_2026-10-11_REV3.txt` | Handoff brief that accompanied the audit (repo root, untracked) |
+| `HVAC_DATABASE_DISCOVERY_AND_HANDOFF_TASK.md` | The discovery task the audit answered (repo root, untracked) |
+
+Two further reports live **outside this repo**, under
+`C:\Projects\ahu_ef_daikin\_audit\`: `MIGRATE_TO_HVAC_CURRENT_AUDIT.md` (the blocked
+Phase-1 attempt) and `MIGRATE_TO_HVAC_CURRENT_IMPLEMENTATION.md` (the completed
+migration, 2026-10-12). See §5 item 8.
+
+**Verified facts that supersede earlier statements in this file:**
+
+- The local database has **24 tables, no views, no triggers, no routines, no events**
+  (`event_scheduler` is OFF). **`hvac_current` is the database the app reads for all
+  current data** — it is the only database in `config.php` and the only one any
+  `api_*.php` opens.
+- **`hvac_monitoring` was a DATABASE and it is gone** (dropped 2026-10-10; confirmed by
+  MariaDB error 1049 in the Daikin poller's log, which is raised only for an unknown
+  schema). It is **not** recreated and must not be. The web app never referenced it, so
+  the app is unaffected — verified. Re-confirmed absent **2026-10-12**: `SHOW DATABASES`
+  returns only `hvac_current`, `information_schema` and `test`.
+- **The remote database was NOT inventoried or compared.** No remote credential was
+  available to the audit. Remote parity is `NOT VERIFIED` — see
+  `docs/DATABASE_LOCAL_REMOTE_PARITY.md`. Do not assume the remote schema matches local.
+- **The Daikin poller is no longer broken (corrected 2026-10-12).** The 2026-10-11 audit
+  found it PAUSED and failing with error 1049 against the dropped `hvac_monitoring`
+  database, leaving `daikin_current` frozen. That was accurate **at the time of that
+  audit**. It has since been migrated to `hvac_current` and restarted, and
+  `daikin_current` is being updated continuously — see §5 item 8 for the evidence and
+  for what remains `NOT VERIFIED`. Note that `docs/DATABASE_ARCHITECTURE.md` §6 still
+  describes the *old* broken state and has **not** been updated; that file was outside
+  the scope of this correction.
+- The `hvac_web` account is `SELECT` on all of `hvac_current` **plus `INSERT` on 7 history
+  tables** (the snapshot scripts) — see §4 below, corrected.
+- `hvac_current` also contains `hnx_g8_points` / `hnx_g8_current` (AHU G8, live) and
+  `ef_alarm_events` / `ef_communication_events`, which the web app does not read.
+
+---
+
 ## 1. Architecture
 
 - **Local (source of truth):** XAMPP on a Windows PC on-site. Poller writes
   live BACnet/S-Inet data into `hvac_current`. `index.php` here is served on
   `localhost:8080` and reads directly from the local DB.
 - **Hosting (public/remote view):** Hostinger shared hosting, MySQL DB
-  `u468140406_hvac` (host `srv1763.hstgr.io`, port 3306). Same schema as
-  local (imported via `mysqldump --no-data`). Remote MySQL is allowed
+  `u468140406_hvac` (host `srv1763.hstgr.io`, port 3306). **Reported** as the same
+  schema as local (imported via `mysqldump --no-data`). Remote MySQL is allowed
   (coordinator confirmed) — this is **Option A**: the poller writes to
   *both* the local DB and the hosting DB (dual-write). Local DB keeps
   running regardless of internet status; hosting DB is a live mirror.
+  > **2026-10-11 audit: this remote claim is UNVERIFIED.** The remote DB could not be
+  > reached (no credential available to the audit). "Same schema" is a statement about
+  > how it was created, not proof of its current state. Tables added after that import —
+  > notably `hnx_g8_points` / `hnx_g8_current` (2026-10-06) — may be **absent** remotely.
+  > See `docs/DATABASE_LOCAL_REMOTE_PARITY.md`. Dual-write is also local-only for
+  > `alarm_events`: no remote writer for it was found.
 - **Deployment:** PHP files will be deployed to hosting via **GitHub**
   (coordinator's decision), once poller dual-write is working. `config.php`
   must NOT be committed — see Security section.
@@ -35,7 +89,7 @@ Read this file before making changes. Update it whenever a decision changes.
 | `api_ahu.php` | AHU units — parses `points.point_name` like `AHU 12 Status` / `Alarm` / `Duct Temperature`. |
 | `api_hvac_sc.php` | CHILLER / CCP / CHWP / CT. Parses `point_name`. Handles G3 chillers (6-9) specially — see Section 4. |
 | `api_room.php` | ROOM TEMP & RH + OUTDOOR. Parses `point_name`, merges TEMP+RH pairs into one card per room. |
-| `api_ef.php` | Exhaust fans — separate `ef_points` / `ef_current` tables, keyed by `panel_no`. |
+| `api_ef.php` | Exhaust fans — separate `ef_points` / `ef_current` tables, keyed by `panel_no`, for Panel 1-9. **Also reads `daikin_current`** for the four G8 fans (EF 58-61), returned under a separate `EXHAUST_FAN_G8` key and filtered to the status points `Sts_EF1` / `Sts_EF2` — see §5 item 11. |
 | `api_alarm.php` | **Global alarm feed** — read-only SELECT over `alarm_events`, returns active counts + rows. See Section 12. |
 | `api_energy.php` | **Daily kWh history** for the ENERGY tab — reads `kwh_total_{ct,ccp,chwp}` + `kwh_usage_{ct,ccp,chwp}`, discovers unit columns from `information_schema`. See Section 13. |
 | `api_temp_rh_hourly.php` | **Hourly temp/RH history** for the Hourly History view inside ROOM TEMP & RH — reads `temp_rh_hourly` (long format) and pivots to one column per room in PHP. See Section 13. |
@@ -120,13 +174,27 @@ SP/RLA remain `null` by design — that is expected, not a bug.
 
 ## 4. Security setup (done)
 
-- DB user for the web app: `hvac_web` — **SELECT only** on `hvac_current.*`
+- DB user for the web app: `hvac_web` — **SELECT on all of `hvac_current.*`**
   (verified: `CREATE TABLE` is denied). `config.php` uses this, not `root`.
+  > **Corrected 2026-10-11:** it is *not* purely SELECT. `SHOW GRANTS` shows it also
+  > holds **`INSERT` on exactly 7 tables** — `temp_rh_hourly`, `kwh_total_{ct,ccp,chwp}`
+  > and `kwh_usage_{ct,ccp,chwp}` — because the two CLI snapshot scripts (§11) run as
+  > this account. It has **no** write privilege on any live table (`ai_current`,
+  > `bi_current`, `acc_current`, `ef_*`, `daikin_*`, `alarm_events`, `points`). If the
+  > manual snapshot path is retired, revoke these 7 grants.
+  > Full detail: `docs/DATABASE_SECURITY_REVIEW.md` §1.2.
 - `root` password was **not yet rotated** — still pending confirmation of
   everything else using `root` (poller service, phpMyAdmin config) before
   changing it.
-- A `hvac_cron` user exists locally (SELECT on `ai_current`/`points`, INSERT
+- A `hvac_cron` user is documented locally (SELECT on `ai_current`/`points`, INSERT
   on `ai_hourly`) for the hourly-history cron script.
+  > **2026-10-11:** **NOT VERIFIED** — `hvac_web` cannot enumerate `mysql.user`. The
+  > `ai_hourly` table it refers to was **never created** (see §6); the implemented table
+  > is `temp_rh_hourly`, written by the **Azbil poller**, not by a cron job.
+  > **Security finding:** `C:\xampp\htdocs\test_vps_db.php` (outside this repo, in the
+  > Apache web root, **not** covered by `.htaccess`) contains a **plaintext remote DB
+  > password**. Recommend removing it from the web root and rotating that credential.
+  > See `docs/DATABASE_SECURITY_REVIEW.md` §2.1 — not actioned by the audit.
 - PHP timezone was left as XAMPP default (likely `Europe/Berlin`) —
   **not yet fixed**. Causes `server_time` in API JSON responses to be ~5h
   off from `read_at` (which is correct, written in WIB). Low impact today
@@ -158,6 +226,90 @@ stand.
 7. Session cookie hardening (`httponly`, `samesite`) and login rate-limiting
    — matter most once the hosting version is reachable from the public
    internet. Not urgent for the local LAN-only instance.
+8. **Daikin poller / `daikin_current` — CORRECTED 2026-10-12. The poller is no longer
+   broken; `daikin_current` is live.**
+   > **Superseded text (2026-10-11 audit — accurate then, wrong now).** That audit found
+   > `C:\Projects\ahu_ef_daikin\ahu_poller_unified.py` still pointing at the **dropped
+   > `hvac_monitoring`** database (config line 374; `hvac_monitoring.daikin_readings` at
+   > line 1205), the service `DaikinPoller` **PAUSED**, 292 consecutive
+   > `(1049, "Unknown database 'hvac_monitoring'")` errors since 2026-10-10 22:57, and
+   > `daikin_current` **frozen at 2026-10-10 22:57**. Because `api_ahu.php`,
+   > `api_room.php` and `api_ef.php` all read `daikin_current` for the Daikin AHU 96/97
+   > cards and the EF G8 cards, those cards silently showed ~20-hour-old values with no
+   > staleness indicator.
+   >
+   > **What changed (2026-10-12).** The migration described in
+   > `_audit/MIGRATE_TO_HVAC_CURRENT_IMPLEMENTATION.md` was carried out: `MARIADB_CONFIG`
+   > now names `hvac_current`, the `INSERT INTO hvac_monitoring.daikin_readings` history
+   > block was removed (history disabled — the local `daikin_current` upsert is now the
+   > only write), and the poller was restarted. Verified by reading the source: `"database":
+   > "hvac_current"` at `ahu_poller_unified.py:374`, the only `hvac_monitoring` strings left
+   > in that file are two comments documenting why the path is gone.
+   >
+   > **Evidence collected 2026-10-12 09:08 (read-only).**
+   > - **Data freshness — VERIFIED.** `daikin_current` holds 38 rows whose `last_update`
+   >   spans `09:07:58.555674` – `09:08:07.881890`, i.e. **seconds old** against
+   >   `NOW() = 09:08:13`. Not frozen. `ef_current` (`09:08:12`), `alarm_events`
+   >   (`09:04:50`) and `temp_rh_hourly` (`09:00:00`) are all current too.
+   > - **Poller process — VERIFIED RUNNING.** Windows service `DaikinPoller`:
+   >   State `Running`, StartMode `Auto`. Two live `python.exe` processes run
+   >   `C:\Projects\ahu_ef_daikin\ahu_poller_unified.py`. Its stderr log's last lines read
+   >   `DATABASE: wrote 38 current states (history disabled)` and
+   >   `REMOTE: synced 38 current states` — **no error 1049**.
+   > - **Poller service health beyond "running" — `NOT VERIFIED`.** "Running" plus a live
+   >   `last_update` proves the process is cycling and writing, not that it is healthy. The
+   >   cycle is not error-free: the log shows a recurring, non-fatal
+   >   `REMOTE daikin_points sync failed: (1062, "Duplicate entry … for key 'uq_daikin_point'")`
+   >   (logged once per state transition, then suppressed). Local writes are unaffected.
+   > - **Authenticated HTTP path — `NOT VERIFIED`.** `daikin_current` was read directly
+   >   from the database. The `api_*.php` → browser path was **not** re-exercised in this
+   >   correction (the endpoints return 401 without a session), so "the browser shows fresh
+   >   Daikin values" is an inference from live data plus unchanged API source, not an
+   >   observation made here.
+   > - **Remote copy — `NOT VERIFIED`.** The poller logs `REMOTE: synced 38 current states`
+   >   every 30 s, which is evidence the remote *send* runs. It is **not** evidence that the
+   >   remote rows match local — remote parity was never established (see §0 and
+   >   `docs/DATABASE_LOCAL_REMOTE_PARITY.md`).
+   >
+   > **Still open (unchanged by the migration).** `daikin_current.point_id` does not resolve
+   > against `daikin_points.id` for many rows (reported as 22 of 30 orphans in
+   > `_audit/b2_verify_remote.log`) — the tables carry separate id spaces. The web app keys
+   > on `equipment_no` / `point_name`, so it is unaffected, but do not join them.
+   > The stale poller trees in item 9 below are also still on disk.
+   >
+   > **This was a poller-side change.** No web-app file, API, schema or database was
+   > modified by it.
+9. **NEW (2026-10-11 audit) — stale/broken poller trees and services remain on disk.**
+   Services `HVACAzbilPolling` (Running, but spamming `No Python at …` to a 138 MB log),
+   `HVACAzbilPoller` and `HVACAzbilPollerNew` (both Stopped, Automatic) all point at
+   old trees (`azbil_project`, `azbil_new`, `azbil_new2`) whose code still names
+   `hvac_monitoring`. `C:\Projects\unified_poller` (never deployed, no service) also
+   references it. None are currently writing, but they are one service-start away from
+   erroring against a database that no longer exists. Recommend retiring them.
+   > **Re-checked 2026-10-12:** `HVACAzbilPolling` is still Running, and
+   > `HVACAzbilPoller` / `HVACAzbilPollerNew` are still Stopped (Automatic). Unchanged.
+   > Also still on disk and still naming `hvac_monitoring`: `ahu_poller_playwright.py`
+   > (lines 98-99) and the whole `_wsl_lab/` tree. Neither is run by any service.
+10. **NEW (2026-10-12) — `DaikinPoller` reports its own error 1049 no longer.** The
+   migration removed the last executable reference to `hvac_monitoring` from
+   `ahu_poller_unified.py`; the remaining occurrences in that project are comments and
+   `_audit/` helper scripts. If error 1049 reappears in `_audit/daikin_poller_stderr.log`,
+   something has reverted the config — check `MARIADB_CONFIG["database"]` first.
+11. **NEW (2026-10-12) — EF G8 duplicate-card bug: fixed, API-side only.** The EF G8
+   groupbox rendered 12 cards (EF 58-61 three times each) instead of 4. Root cause was in
+   `api_ef.php`, not the data and not the renderer: each G8 fan has **three** rows in
+   `daikin_current` — its status point plus the `FreqOUT` and `MotorCurrent` numeric
+   points the poller added after `$g8Sql` was first written — and the query filtered only
+   by `equipment_type` / `equipment_no`, so all three became cards. Panel 1-9 were
+   unaffected because they read `ef_points` / `ef_current`, not `daikin_current`.
+   **Fix:** `$g8Sql` now filters `AND point_name IN ('Sts_EF1', 'Sts_EF2')` (the status
+   point is `Sts_EF1` on EF 58/60 and `Sts_EF2` on EF 59/61), mirroring the `point_name`
+   filter `api_ahu.php` already applies to its Daikin AHU 96/97 rows. Verified: the query
+   returns exactly 4 rows (EF 58, 59, 60, 61, once each) while the 8 numeric rows remain
+   in the table, and the `NULL → unknown` (grey card) path is unchanged. The **browser was
+   confirmed showing four cards** after the change. **This was an API-only change** — the
+   poller, the database, the schema, the CSS and Panel 1-9 were not touched, and the
+   existing G8 width fix was preserved. See §2 (`api_ef.php`) for the endpoint summary.
 
 ## 6. Deployment plan (GitHub → hosting)
 
@@ -207,6 +359,13 @@ CREATE TABLE IF NOT EXISTS ai_hourly (
 - Should the condenser temp mapping for G1-G2 chillers be corrected now or
   later? (Currently postponed at user's request — see Section 3.)
 - AHU G8 data source is not ready — tab stays a placeholder until then.
+  > **Corrected 2026-10-11 (verified):** the **data source is in fact live**. The service
+  > `HVACHNXG8PollingNSSM` (Modbus TCP, `C:\Projects\ahu_hnx_g8`) is **Running** and
+  > `hvac_current.hnx_g8_current` is being updated to the second (16 points, matching
+  > `hnx_g8_points`). What is missing is the **web app side**: no `api_*.php` reads
+  > `hnx_g8_points` / `hnx_g8_current`, and `index.php` still points the AHU G8 tab at the
+  > non-existent legacy `api.php`. So the blocker is now a missing reader, not missing
+  > data — worth re-checking before treating this as "not ready".
 
 ## 8. Threshold / alarm indicators (added 2026-10-02)
 
@@ -342,6 +501,27 @@ carry three lines of text and are the tightest fit. 15px fits; **16px grows
 those cards from 78px to 78.7px** and shifts the grid. If a bigger number is
 wanted later, the placeholder cards must be dealt with first.
 
+### Name size at the narrow breakpoints (added 2026-10-12)
+
+The `AHU xx` **name** was still visibly smaller than the `EF xx` name on a phone,
+even though the values above had been enlarged. Cause: `.unit-name` is a generic
+selector that `style.css` shrinks at the narrow breakpoints (13px at ≤900px, 11px
+at ≤600px), while `.ef-name` lives in `ef.css` and has **no tablet rule** — it holds
+at 17px and only drops to 16px at ≤650px. Two scoped rules close that gap:
+
+```css
+/* inside @media (max-width: 900px) */
+.unit-card:not(.room-card) .unit-name { font-size: 15px; font-weight: 900; }
+/* inside @media (max-width: 600px) */
+.unit-card:not(.room-card) .unit-name { font-size: 14px; font-weight: 900; }
+```
+
+`font-weight: 900` matches the EF name so the two sections read as peers; 14px on a
+phone leaves the 12px value clearly subordinate without making it unreadable. The
+`.unit-card:not(.room-card)` scope is the same one used above, so room, HVAC SC and
+EF cards are untouched, and **no card box property changed** — grid, columns, size,
+spacing and status colours are all as they were. `ef.css` was not modified.
+
 ## 10. VSD Drive Temperature — CCP / CHWP / CT (added 2026-10-02)
 
 The VSD ("drive") temperature for the pumps and cooling towers is now read
@@ -424,10 +604,24 @@ snapshot is missing or the diff is negative (meter reset/replaced).
 DB only. Worth adding before deploying.
 
 **Current state:** no scheduler was found on the local machine (no Windows
-Task Scheduler entry, no MariaDB `EVENT`, no runner script in the repo). Both
-scripts appear to be run manually today. `ai_current` is overwritten in place,
-so `temp_rh_snapshot.php` can only capture one instantaneous sample per hour —
-per-hour min/max/avg cannot be reconstructed afterwards.
+Task Scheduler entry, no MariaDB `EVENT`, no runner script in the repo).
+`ai_current` is overwritten in place, so `temp_rh_snapshot.php` can only capture one
+instantaneous sample per hour — per-hour min/max/avg cannot be reconstructed afterwards.
+
+> **Updated 2026-10-11 (verified):** these two scripts are **not the effective writers**.
+> The **Azbil BACnet poller** (`C:\Projects\azbil_bacnet`, service `AzbilBacnetPoller`)
+> writes `temp_rh_hourly` (hourly) and `kwh_total_*` / `kwh_usage_*` (daily) directly —
+> see its `PROJECT.md` §6.3–6.4. Local data corroborates this: `temp_rh_hourly` holds a
+> **continuous** row per hour per point from 2026-10-08 10:00 onward, and all three kWh
+> categories hold the same 10 consecutive days (2026-10-02 … 2026-10-11). Both paths use
+> `INSERT IGNORE`, so a double run is a no-op — which is why the two writers can coexist
+> without producing duplicates. The PHP scripts are a fallback/legacy path.
+>
+> **Data gap (verified):** `temp_rh_hourly` has **167 missing hours**, in two runs — 2 hours
+> on 2026-10-01 (10:00–11:00) and one **165-hour** hole from 2026-10-01 13:00 to
+> 2026-10-08 09:00 (≈7 days). That history is gone permanently and is visible in the
+> ROOM TEMP & RH → Hourly History view. The series is complete from 2026-10-08 10:00 on.
+> See `docs/DATABASE_INVENTORY.md` §4.6.
 
 ---
 *Keep this file up to date as decisions change — it exists so no session
@@ -439,6 +633,22 @@ The web app now has an **ALARM** tab — a global, read-only view over
 `hvac_current.alarm_events`, the table the two pollers write
 (`BACNET_POLLER` and `EF_POLLER`). No new table was created and no schema was
 changed.
+
+> **Verified 2026-10-11.** The table has **18 columns** and ~1,540 rows (growing
+> continuously — 1,529 at 19:08, 1,544 at 19:37): 1 ALARM (cleared) + 8 WARNING (active)
+> + the remainder cleared WARNING history, **all currently from `source =
+> 'BACNET_POLLER'`**. A CHECK constraint (`chk_alarm_active_state`) enforces the
+> lifecycle invariant `ACTIVE ⇔ active_key IS NOT NULL`; 0 violations in the data.
+> `raised_at` spans 2026-10-08 → now. By `equip_type`: `ROOM TEMP & RH` ~825,
+> `CHILLER` ~538, `AHU` 181.
+> **Re-checked 2026-10-12 09:08:** 1,807 rows — `BACNET_POLLER` only (1 ALARM cleared;
+> 6 WARNING active, newest `09:04:50`; 1,800 WARNING cleared). The growth and the
+> single-source finding both still hold. The active count moves with the building, so
+> treat any number here as a snapshot, not a fixed value.
+> **Gap:** **no remote writer for `alarm_events` was found in any poller**, so the
+> hosted site's ALARM tab has no verified data source. See
+> `docs/DATABASE_ARCHITECTURE.md` §7. Do not assume the hosted ALARM tab works.
+> (Unchanged 2026-10-12: still not verified either way — no remote credential.)
 
 ### ALARM vs WARNING
 
