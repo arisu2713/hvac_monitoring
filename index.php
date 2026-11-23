@@ -1413,35 +1413,13 @@ function g8EfBandOf(unit) {
  * The band still travels in data-band, and the health-independent condition
  * the summary counts travels in data-condition. They answer different
  * questions on purpose: band is "is there health evidence", condition is
- * "which tile does this unit go in". AHU 96 with a tripped fan is banded on its
- * room temperature (warning) and counted CRITICAL — the red cell in its table
- * is the evidence, and the summary is the tally.
+ * "which tile does this unit go in". A unit with a reading outside limits is
+ * banded warning and counted WARNING — the amber value is the evidence, and
+ * the summary is the tally. EC fan trip is diagnostic hardware information
+ * displayed on the card table, not a unit condition trigger.
  */
 function g8CardClass(band) {
     return band === "unknown" ? "ahu-card g8-card is-unknown" : "ahu-card g8-card";
-}
-
-/*
- * The EC fans of one AHU whose TRIP flag is set.
- *
- * trip is the device's own fault flag (1 = tripped, 0 = healthy), not a limit
- * this page applies, so reading it invents no threshold. It is the only source
- * of a CRITICAL condition on this page: api_ahu.php leaves alarm null for all
- * four G8 units, and no critical limit is configured for any of their
- * readings.
- *
- * The polarity is inverted against a run status — that is why this cannot be
- * folded into g8BoolClass, and why the answer is a list of the fans that are
- * actually tripped rather than a truthy status.
- */
-function g8TrippedFans(unit) {
-    const fans = unit.ec_fans || {};
-
-    return Object.keys(fans).filter(key => {
-        const fan = fans[key];
-
-        return fan && ahuNum(fan.trip) === 1;
-    });
 }
 
 /*
@@ -1451,10 +1429,10 @@ function g8TrippedFans(unit) {
  * units the page header reports. The ladder is walked in order and the first
  * match wins:
  *
- *   critical  the unit's alarm point, or one of its EC fans tripped
+ *   critical  the unit's alarm point (bila ada)
  *   warning   a reading outside the limit configured for it
  *   off       the run point reported 0
- *   unknown   the unit could not be determined
+ *   unknown   the unit could not be determined (stale / bad quality / no status)
  *   normal    a reading inside its limit and a run point reporting 1
  *
  * Two consequences are deliberate, because both look like bugs otherwise:
@@ -1485,11 +1463,12 @@ function g8AhuCondition(unit) {
         return "unknown";
     }
 
+    /*
+     * Phase 2: Kondisi AHU 96/97 ditentukan HANYA oleh status unit dan batas suhu/RH.
+     * Trip EC fan diabaikan (tidak memicu CRITICAL) agar saat PM tidak tampak gangguan.
+     * Urutan: alarm unit -> batas suhu/RH (warning) -> OFF -> unknown -> normal.
+     */
     if (ahuNum(unit.alarm) === 1) {
-        return "critical";
-    }
-
-    if (g8TrippedFans(unit).length) {
         return "critical";
     }
 
@@ -1642,9 +1621,13 @@ function g8Summary(ahuByName, efByName) {
      */
     const note = document.createElement("div");
     note.className = "g8-summary-note";
+    /*
+     * Phase 2: Frasa "or a tripped EC fan" dihapus karena kondisi AHU 96/97
+     * ditentukan hanya oleh status unit dan batas suhu/RH (trip EC fan diabaikan).
+     */
     note.textContent = "Each unit is counted once, at its worst condition: "
         + "CRITICAL > WARNING > OFF > UNKNOWN > NORMAL. CRITICAL needs a unit "
-        + "alarm or a tripped EC fan, and OFF needs a run point that reported 0. "
+        + "alarm, and OFF needs a run point that reported 0. "
         + "The only limits configured for these units are duct temperature "
         + "(AHU 94-95) and room temperature (AHU 96-97), so RH, EC fan "
         + "frequency, EC fan temperature and every EF reading stay uncoloured.";
