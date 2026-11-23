@@ -1858,6 +1858,190 @@ async function runRegressionSuite() {
             results.push({ name: '44. Unit non-Daikin tidak terpengaruh oleh kualitas stale', passed, details: res });
         }
 
+        // 45. AHU 97 OFF (run=0) dengan 5 EC fans trip -> g8AhuCondition 'off', kolom Trip tetap 5 'TRIP', tidak ada alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ec_fans = {
+                    1: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    2: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    3: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    4: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    5: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 }
+                };
+                const ahu97 = {
+                    name: 'AHU 97',
+                    device_id: 'daikin',
+                    run: 0,
+                    alarm: 0,
+                    room_temp: 23.5,
+                    room_rh: 55.0,
+                    room_temp_max: 30,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { run: 'ok', room_temp: 'ok', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10,
+                    ec_fans: ec_fans
+                };
+
+                const cond = g8AhuCondition(ahu97);
+                const card = createG8Ahu9697Card(ahu97);
+                const tripCells = Array.from(card.querySelectorAll('.g8-fan-cell.g8-val-trip')).filter(c => c.textContent.trim() === 'TRIP');
+                const runState = ahuRunState(ahu97);
+                const healthBand = ahuBandOf(ahu97);
+
+                return {
+                    cond,
+                    runState,
+                    healthBand,
+                    tripCellCount: tripCells.length
+                };
+            });
+
+            const passed = res.cond === 'off' && res.runState === 'off' && res.healthBand === 'normal' && res.tripCellCount === 5;
+            results.push({ name: '45. AHU 97 OFF (run=0) dengan 5 EC fans trip -> g8AhuCondition "off", kolom Trip tetap 5 "TRIP"', passed, details: res });
+        }
+
+        // 46. AHU 96 RUN (run=1), suhu normal, 5 EC fans trip -> g8AhuCondition 'normal', kolom Trip tetap 5 'TRIP'
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ec_fans = {
+                    1: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    2: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    3: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    4: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    5: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 }
+                };
+                const ahu96 = {
+                    name: 'AHU 96',
+                    device_id: 'daikin',
+                    run: 1,
+                    alarm: 0,
+                    room_temp: 24.0,
+                    room_rh: 56.0,
+                    room_temp_max: 30,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { run: 'ok', room_temp: 'ok', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10,
+                    ec_fans: ec_fans
+                };
+
+                const cond = g8AhuCondition(ahu96);
+                const card = createG8Ahu9697Card(ahu96);
+                const tripCells = Array.from(card.querySelectorAll('.g8-fan-cell.g8-val-trip')).filter(c => c.textContent.trim() === 'TRIP');
+
+                return {
+                    cond,
+                    tripCellCount: tripCells.length
+                };
+            });
+
+            const passed = res.cond === 'normal' && res.tripCellCount === 5;
+            results.push({ name: '46. AHU 96 RUN (run=1), suhu normal, 5 EC fans trip -> g8AhuCondition "normal", kolom Trip tetap 5 "TRIP"', passed, details: res });
+        }
+
+        // 47. AHU 96 RUN (run=1), suhu di atas batas, ada kipas trip -> g8AhuCondition 'warning' (karena suhu)
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ec_fans = {
+                    1: { trip: 1, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    2: { trip: 0, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    3: { trip: 0, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    4: { trip: 0, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 },
+                    5: { trip: 0, frequency: 45.0, temp_motor: 35.0, temp_electronic: 32.5, temp_module: 31.0 }
+                };
+                const ahu96 = {
+                    name: 'AHU 96',
+                    device_id: 'daikin',
+                    run: 1,
+                    alarm: 0,
+                    room_temp: 31.5,
+                    room_rh: 60.0,
+                    room_temp_max: 30,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { run: 'ok', room_temp: 'ok', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10,
+                    ec_fans: ec_fans
+                };
+
+                const cond = g8AhuCondition(ahu96);
+                const healthBand = ahuBandOf(ahu96);
+
+                return { cond, healthBand };
+            });
+
+            const passed = res.cond === 'warning' && res.healthBand === 'warning';
+            results.push({ name: '47. AHU 96 RUN (run=1), suhu kamar di atas batas, ada kipas trip -> "warning" (karena suhu)', passed, details: res });
+        }
+
+        // 48. Paritas AHU 97 OFF di semua fungsi: g8AhuCondition 'off', ahuBandOf 'normal', ahuRunState 'off', tidak ada alarm
+        {
+            await resetState();
+            const res = await page.evaluate(() => {
+                allData.ahuServerTime = '2026-11-20 12:00:00';
+                const ec_fans = {
+                    1: { trip: 1, frequency: 0.0, temp_motor: 25.0, temp_electronic: 25.0, temp_module: 25.0 },
+                    2: { trip: 1, frequency: 0.0, temp_motor: 25.0, temp_electronic: 25.0, temp_module: 25.0 },
+                    3: { trip: 1, frequency: 0.0, temp_motor: 25.0, temp_electronic: 25.0, temp_module: 25.0 },
+                    4: { trip: 1, frequency: 0.0, temp_motor: 25.0, temp_electronic: 25.0, temp_module: 25.0 },
+                    5: { trip: 1, frequency: 0.0, temp_motor: 25.0, temp_electronic: 25.0, temp_module: 25.0 }
+                };
+                const ahu97 = {
+                    name: 'AHU 97',
+                    device_id: 'daikin',
+                    run: 0,
+                    alarm: 0,
+                    room_temp: 22.0,
+                    room_rh: 50.0,
+                    room_temp_max: 30,
+                    quality: 'ok',
+                    raw_status: 'ok',
+                    point_quality: { run: 'ok', room_temp: 'ok', room_rh: 'ok' },
+                    last_update: '2026-11-20 11:59:50',
+                    age_seconds: 10,
+                    ec_fans: ec_fans
+                };
+                allData.AHU = [ahu97];
+
+                const g8Cond = g8AhuCondition(ahu97);
+                const band = ahuBandOf(ahu97);
+                const runOp = ahuRunState(ahu97);
+
+                // Main Dashboard AHU bucket logic
+                let mainBucket = 'unknown';
+                if (band === 'critical') mainBucket = 'critical';
+                else if (runOp === 'off') mainBucket = 'stopped';
+                else if (band === 'warning') mainBucket = 'warning';
+                else mainBucket = 'normal';
+
+                // Check alarms
+                const canon = getActiveAlarmItems({ showHidden: false });
+                const hasAhuAlarm = (canon.allActive || []).some(a => a.equipment === 'AHU 97');
+
+                return {
+                    g8Cond,
+                    band,
+                    runOp,
+                    mainBucket,
+                    hasAhuAlarm
+                };
+            });
+
+            const passed = res.g8Cond === 'off' && res.band === 'normal' && res.runOp === 'off' &&
+                           res.mainBucket === 'stopped' && !res.hasAhuAlarm;
+            results.push({ name: '48. Paritas AHU 97 OFF: g8AhuCondition "off", ahuBandOf "normal", ahuRunState "off", mainBucket "stopped", tidak ada alarm', passed, details: res });
+        }
+
         await browser.close();
 
         console.log('\n================== REGRESSION TEST RESULTS ==================');

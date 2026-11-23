@@ -1531,6 +1531,319 @@ async function runStatesSuite() {
                 details: s8cCheck
             });
 
+            // STATE 9: AHU 96/97 CONDITION DETERMINATION & EC FAN TRIP ISOLATION (Phase 2)
+            // State 9a: AHU 97 OFF (run=0) with 5 EC fans trip -> G8 KPI critical=0 & off=1, Main Dashboard red bar 0%, not in Needs attention, card table shows 5 TRIP
+            await page.evaluate(() => {
+                const nowTime = "2026-11-20 12:00:00";
+                maintenanceByUnit.clear();
+                maintenanceFetchSuccess = true;
+                pmHistoryFetchSuccess = true;
+
+                const ecFansTrip = {
+                    1: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    2: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    3: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    4: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 },
+                    5: { trip: 1, frequency: 0.0, temp_motor: 28.0, temp_electronic: 27.5, temp_module: 26.0 }
+                };
+
+                const daikinAhu96 = {
+                    name: "AHU 96",
+                    run: 1,
+                    alarm: 0,
+                    room_temp: 23.0,
+                    room_rh: 54.0,
+                    room_temp_max: 30,
+                    quality: "ok",
+                    raw_status: "ok",
+                    point_quality: { run: "ok", room_temp: "ok", room_rh: "ok" },
+                    last_update: nowTime,
+                    age_seconds: 5,
+                    ec_fans: ecFansTrip
+                };
+
+                const daikinAhu97 = {
+                    name: "AHU 97",
+                    run: 0,
+                    alarm: 0,
+                    room_temp: 22.5,
+                    room_rh: 55.0,
+                    room_temp_max: 30,
+                    quality: "ok",
+                    raw_status: "ok",
+                    point_quality: { run: "ok", room_temp: "ok", room_rh: "ok" },
+                    last_update: nowTime,
+                    age_seconds: 5,
+                    ec_fans: ecFansTrip
+                };
+
+                // Generate full AHU array (AHU 1 to 97)
+                const ahus = Array.from({ length: 97 }, (_, i) => {
+                    const num = i + 1;
+                    const name = num < 10 ? "AHU 0" + num : "AHU " + num;
+                    return {
+                        name: name,
+                        run: 1,
+                        alarm: 0,
+                        temp: 22.0,
+                        temp_min: 15,
+                        temp_max: 25,
+                        quality: "ok",
+                        raw_status: "ok",
+                        point_quality: { run: "ok" },
+                        last_update: nowTime,
+                        age_seconds: 5
+                    };
+                });
+                ahus[93] = { name: "AHU 94", run: 1, alarm: 0, temp: 22.0, temp_min: 15, temp_max: 25, last_update: nowTime, age_seconds: 5 };
+                ahus[94] = { name: "AHU 95", run: 1, alarm: 0, temp: 22.0, temp_min: 15, temp_max: 25, last_update: nowTime, age_seconds: 5 };
+                ahus[95] = daikinAhu96;
+                ahus[96] = daikinAhu97;
+
+                // Generate full EF array (EF 1 to 55)
+                const efs = Array.from({ length: 55 }, (_, i) => {
+                    const id = i + 1;
+                    return {
+                        id: id,
+                        name: "EF " + id,
+                        status: 1,
+                        run: 1,
+                        trip: 0,
+                        quality: "ok",
+                        raw_status: "ok",
+                        last_update: nowTime
+                    };
+                });
+
+                // Generate G8 EF array (EF 58 to 61)
+                const efsG8 = [58, 59, 60, 61].map(id => ({
+                    id: id,
+                    name: "EF " + id,
+                    status: 1,
+                    run: 1,
+                    trip: 0,
+                    frequency: 50.0,
+                    motor_current: 20.0,
+                    quality: "ok",
+                    raw_status: "ok",
+                    point_quality: { status: "ok", frequency: "ok", motor_current: "ok" },
+                    last_update: nowTime,
+                    age_seconds: 5
+                }));
+
+                // Generate HVAC SC (Chiller 8, CT 9, CCP 16, CHWP 16 = 49)
+                const chillers = Array.from({ length: 8 }, (_, i) => ({
+                    name: "CHILLER " + (i + 1),
+                    run: 1,
+                    alarm: 0,
+                    cond_entering_temp: 29.5,
+                    evap_leaving_temp: 7.2,
+                    evap_leaving_temp_max: 12,
+                    cond_entering_temp_max: 32
+                }));
+                const cts = Array.from({ length: 9 }, (_, i) => ({
+                    name: "CT " + (i + 1),
+                    run: 1,
+                    alarm: 0,
+                    return_temp: 28.0,
+                    return_temp_max: 32.0
+                }));
+                const ccps = Array.from({ length: 16 }, (_, i) => ({
+                    name: "CCP " + (i + 1),
+                    run: 1,
+                    alarm: 0,
+                    frequency: 49.8,
+                    current: 16.5
+                }));
+                const chwps = Array.from({ length: 16 }, (_, i) => ({
+                    name: "CHWP " + (i + 1),
+                    run: 1,
+                    alarm: 0,
+                    frequency: 49.2,
+                    current: 15.8
+                }));
+
+                allData = {
+                    ahuServerTime: nowTime,
+                    efServerTime: nowTime,
+                    sourceStatus: {
+                        AHU: true, CHILLER: true, CT: true, CCP: true,
+                        CHWP: true, EF: true, G8: true, ROOM_TEMP_RH: true,
+                        ALARM: true, ENERGY_SUMMARY: true
+                    },
+                    sourceFreshness: { DAIKIN: true, HNX: true, latestDaikinUpdate: nowTime },
+                    AHU: ahus,
+                    CHILLER: chillers,
+                    CT: cts,
+                    CCP: ccps,
+                    CHWP: chwps,
+                    EXHAUST_FAN: efs,
+                    EXHAUST_FAN_G8: efsG8,
+                    ROOM_TEMP_RH: [
+                        { name: "Room 101", type: "ROOM", temp: 23.5, rh: 55, temp_max: 30, rh_max: 65 }
+                    ],
+                    ALARM: {
+                        counts: { active_alarm: 0, active_warning: 0, active_total: 0 },
+                        total_events: 0,
+                        alarms: []
+                    },
+                    ENERGY_SUMMARY: null
+                };
+
+                // Render Main Dashboard first
+                currentEquipment = "MAIN";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            const s9aMainCheck = await page.evaluate(() => {
+                const redBar = document.querySelector('.scard .bar-r');
+                const redBarWidth = redBar ? redBar.style.width : '0%';
+                const needsAttnItems = Array.from(document.querySelectorAll('.attn-item, .mob-issue-item')).map(el => el.textContent.trim());
+                const ahu97InNeedsAttn = needsAttnItems.some(t => t.includes('AHU 97'));
+
+                return { redBarWidth, ahu97InNeedsAttn };
+            });
+
+            // Switch to G8 page to inspect cards and capture screenshot
+            await page.evaluate(() => {
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+
+            const s9aG8Check = await page.evaluate(() => {
+                const ahu97Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 97'));
+                const ahu97Cond = ahu97Card?.dataset.condition;
+                const ahu97Run = ahu97Card?.dataset.run;
+                const tripCells = Array.from(ahu97Card?.querySelectorAll('.g8-fan-cell.g8-val-trip') || []).filter(c => c.textContent.trim() === 'TRIP');
+
+                const tileCrit = document.querySelector('.ahu-summary .is-critical');
+                const tileOff = document.querySelector('.ahu-summary .is-off');
+                const critCount = tileCrit ? Number(tileCrit.dataset.count || 0) : 0;
+                const offCount = tileOff ? Number(tileOff.dataset.count || 0) : 0;
+
+                return {
+                    ahu97Cond,
+                    ahu97Run,
+                    tripCellCount: tripCells.length,
+                    critCount,
+                    offCount
+                };
+            });
+
+            // Capture screenshot for AHU 97 OFF with 5 TRIP
+            await page.screenshot({ path: path.join(shotDir, `state9_ahu97_off_5trip_${vp.name}.png`), fullPage: true });
+
+            results.push({
+                name: `State 9a (${vp.name}): AHU 97 OFF (run=0) with 5 EC fans TRIP -> G8 KPI critical=0, off=1, Main Dashboard red bar 0%, not in Needs attention, card table displays 5 TRIP`,
+                pass: s9aMainCheck.redBarWidth === '0%' && !s9aMainCheck.ahu97InNeedsAttn &&
+                      s9aG8Check.ahu97Cond === 'off' && s9aG8Check.ahu97Run === 'off' &&
+                      s9aG8Check.critCount === 0 && s9aG8Check.offCount >= 1 && s9aG8Check.tripCellCount === 5,
+                details: { ...s9aMainCheck, ...s9aG8Check }
+            });
+
+            // State 9b: AHU 96 RUN (run=1), suhu normal vs high temp with tripped fans
+            const s9bCheck = await page.evaluate(() => {
+                const ahu96Card = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 96'));
+                const condNormal = ahu96Card?.dataset.condition;
+                const tripCells = Array.from(ahu96Card?.querySelectorAll('.g8-fan-cell.g8-val-trip') || []).filter(c => c.textContent.trim() === 'TRIP');
+
+                // Now set AHU 96 room_temp above limit (31.5 > 30)
+                const daikinAhu96 = (allData.AHU || []).find(u => u.name === "AHU 96");
+                daikinAhu96.room_temp = 31.5;
+                renderEquipment();
+
+                const ahu96CardWarn = Array.from(document.querySelectorAll('.g8-card')).find(c => c.querySelector('.hvac-card-title')?.textContent.includes('AHU 96'));
+                const condWarn = ahu96CardWarn?.dataset.condition;
+
+                // Reset back to normal
+                daikinAhu96.room_temp = 23.0;
+                renderEquipment();
+
+                return {
+                    condNormal,
+                    condWarn,
+                    tripCellCount: tripCells.length
+                };
+            });
+
+            results.push({
+                name: `State 9b (${vp.name}): AHU 96 RUN normal temp -> "normal" (5 TRIP displayed), high temp -> "warning"`,
+                pass: s9bCheck.condNormal === 'normal' && s9bCheck.condWarn === 'warning' && s9bCheck.tripCellCount === 5,
+                details: s9bCheck
+            });
+
+            // State 9c: Paritas AHU 97 OFF di semua halaman & invarian Main Dashboard holds (dan verifikasi no double counting)
+            const s9cCheck = await page.evaluate((isMobile) => {
+                // 1. Check AHU page
+                currentEquipment = "AHU";
+                renderEquipment();
+                const ahuPageCard = Array.from(document.querySelectorAll('.ahu-card')).find(c => c.querySelector('.ahu-card-name')?.textContent.includes('AHU 97'));
+                const ahuPageRun = ahuPageCard?.dataset.run; // "off"
+                const ahuPageBand = ahuPageCard?.dataset.band; // "normal"
+
+                // 2. Check Main Dashboard
+                currentEquipment = "MAIN";
+                renderEquipment();
+
+                let crit = 0, warn = 0, norm = 0, stop = 0, unk = 0, total = 0;
+                if (!isMobile) {
+                    crit = Number(document.querySelector('.kpi.red .kpi-val')?.textContent.trim() || 0);
+                    warn = Number(document.querySelector('.kpi.yellow .kpi-val')?.textContent.trim() || 0);
+                    norm = Number(document.querySelectorAll('.kpi-row .kpi')[2]?.querySelector('.kpi-val')?.textContent.trim() || 0);
+                    stop = Number(document.querySelectorAll('.kpi-row .kpi')[3]?.querySelector('.kpi-val')?.textContent.trim() || 0);
+                    const unkEl = document.querySelector('.kpi.unknown .kpi-val');
+                    unk = unkEl ? Number(unkEl.textContent.trim()) : 0;
+                    const allKpis = document.querySelectorAll('.kpi-row .kpi');
+                    total = Number(allKpis[allKpis.length - 1]?.querySelector('.kpi-val')?.textContent.trim() || 0);
+                } else {
+                    crit = Number(document.querySelector('.mob-kpi-card.is-crit .mob-kpi-num')?.textContent.trim() || 0);
+                    warn = Number(document.querySelector('.mob-kpi-card.is-warn .mob-kpi-num')?.textContent.trim() || 0);
+                    stop = Number(document.querySelector('.mob-kpi-card.is-stopped .mob-kpi-num')?.textContent.trim() || 0);
+                    total = 97 + 49 + (allData.EXHAUST_FAN.length + allData.EXHAUST_FAN_G8.length);
+                }
+
+                // Physical equipment check: AHU (97) + HVAC SC (49) + EF (59) = 205 (No double counting G8!)
+                const expectedTotal = 97 + 49 + (allData.EXHAUST_FAN.length + allData.EXHAUST_FAN_G8.length);
+                const invariantHolds = !isMobile ? ((crit + warn + norm + stop + unk) === total) : true;
+                const noDoubleCounting = !isMobile ? (total === expectedTotal) : true;
+
+                return {
+                    ahuPageRun,
+                    ahuPageBand,
+                    crit,
+                    warn,
+                    norm,
+                    stop,
+                    unk,
+                    total,
+                    expectedTotal,
+                    invariantHolds,
+                    noDoubleCounting
+                };
+            }, vp.name === 'mobile');
+
+            // Capture screenshot for normal G8 card
+            await page.evaluate(() => {
+                const daikinAhu97 = (allData.AHU || []).find(u => u.name === "AHU 97");
+                if (daikinAhu97) {
+                    daikinAhu97.run = 1;
+                    daikinAhu97.room_temp = 23.0;
+                }
+                currentEquipment = "AHU_G8";
+                renderEquipment();
+            });
+            await page.waitForTimeout(300);
+            await page.screenshot({ path: path.join(shotDir, `state9_g8_normal_${vp.name}.png`), fullPage: true });
+
+            results.push({
+                name: `State 9c (${vp.name}): Paritas satu unit di semua halaman & invarian Main Dashboard holds (total: 205, no double counting)`,
+                pass: s9cCheck.ahuPageRun === 'off' && s9cCheck.ahuPageBand === 'normal' &&
+                      s9cCheck.invariantHolds && s9cCheck.noDoubleCounting,
+                details: s9cCheck
+            });
+
             await context.close();
         }
 
