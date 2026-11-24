@@ -1,0 +1,10 @@
+# Tolak semua akses HTTP ke folder ini (dokumen dan SQL internal, bukan bagian aplikasi web).
+# Apache 2.4 / LiteSpeed (Hostinger):
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+# Fallback untuk Apache 2.2 lama:
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>
